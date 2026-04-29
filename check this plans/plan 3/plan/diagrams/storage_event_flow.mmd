@@ -1,0 +1,19 @@
+flowchart LR
+  Prompt[User prompt] --> Runtime[tet_runtime]
+  Runtime --> Provider[Provider adapter]
+  Provider --> Runtime
+  Runtime --> Policy[Tet.Policy]
+  Policy --> Tools[Tool executor]
+  Tools --> Approval[Approval gate]
+  Approval --> Patch[Patch applier]
+  Patch --> Verify[Verifier runner]
+
+  Runtime --> Store[(Tet.Store adapter)]
+  Tools --> Store
+  Approval --> Store
+  Patch --> Store
+  Verify --> Store
+
+  Store --> Events[Durable Tet.Event timeline]
+  Events --> CLI[CLI renderer]
+  Events -. optional .-> Web[LiveView renderer]

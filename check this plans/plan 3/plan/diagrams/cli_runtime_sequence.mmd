@@ -1,0 +1,33 @@
+sequenceDiagram
+  participant User
+  participant CLI as tet_cli
+  participant API as Tet facade
+  participant Runtime as tet_runtime
+  participant Worker as SessionWorker
+  participant Policy as Tet.Policy
+  participant Tools as Tool Executor
+  participant Store as Tet.Store adapter
+  participant Bus as Tet.EventBus
+
+  User->>CLI: tet edit S "make change"
+  CLI->>API: Tet.send_prompt(S, prompt, mode: :execute)
+  API->>Runtime: dispatch %Tet.Command.UserPrompt{}
+  Runtime->>Store: append user message + event
+  Runtime->>Worker: run turn
+  Worker->>Policy: check tool intent
+  alt read tool allowed
+    Policy-->>Worker: allow
+    Worker->>Tools: run read tool
+    Tools->>Store: save tool_run
+    Tools-->>Worker: result
+  else patch proposed
+    Policy-->>Worker: require approval
+    Worker->>Store: save diff artifact + pending approval
+    Worker->>Bus: publish approval.created
+  else blocked
+    Policy-->>Worker: block reason
+    Worker->>Store: save blocked tool_run
+    Worker->>Bus: publish tool.blocked
+  end
+  Bus-->>CLI: stream %Tet.Event{}
+  CLI-->>User: render timeline/diff/approval id
