@@ -73,7 +73,7 @@ defmodule Tet.Runtime.Provider.StreamEvents do
         retryable?: Error.retryable?(kind, reason)
       })
 
-    emit.(Tet.Event.provider_error(kind, inspect(reason), payload, event_opts(opts)))
+    emit.(Tet.Event.provider_error(kind, Error.detail(reason), payload, event_opts(opts)))
   end
 
   defp provider_payload(provider, opts, extra) do

@@ -47,5 +47,9 @@ defmodule Tet.Runtime.Provider.Error do
   def retryable?(kind, _reason), do: MapSet.member?(@retryable_kinds, kind)
 
   @doc "Returns a sanitized human/audit detail string."
-  def detail(reason), do: inspect(reason)
+  def detail(reason) do
+    reason
+    |> Tet.Redactor.redact()
+    |> inspect()
+  end
 end

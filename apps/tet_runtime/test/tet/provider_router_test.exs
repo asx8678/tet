@@ -1,7 +1,26 @@
 defmodule Tet.ProviderRouterTest do
   use ExUnit.Case, async: false
 
+  alias Tet.Runtime.ProviderConfig
   alias Tet.Runtime.Provider.Router
+
+  defmodule SecretErrorAdapter do
+    @behaviour Tet.Provider
+
+    @impl true
+    def stream_chat(_messages, opts, _emit) do
+      secret = Keyword.fetch!(opts, :test_secret)
+
+      {:error,
+       {:provider_http_status, 503, "Service Unavailable",
+        %{
+          api_key: secret,
+          headers: [authorization: "Bearer #{secret}"],
+          nested: {:token, secret},
+          body: "api_key=#{secret}"
+        }}}
+    end
+  end
 
   test "retryable error from first candidate falls back to next candidate and succeeds" do
     session_id = unique_session("fallback")
@@ -129,6 +148,196 @@ defmodule Tet.ProviderRouterTest do
     assert event_value(route_error, :will_fallback?) == false
   end
 
+  test "config-error candidates are skipped without retry and fall back deterministically" do
+    parent = self()
+    messages = provider_history(unique_session("config-skip"), "hello")
+
+    for expected_start <- [0, 1] do
+      assert {:ok, response} =
+               Router.stream_chat(
+                 messages,
+                 [
+                   request_id: "req-config-skip-#{expected_start}",
+                   routing_key: routing_key_for(2, expected_start),
+                   max_retries: 3,
+                   candidates: [
+                     [
+                       provider: :openai_compatible,
+                       model: "needs-env",
+                       config_error: {:missing_provider_env, "TET_OPENAI_API_KEY"}
+                     ],
+                     [provider: :mock, model: "mock-good", chunks: ["fallback ok"]]
+                   ]
+                 ],
+                 &send(parent, {:event, &1})
+               )
+
+      assert response.content == "fallback ok"
+      assert response.provider == :mock
+      assert response.model == "mock-good"
+
+      events = collect_events()
+      route_events = Enum.filter(events, &route_event?/1)
+
+      assert Enum.count(route_events, &(&1.type == :provider_route_error)) == 1
+      assert Enum.count(route_events, &(&1.type == :provider_route_fallback)) == 1
+      assert Enum.count(route_events, &(&1.type == :provider_route_attempt)) == 1
+      refute Enum.any?(route_events, &(&1.type == :provider_route_retry))
+
+      skipped = Enum.find(route_events, &(&1.type == :provider_route_error))
+      assert event_value(skipped, :skipped?) == true
+      assert event_value(skipped, :retryable?) == false
+      assert event_value(skipped, :will_retry?) == false
+      assert event_value(skipped, :will_fallback?) == true
+      assert event_value(skipped, :kind) == :configuration_error
+      assert event_value(skipped, :detail) =~ "TET_OPENAI_API_KEY"
+
+      attempted_models =
+        route_events
+        |> Enum.filter(&(&1.type == :provider_route_attempt))
+        |> Enum.map(&event_value(&1, :model))
+
+      assert attempted_models == ["mock-good"]
+    end
+  end
+
+  test "all config-error candidates return deterministic sanitized no-viable-candidate error" do
+    parent = self()
+    secret = "sk-router-secret-12345"
+
+    assert {:error, reason} =
+             Router.stream_chat(
+               provider_history(unique_session("all-config-error"), "hello"),
+               [
+                 request_id: "req-all-config-error",
+                 telemetry_emit: fn name, measurements, metadata ->
+                   send(parent, {:telemetry, name, measurements, metadata})
+                 end,
+                 candidates: [
+                   [
+                     provider: :openai_compatible,
+                     model: "bad-one",
+                     config_error: {:bad_config, %{api_key: secret}}
+                   ],
+                   [
+                     provider: :openai_compatible,
+                     model: "bad-two",
+                     config_error: {:bad_config, [authorization: "Bearer #{secret}"]}
+                   ]
+                 ]
+               ],
+               &send(parent, {:event, &1})
+             )
+
+    assert {:provider_candidate_config, {:no_viable_candidates, summaries}} = reason
+    assert length(summaries) == 2
+    refute inspect(reason) =~ secret
+
+    events = collect_events()
+    telemetry = collect_telemetry()
+
+    assert Enum.count(events, &(&1.type == :provider_route_error)) == 3
+    refute inspect(events) =~ secret
+    refute inspect(telemetry) =~ secret
+  end
+
+  test "route events and telemetry redact sensitive adapter error details" do
+    parent = self()
+    secret = "sk-router-secret-67890"
+
+    assert {:error, {:provider_http_status, 503, "Service Unavailable", _body}} =
+             Router.stream_chat(
+               provider_history(unique_session("secret-error"), "hello"),
+               [
+                 request_id: "req-secret-error",
+                 max_retries: 0,
+                 telemetry_emit: fn name, measurements, metadata ->
+                   send(parent, {:telemetry, name, measurements, metadata})
+                 end,
+                 candidates: [
+                   [
+                     adapter: SecretErrorAdapter,
+                     provider: :mock,
+                     model: "secret-model",
+                     test_secret: secret
+                   ]
+                 ]
+               ],
+               &send(parent, {:event, &1})
+             )
+
+    events = collect_events()
+    telemetry = collect_telemetry()
+
+    route_error = Enum.find(events, &(&1.type == :provider_route_error))
+
+    assert route_error
+    assert Enum.any?(telemetry, &match?({[:tet, :provider, :router, :attempt, :error], _, _}, &1))
+    refute event_value(route_error, :detail) =~ "[REDACTED]]"
+    refute inspect(events) =~ secret
+    refute inspect(telemetry) =~ secret
+    assert inspect(events) =~ Tet.Redactor.redacted_value()
+    assert inspect(telemetry) =~ Tet.Redactor.redacted_value()
+  end
+
+  test "registry chat profile skips missing primary env and uses fallback for any rotation" do
+    without_env("TET_OPENAI_API_KEY", fn ->
+      assert {:ok, {Router, opts}} = ProviderConfig.resolve(provider: :router, profile: "chat")
+
+      assert [openai, mock] = opts[:candidates]
+      assert openai.provider == :openai_compatible
+      assert openai.config_error == {:missing_provider_env, "TET_OPENAI_API_KEY"}
+      assert mock.provider == :mock
+      assert is_nil(Map.get(mock, :config_error))
+
+      for expected_start <- [0, 1] do
+        parent = self()
+
+        assert {:ok, response} =
+                 Router.stream_chat(
+                   provider_history(unique_session("registry-chat"), "hello registry"),
+                   opts
+                   |> Keyword.put(:request_id, "req-registry-chat-#{expected_start}")
+                   |> Keyword.put(:routing_key, routing_key_for(2, expected_start)),
+                   &send(parent, {:event, &1})
+                 )
+
+        assert response.provider == :mock
+        assert response.model == "mock-default"
+        assert response.content == "mock: hello registry"
+
+        route_events = collect_events() |> Enum.filter(&route_event?/1)
+        assert Enum.any?(route_events, &(&1.type == :provider_route_fallback))
+        assert Enum.any?(route_events, &(&1.type == :provider_route_done))
+
+        attempts = Enum.filter(route_events, &(&1.type == :provider_route_attempt))
+        assert Enum.map(attempts, &event_value(&1, :provider)) == [:mock]
+      end
+    end)
+  end
+
+  test "router diagnostics report degraded registry profile when primary env is missing" do
+    without_env("TET_OPENAI_API_KEY", fn ->
+      assert {:ok, report} = ProviderConfig.diagnose(provider: :router, profile: "chat")
+
+      assert report.status == :degraded
+      assert report.profile == "chat"
+      assert report.candidate_count == 2
+      assert report.viable_candidate_count == 1
+      assert report.config_error_count == 1
+      assert {:candidate_config_errors, [config_error]} = report.reason
+
+      assert config_error.provider == :openai_compatible
+      assert config_error.model == "gpt-4o-mini"
+      assert config_error.config_error? == true
+      assert config_error.config_error_detail =~ "TET_OPENAI_API_KEY"
+
+      mock = Enum.find(report.candidates, &(&1.provider == :mock))
+      assert mock.config_error? == false
+      refute Map.has_key?(mock, :config_error_detail)
+    end)
+  end
+
   test "route order is deterministic for a routing key" do
     candidates = [
       [provider: :mock, model: "model-0", chunks: ["zero"]],
@@ -250,6 +459,26 @@ defmodule Tet.ProviderRouterTest do
       key = "router-test-key-#{index}"
       if Router.start_index(candidate_count, routing_key: key) == expected_index, do: key
     end)
+  end
+
+  defp without_env(name, fun), do: with_env(%{name => nil}, fun)
+
+  defp with_env(vars, fun) do
+    old_values = Map.new(vars, fn {name, _value} -> {name, System.get_env(name)} end)
+
+    Enum.each(vars, fn
+      {name, nil} -> System.delete_env(name)
+      {name, value} -> System.put_env(name, value)
+    end)
+
+    try do
+      fun.()
+    after
+      Enum.each(old_values, fn
+        {name, nil} -> System.delete_env(name)
+        {name, value} -> System.put_env(name, value)
+      end)
+    end
   end
 
   defp unique_session(name), do: "session-#{name}-#{System.pid()}-#{unique_integer()}"

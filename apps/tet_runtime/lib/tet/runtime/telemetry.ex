@@ -11,7 +11,7 @@ defmodule Tet.Runtime.Telemetry do
   def execute(event_name, measurements \\ %{}, metadata \\ %{}, opts \\ [])
       when is_list(event_name) and is_map(measurements) and is_map(metadata) and is_list(opts) do
     safe_measurements = numeric_measurements(measurements)
-    safe_metadata = json_friendly(metadata)
+    safe_metadata = metadata |> Tet.Redactor.redact() |> json_friendly()
 
     emit_injected(event_name, safe_measurements, safe_metadata, opts)
     emit_telemetry(event_name, safe_measurements, safe_metadata)

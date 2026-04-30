@@ -37,16 +37,36 @@ defmodule Tet.Runtime.Provider.Router do
         route_started_at = System.monotonic_time()
         emit_decision(ordered_candidates, order_opts, opts, emit)
 
+        {skipped_candidates, viable_candidates} =
+          split_config_error_candidates(ordered_candidates)
+
         with_usage_collector(fn collector ->
           wrapped_emit = fn event ->
             collect_provider_event(collector, event)
             emit.(event)
           end
 
-          route_candidates(messages, ordered_candidates, opts, wrapped_emit, collector, %{
-            route_attempt: 0,
-            route_started_at: route_started_at
-          })
+          emit_config_error_skips(
+            skipped_candidates,
+            List.first(viable_candidates),
+            opts,
+            wrapped_emit
+          )
+
+          case viable_candidates do
+            [] ->
+              fail_before_attempt(
+                no_viable_candidates_reason(skipped_candidates),
+                opts,
+                wrapped_emit
+              )
+
+            candidates ->
+              route_candidates(messages, candidates, opts, wrapped_emit, collector, %{
+                route_attempt: 0,
+                route_started_at: route_started_at
+              })
+          end
         end)
 
       {:error, reason} ->
@@ -59,6 +79,59 @@ defmodule Tet.Runtime.Provider.Router do
 
   @doc "Returns the deterministic start index for a candidate count and routing opts."
   defdelegate start_index(candidate_count, opts \\ []), to: Candidates
+
+  defp split_config_error_candidates(candidates) do
+    Enum.split_with(candidates, &config_error_candidate?/1)
+  end
+
+  defp config_error_candidate?(%{config_error: config_error}), do: not is_nil(config_error)
+  defp config_error_candidate?(_candidate), do: false
+
+  defp emit_config_error_skips([], _next_candidate, _opts, _emit), do: :ok
+
+  defp emit_config_error_skips(skipped_candidates, next_candidate, opts, emit) do
+    Enum.each(skipped_candidates, fn candidate ->
+      reason = {:provider_candidate_config, candidate.config_error}
+
+      context =
+        candidate
+        |> skip_context(opts)
+        |> Map.merge(%{
+          terminal?: false,
+          will_retry?: false,
+          will_fallback?: not is_nil(next_candidate),
+          exhausted?: false
+        })
+
+      error = Map.merge(context, error_payload(reason, Error.kind(reason), false))
+
+      emit_route_event(:provider_route_error, error, opts, emit)
+      Telemetry.execute(@route_attempt_error_event, %{}, error, opts)
+
+      if next_candidate do
+        fallback = fallback_payload(context, next_candidate, reason, false)
+
+        emit_route_event(:provider_route_fallback, fallback, opts, emit)
+        Telemetry.execute(@route_fallback_event, %{}, fallback, opts)
+      end
+    end)
+  end
+
+  defp no_viable_candidates_reason(skipped_candidates) do
+    {:provider_candidate_config,
+     {:no_viable_candidates, Enum.map(skipped_candidates, &config_error_summary/1)}}
+  end
+
+  defp config_error_summary(candidate) do
+    %{
+      candidate_index: candidate.index,
+      id: candidate.id,
+      provider: candidate.provider,
+      model: candidate.model,
+      detail: Error.detail({:provider_candidate_config, candidate.config_error})
+    }
+    |> compact_map()
+  end
 
   defp route_candidates(messages, [candidate | rest], opts, emit, collector, state) do
     has_next? = rest != []
@@ -206,6 +279,8 @@ defmodule Tet.Runtime.Provider.Router do
     payload = %{
       request_id: Keyword.get(opts, :request_id),
       candidate_count: length(ordered_candidates),
+      viable_candidate_count: Enum.count(ordered_candidates, &(not config_error_candidate?(&1))),
+      config_error_count: Enum.count(ordered_candidates, &config_error_candidate?/1),
       start_index: start_index(length(ordered_candidates), order_opts),
       routing_key_source: Candidates.seed_source(seed),
       routing_key_hash: Candidates.seed_hash(seed),
@@ -262,6 +337,16 @@ defmodule Tet.Runtime.Provider.Router do
     |> compact_map()
   end
 
+  defp skip_context(candidate, opts) do
+    candidate_summary(candidate)
+    |> Map.merge(%{
+      request_id: Keyword.get(opts, :request_id),
+      skipped?: true,
+      skip_reason: :candidate_config_error
+    })
+    |> compact_map()
+  end
+
   defp error_payload(reason, kind, retryable?) do
     %{
       kind: kind,
@@ -270,9 +355,9 @@ defmodule Tet.Runtime.Provider.Router do
     }
   end
 
-  defp fallback_payload(context, next_candidate, reason) do
+  defp fallback_payload(context, next_candidate, reason, retryable? \\ true) do
     context
-    |> Map.merge(error_payload(reason, Error.kind(reason), true))
+    |> Map.merge(error_payload(reason, Error.kind(reason), retryable?))
     |> Map.merge(%{
       terminal?: false,
       will_retry?: false,
@@ -445,7 +530,7 @@ defmodule Tet.Runtime.Provider.Router do
     emit.(%Tet.Event{
       type: type,
       session_id: Keyword.get(opts, :session_id),
-      payload: compact_map(payload)
+      payload: payload |> Tet.Redactor.redact() |> compact_map()
     })
   end
 

@@ -6,6 +6,8 @@ defmodule Tet.Runtime.ProviderConfig do
   in application config contains an API key.
   """
 
+  alias Tet.Runtime.Provider.Error
+
   @default_openai_base_url "https://api.openai.com/v1"
   @default_openai_model "gpt-4o-mini"
   @default_router_profile "chat"
@@ -277,15 +279,27 @@ defmodule Tet.Runtime.ProviderConfig do
   defp diagnose_router(opts) do
     case router_candidates(opts) do
       {:ok, candidates} ->
-        {:ok,
-         %{
-           provider: :router,
-           adapter: Tet.Runtime.Provider.Router,
-           status: :ok,
-           profile: router_profile(opts),
-           candidates: candidates |> Enum.with_index() |> Enum.map(&sanitize_router_candidate/1),
-           message: "provider router configured"
-         }}
+        candidates = candidates |> Enum.with_index() |> Enum.map(&sanitize_router_candidate/1)
+        config_errors = Enum.filter(candidates, &Map.get(&1, :config_error?, false))
+        status = router_diagnostic_status(candidates, config_errors)
+
+        report =
+          %{
+            provider: :router,
+            adapter: Tet.Runtime.Provider.Router,
+            status: status,
+            profile: router_profile(opts),
+            candidate_count: length(candidates),
+            viable_candidate_count: length(candidates) - length(config_errors),
+            config_error_count: length(config_errors),
+            candidates: candidates,
+            config_errors: config_errors,
+            reason: router_diagnostic_reason(status, config_errors),
+            message: router_diagnostic_message(status)
+          }
+          |> compact_map()
+
+        if status == :error, do: {:error, report}, else: {:ok, report}
 
       {:error, reason} ->
         {:error,
@@ -294,33 +308,68 @@ defmodule Tet.Runtime.ProviderConfig do
            adapter: Tet.Runtime.Provider.Router,
            status: :error,
            profile: router_profile(opts),
-           reason: reason,
+           reason: Tet.Redactor.redact(reason),
+           detail: Error.detail(reason),
            message: "provider router configuration failed"
          }}
     end
   end
 
+  defp router_diagnostic_status([], _config_errors), do: :error
+
+  defp router_diagnostic_status(candidates, config_errors)
+       when length(candidates) == length(config_errors),
+       do: :error
+
+  defp router_diagnostic_status(_candidates, []), do: :ok
+  defp router_diagnostic_status(_candidates, _config_errors), do: :degraded
+
+  defp router_diagnostic_reason(:ok, _config_errors), do: nil
+
+  defp router_diagnostic_reason(:degraded, config_errors),
+    do: {:candidate_config_errors, config_errors}
+
+  defp router_diagnostic_reason(:error, []), do: :no_provider_candidates
+  defp router_diagnostic_reason(:error, config_errors), do: {:no_viable_candidates, config_errors}
+
+  defp router_diagnostic_message(:ok), do: "provider router configured"
+
+  defp router_diagnostic_message(:degraded),
+    do: "provider router configured with fallbackable candidate configuration errors"
+
+  defp router_diagnostic_message(:error), do: "provider router has no viable candidates"
+
   defp sanitize_router_candidate({candidate, index}) do
     candidate = if is_list(candidate), do: Map.new(candidate), else: candidate
     opts = if is_map(candidate), do: candidate_value(candidate, :opts) || [], else: []
     opts = if is_list(opts), do: opts, else: []
+    config_error = candidate_value(candidate, :config_error)
 
     %{
       candidate_index: index,
       id: candidate_value(candidate, :id),
       provider: candidate_value(candidate, :provider) || Keyword.get(opts, :provider),
       model: candidate_value(candidate, :model) || Keyword.get(opts, :model),
-      config_error?: not is_nil(candidate_value(candidate, :config_error))
+      config_error?: not is_nil(config_error),
+      config_error_detail: config_error_detail(config_error)
     }
-    |> Enum.reject(fn {_key, value} -> is_nil(value) end)
-    |> Map.new()
+    |> compact_map()
   end
+
+  defp config_error_detail(nil), do: nil
+  defp config_error_detail(reason), do: Error.detail({:provider_candidate_config, reason})
 
   defp candidate_value(candidate, key) when is_map(candidate) do
     Map.get(candidate, key, Map.get(candidate, Atom.to_string(key)))
   end
 
   defp candidate_value(_candidate, _key), do: nil
+
+  defp compact_map(map) when is_map(map) do
+    map
+    |> Enum.reject(fn {_key, value} -> is_nil(value) end)
+    |> Map.new()
+  end
 
   defp router_profile(opts) do
     opts
