@@ -164,4 +164,7 @@ text, layer order, stable hashes, and redaction behavior.
   into whatever request shape their APIs require.
 - Autosave restore uses `Tet.Prompt.attachment_metadata/1` to persist normalized
   attachment metadata separately from the redacted debug artifact.
+- Prompt Lab (`Tet.PromptLab`) is a neighboring advisory contract: it refines
+  prompt text and stores Prompt Lab history, but it does not change prompt layer
+  ordering, execute tools, call providers, or append chat messages.
 - No provider credentials or raw attachment bytes belong in prompt debug output.

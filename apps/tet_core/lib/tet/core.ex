@@ -7,7 +7,15 @@ defmodule Tet.Core do
   terminal rendering, and provider calls live in their own applications.
   """
 
-  @capabilities [:contracts, :events, :messages, :prompts, :provider_behaviour, :store_behaviour]
+  @capabilities [
+    :contracts,
+    :events,
+    :messages,
+    :prompts,
+    :prompt_lab,
+    :provider_behaviour,
+    :store_behaviour
+  ]
 
   @doc "Returns the conceptual capabilities reserved by the core app."
   def capabilities, do: @capabilities

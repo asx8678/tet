@@ -2,12 +2,13 @@
 
 This repository contains the minimal Elixir umbrella/release scaffold plus the
 standalone streaming chat, session resume, event timeline shell,
-autosave/restore checkpoints, and doctor diagnostics path through `tet-db6.6` /
-`BD-0006`. It includes the optional web facade contract from `tet-db6.7` /
-`BD-0007`, the event timeline shell from `tet-db6.8` / `BD-0008`, the web
-removability gate from `tet-db6.9` / `BD-0009`, the prompt-layer contract from
-`tet-db6.10` / `BD-0010`, and autosave/restore checkpoints from `tet-db6.11` /
-`BD-0011`.
+autosave/restore checkpoints, Prompt Lab model/history storage, and doctor
+diagnostics path through `tet-db6.6` / `BD-0006`. It includes the optional web
+facade contract from `tet-db6.7` / `BD-0007`, the event timeline shell from
+`tet-db6.8` / `BD-0008`, the web removability gate from `tet-db6.9` /
+`BD-0009`, the prompt-layer contract from `tet-db6.10` / `BD-0010`,
+autosave/restore checkpoints from `tet-db6.11` / `BD-0011`, and the Prompt Lab
+preset/refiner model from `tet-db6.47` / `BD-0047`.
 
 The implementation stays CLI-first and OTP-first. The CLI parses arguments and
 renders streamed chunks; runtime owns session orchestration, provider selection,
@@ -24,9 +25,9 @@ The `tet_standalone` release contains these conceptual applications:
 
 | App | Boundary role | Current implementation scope |
 |---|---|---|
-| `tet_core` | Pure domain/contracts boundary | Metadata, `%Tet.Event{}`, `%Tet.Message{}`, `%Tet.Session{}`, `%Tet.Autosave{}`, `Tet.Prompt` prompt-layer contract, `Tet.Provider` behaviour, and `Tet.Store` behaviour |
-| `tet_store_sqlite` | Default standalone store adapter boundary | Dependency-free durable JSON Lines message, derived-session, autosave checkpoint, and event timeline store for this phase; true SQLite can replace the file format later behind the same behaviour |
-| `tet_runtime` | OTP runtime and public `Tet.*` facade owner | Supervised runtime shell, Registry-backed event bus, `Tet.doctor/1`, `Tet.ask/2`, session query/resume/autosave orchestration, `Tet.list_events/1/2`, `Tet.subscribe_events/0/1`, provider config, mock provider, and OpenAI-compatible streaming adapter |
+| `tet_core` | Pure domain/contracts boundary | Metadata, `%Tet.Event{}`, `%Tet.Message{}`, `%Tet.Session{}`, `%Tet.Autosave{}`, `Tet.Prompt`, `Tet.PromptLab`, `Tet.Provider` behaviour, and `Tet.Store` behaviour |
+| `tet_store_sqlite` | Default standalone store adapter boundary | Dependency-free durable JSON Lines message, derived-session, autosave checkpoint, event timeline, and Prompt Lab history store for this phase; true SQLite can replace the file format later behind the same behaviour |
+| `tet_runtime` | OTP runtime and public `Tet.*` facade owner | Supervised runtime shell, Registry-backed event bus, `Tet.doctor/1`, `Tet.ask/2`, session query/resume/autosave orchestration, Prompt Lab facade/history orchestration, `Tet.list_events/1/2`, `Tet.subscribe_events/0/1`, provider config, mock provider, and OpenAI-compatible streaming adapter |
 | `tet_cli` | Thin terminal adapter | `tet ask`, `tet events`, `tet timeline`, `tet sessions`, `tet session show`, `tet doctor`, and help output through the public facade |
 
 The standalone release explicitly excludes:
@@ -347,6 +348,8 @@ Optional environment variables:
   default it is derived from `TET_STORE_PATH`.
 - `TET_EVENTS_PATH` — optional event timeline log path override; by default it
   is derived from `TET_STORE_PATH`.
+- `TET_PROMPT_HISTORY_PATH` — optional Prompt Lab history log path override; by
+  default it is derived from `TET_STORE_PATH`.
 
 OpenAI-compatible streams are considered complete only after a `data: [DONE]`
 SSE payload. Missing `[DONE]`, content after `[DONE]`, and non-empty trailing
@@ -365,6 +368,32 @@ TET_STORE_PATH="$PWD/.tet/messages.jsonl" \
 
 No secrets are stored in config files. Tests use the mock provider and a local
 TCP fake OpenAI-compatible stream server; they do not call real provider APIs.
+
+## Prompt Lab
+
+`Tet.PromptLab` defines Prompt Lab presets, quality dimensions, request/result
+validation, redacted debug output, and prompt history storage for BD-0047. It is
+advisory and non-executing: it improves prompt text without calling providers,
+running tools, appending chat messages, writing autosaves, or emitting runtime
+events.
+
+Public facade calls:
+
+```elixir
+Tet.prompt_lab_presets()
+Tet.get_prompt_lab_preset("coding")
+Tet.refine_prompt("Implement the CLI command", preset: "coding")
+Tet.refine_prompt("Preview only", persist?: false)
+Tet.list_prompt_history()
+Tet.fetch_prompt_history("prompt-history-...")
+```
+
+When persistence is enabled, runtime writes only the dedicated Prompt Lab history
+store (`.tet/prompt_history.jsonl` by default). `persist?: false` returns a pure
+preview with `history: nil`. Future dashboards must use the public `Tet.*`
+facade to list presets/history and must not read store files or execute refined
+prompts directly. See [`prompt_lab.md`](prompt_lab.md) for the model contract,
+output shape, safety boundary, and dashboard guidance.
 
 ## Prompt layer contract
 
@@ -508,6 +537,7 @@ The scaffold and chat path follow the accepted ADR rules:
   dispatch.
 - Prompt construction is a pure `tet_core` contract; provider adapters can
   consume its provider-neutral role/content messages.
+- Prompt Lab is advisory/read-only except for its own prompt-history store.
 - Store access is behind the core `Tet.Store` behaviour.
 - Provider adapters implement the core `Tet.Provider` behaviour and live in the
   runtime boundary.
@@ -521,6 +551,7 @@ The scaffold and chat path follow the accepted ADR rules:
 ## What this issue deliberately does not do
 
 - No broad provider framework or model registry.
+- No Prompt Lab tool execution, provider-backed refinement, or automatic prompt dispatch.
 - No tool calls, patch application, approval workflow, or verifier execution.
 - No Ecto schemas, migrations, or true SQLite dependency yet.
 - No Phoenix app, endpoint, router, LiveView, Plug, Cowboy, or web release.

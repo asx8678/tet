@@ -16,7 +16,10 @@ defmodule Tet.Runtime.StoreConfig do
     :load_autosave,
     :list_autosaves,
     :save_event,
-    :list_events
+    :list_events,
+    :save_prompt_history,
+    :list_prompt_history,
+    :fetch_prompt_history
   ]
 
   @doc "Resolves the configured store adapter and normalized store opts."
@@ -56,6 +59,7 @@ defmodule Tet.Runtime.StoreConfig do
     |> put_present(:path, path(opts))
     |> put_present(:autosave_path, autosave_path(opts))
     |> put_present(:events_path, events_path(opts))
+    |> put_present(:prompt_history_path, prompt_history_path(opts))
   end
 
   @doc "Returns the effective store path from opts, environment, or app config."
@@ -79,6 +83,14 @@ defmodule Tet.Runtime.StoreConfig do
       Keyword.get(opts, :event_path) ||
       System.get_env("TET_EVENTS_PATH") ||
       Application.get_env(:tet_runtime, :events_path)
+  end
+
+  @doc "Returns an explicit Prompt Lab history path, if one was configured."
+  def prompt_history_path(opts \\ []) when is_list(opts) do
+    Keyword.get(opts, :prompt_history_path) ||
+      Keyword.get(opts, :prompt_lab_history_path) ||
+      System.get_env("TET_PROMPT_HISTORY_PATH") ||
+      Application.get_env(:tet_runtime, :prompt_history_path)
   end
 
   defp missing_callbacks(adapter, callbacks) do
@@ -112,6 +124,15 @@ defmodule Tet.Runtime.StoreConfig do
   defp callback_exported?(adapter, :save_event), do: function_exported?(adapter, :save_event, 2)
 
   defp callback_exported?(adapter, :list_events), do: function_exported?(adapter, :list_events, 2)
+
+  defp callback_exported?(adapter, :save_prompt_history),
+    do: function_exported?(adapter, :save_prompt_history, 2)
+
+  defp callback_exported?(adapter, :list_prompt_history),
+    do: function_exported?(adapter, :list_prompt_history, 1)
+
+  defp callback_exported?(adapter, :fetch_prompt_history),
+    do: function_exported?(adapter, :fetch_prompt_history, 2)
 
   defp put_present(opts, _key, nil), do: opts
   defp put_present(opts, key, value), do: Keyword.put(opts, key, value)
