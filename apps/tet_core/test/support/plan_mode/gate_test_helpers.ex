@@ -49,6 +49,10 @@ defmodule Tet.PlanMode.GateTestHelpers do
     %{mode: :explore, task_category: :researching, task_id: "t4"}
   end
 
+  def relaxed_policy do
+    Tet.PlanMode.Policy.new!(%{require_active_task: false})
+  end
+
   # -- Mutating contract fixtures --
 
   def write_contract do
@@ -186,6 +190,18 @@ defmodule Tet.PlanMode.GateTestHelpers do
             effects: [:writes_file]
         }
     }
+  end
+
+  @doc """
+  A read-only contract that only declares [:acting] in task_categories,
+  intentionally omitting plan-safe categories like :researching and :planning.
+  Used to verify that contract_allows_category? is enforced as an independent
+  prerequisite for read-only contracts in acting-heavy contexts (BD-0025 QA).
+  """
+  def read_only_acting_only_contract do
+    %Contract{} = base = read_contract()
+
+    %{base | name: "read-acting-only", task_categories: [:acting]}
   end
 
   def string_metadata_contract do

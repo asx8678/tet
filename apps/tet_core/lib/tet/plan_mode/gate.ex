@@ -143,37 +143,59 @@ defmodule Tet.PlanMode.Gate do
     end
   end
 
-  # Category gate: the runtime task category must be both policy-allowed
-  # and contract-declared. Policy.plan_safe_category?/acting_category? checks
-  # policy rules; Policy.contract_allows_category?/2 enforces the contract's
-  # own task_categories declaration as an *independent* prerequisite — even
-  # read-only contracts must declare the runtime category before the
-  # read-only allow/guidance shortcut applies.
+  # Category gate: three-phase check with contract declaration as an
+  # independent prerequisite before any read-only allow/guidance shortcut.
+  #
+  #   Phase 1 — validate context: mode and category must be present atoms.
+  #   Phase 2 — enforce contract declaration: contract.task_categories must
+  #             include the runtime category. Read-only contracts are NOT
+  #             exempt; this prerequisite blocks before the allow/guidance
+  #             paths.
+  #   Phase 3 — evaluate permissions: plan-safe vs acting categories,
+  #             read-only shortcuts (only after phase 2 passed).
   defp check_category_gate(contract, policy, context) do
     mode = Map.get(context, :mode)
     category = Map.get(context, :task_category)
 
+    with :ok <- validate_category_context(mode, category),
+         :ok <- enforce_contract_category_declaration(contract, category) do
+      evaluate_category_permissions(contract, policy, mode, category)
+    end
+  end
+
+  # Phase 1: context must provide valid atom mode and category.
+  # Returns {:block, :invalid_context} for missing/non-atom values.
+  defp validate_category_context(mode, category) do
     cond do
-      is_nil(mode) or not is_atom(mode) ->
-        {:block, :invalid_context}
+      is_nil(mode) or not is_atom(mode) -> {:block, :invalid_context}
+      is_nil(category) or not is_atom(category) -> {:block, :invalid_context}
+      true -> :ok
+    end
+  end
 
-      is_nil(category) or not is_atom(category) ->
-        {:block, :invalid_context}
+  # Phase 2: the contract must declare the runtime category as an
+  # independent prerequisite. Even read-only contracts must declare the
+  # category before the read-only allow/guidance shortcut applies.
+  # Returns {:block, :category_blocks_tool} when not declared.
+  defp enforce_contract_category_declaration(contract, category) do
+    if Policy.contract_allows_category?(contract, category) do
+      :ok
+    else
+      {:block, :category_blocks_tool}
+    end
+  end
 
-      not Policy.contract_allows_category?(contract, category) ->
-        # Contract does not declare this category — block regardless
-        # of read-only status. This is the independent prerequisite.
-        {:block, :category_blocks_tool}
-
+  # Phase 3: after context validation and contract declaration pass,
+  # evaluate whether the mode/category/contract combination is permitted.
+  defp evaluate_category_permissions(contract, policy, mode, category) do
+    cond do
       Policy.plan_safe_mode?(policy, mode) ->
-        # Plan-safe modes already passed check_plan_mode_gate.
         if Policy.plan_safe_category?(policy, category) do
           :ok
         else
           # e.g., :plan mode with :acting category — the task has committed
-          # but the mode hasn't transitioned yet. Block mutating intent.
-          # Read-only contracts that already declared the category may
-          # still proceed (they passed the plan-mode gate above).
+          # but the mode hasn't transitioned yet. Read-only contracts that
+          # declared the category (passed phase 2) may still proceed.
           if Policy.read_only_contract?(contract) do
             :ok
           else
@@ -183,11 +205,11 @@ defmodule Tet.PlanMode.Gate do
 
       true ->
         # Non-plan modes: acting categories unlock mutating tools
-        # (contract already declared the category per prerequisite above).
+        # (contract declared the category per phase 2).
         if Policy.acting_category?(policy, category) do
           :ok
         else
-          # Read-only shortcut applies only when contract declared the category.
+          # Read-only shortcut applies only after phase 2 passed.
           if Policy.read_only_contract?(contract) do
             :ok
           else
