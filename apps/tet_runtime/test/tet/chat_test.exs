@@ -141,6 +141,51 @@ defmodule Tet.ChatTest do
     assert length(shown_messages) == 4
   end
 
+  test "ask can compact provider context without mutating persisted session history", %{
+    tmp_root: tmp_root
+  } do
+    path = tmp_path(tmp_root, "ask-compaction")
+    session_id = unique_session("ask-compaction")
+
+    assert {:ok, _first} =
+             Tet.ask("first compactable turn",
+               provider: :mock,
+               store_path: path,
+               session_id: session_id
+             )
+
+    assert {:ok, _second} =
+             Tet.ask("second compactable turn",
+               provider: :mock,
+               store_path: path,
+               session_id: session_id
+             )
+
+    assert {:ok, third} =
+             Tet.ask("third compacted turn",
+               provider: :mock,
+               store_path: path,
+               session_id: session_id,
+               compaction: [force: true, recent_count: 2]
+             )
+
+    assert third.assistant_message.content == "mock: third compacted turn"
+    assert third.compaction["original_message_count"] == 5
+    assert third.compaction["retained_message_count"] == 2
+    assert third.compaction["compacted_message_count"] == 3
+
+    assert {:ok, messages} = Tet.list_messages(session_id, store_path: path)
+
+    assert Enum.map(messages, & &1.content) == [
+             "first compactable turn",
+             "mock: first compactable turn",
+             "second compactable turn",
+             "mock: second compactable turn",
+             "third compacted turn",
+             "mock: third compacted turn"
+           ]
+  end
+
   test "openai-compatible provider validation rejects missing API key env", %{tmp_root: tmp_root} do
     without_env("TET_OPENAI_API_KEY", fn ->
       assert {:error, {:missing_provider_env, "TET_OPENAI_API_KEY"}} =
