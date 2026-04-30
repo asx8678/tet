@@ -3,6 +3,16 @@ defmodule Tet.CLITest do
 
   import ExUnit.CaptureIO
 
+  setup do
+    tmp_root = unique_tmp_root("tet-cli-test")
+
+    File.rm_rf!(tmp_root)
+    File.mkdir_p!(tmp_root)
+    on_exit(fn -> File.rm_rf!(tmp_root) end)
+
+    {:ok, tmp_root: tmp_root}
+  end
+
   test "doctor renders the standalone boundary through the public facade" do
     output = capture_io(fn -> assert Tet.CLI.run(["doctor"]) == 0 end)
 
@@ -10,9 +20,57 @@ defmodule Tet.CLITest do
     assert output =~ "tet_core, tet_store_sqlite, tet_runtime, tet_cli"
   end
 
+  test "ask streams mock output and persists the chat turn", %{tmp_root: tmp_root} do
+    path = tmp_path(tmp_root, "cli")
+
+    with_env(%{"TET_PROVIDER" => "mock", "TET_STORE_PATH" => path}, fn ->
+      output = capture_io(fn -> assert Tet.CLI.run(["ask", "hello", "cli"]) == 0 end)
+
+      assert output == "mock: hello cli\n"
+
+      persisted = File.read!(path)
+      assert persisted =~ ~s("role":"user")
+      assert persisted =~ ~s("content":"hello cli")
+      assert persisted =~ ~s("role":"assistant")
+      assert persisted =~ ~s("content":"mock: hello cli")
+    end)
+  end
+
+  test "ask without a prompt returns a deterministic usage error" do
+    output = capture_io(:stderr, fn -> assert Tet.CLI.run(["ask"]) == 64 end)
+
+    assert output =~ "usage: tet ask PROMPT"
+  end
+
   test "unknown commands return a deterministic usage error" do
     output = capture_io(:stderr, fn -> assert Tet.CLI.run(["web"]) == 64 end)
 
     assert output =~ "unknown tet command: web"
+  end
+
+  defp tmp_path(tmp_root, name), do: Path.join(tmp_root, "#{name}.jsonl")
+
+  defp unique_tmp_root(prefix) do
+    suffix = "#{System.pid()}-#{System.system_time(:nanosecond)}-#{unique_integer()}"
+    Path.join(System.tmp_dir!(), "#{prefix}-#{suffix}")
+  end
+
+  defp unique_integer do
+    System.unique_integer([:positive, :monotonic])
+  end
+
+  defp with_env(vars, fun) do
+    old_values = Map.new(vars, fn {name, _value} -> {name, System.get_env(name)} end)
+
+    Enum.each(vars, fn {name, value} -> System.put_env(name, value) end)
+
+    try do
+      fun.()
+    after
+      Enum.each(old_values, fn
+        {name, nil} -> System.delete_env(name)
+        {name, value} -> System.put_env(name, value)
+      end)
+    end
   end
 end

@@ -10,6 +10,7 @@ defmodule TetRuntime.MixProject do
       deps_path: "../../deps",
       lockfile: "../../mix.lock",
       elixir: ">= 1.16.0",
+      erlang: ">= 27.0",
       start_permanent: Mix.env() == :prod,
       deps: deps()
     ]
@@ -18,7 +19,7 @@ defmodule TetRuntime.MixProject do
   def application do
     [
       mod: {Tet.Application, []},
-      extra_applications: [:logger]
+      extra_applications: [:logger, :inets, :ssl]
     ]
   end
 
