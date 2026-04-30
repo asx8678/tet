@@ -16,7 +16,8 @@ defmodule Tet.Core do
     :prompts,
     :prompt_lab,
     :provider_behaviour,
-    :store_behaviour
+    :store_behaviour,
+    :tool_contracts
   ]
 
   @doc "Returns the conceptual capabilities reserved by the core app."

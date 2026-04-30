@@ -14,8 +14,8 @@ Primary sources:
 
 - `check this plans/plan 3/plan/docs/01_architecture.md`
 - `check this plans/plan 3/plan/docs/02_dependency_rules_and_guards.md`
-- `/Users/adam2/projects/tet/check this plans/plan claude/plan_v0.3/FINAL_ULTIMATE_PLAN.md`
-- `/Users/adam2/projects/tet/check this plans/plan claude/plan_v0.3/upgrades/12_durable_execution.md`
+- `check this plans/plan claude/plan_v0.3/FINAL_ULTIMATE_PLAN.md`
+- `check this plans/plan claude/plan_v0.3/upgrades/12_durable_execution.md`
 - [BD-0001 source inventory and missing-input report](../research/BD-0001_SOURCE_INVENTORY_AND_MISSING_INPUT_REPORT.md)
 
 ## Decision

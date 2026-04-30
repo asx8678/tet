@@ -14,8 +14,8 @@ Primary sources:
 
 - `check this plans/plan 3/plan/docs/00_comparison_and_decisions.md`
 - `check this plans/plan 3/plan/docs/04_data_storage_events.md`
-- `/Users/adam2/projects/tet/check this plans/plan claude/plan_v0.3/FINAL_ULTIMATE_PLAN.md`
-- `/Users/adam2/projects/tet/check this plans/plan claude/plan_v0.3/upgrades/12_durable_execution.md`
+- `check this plans/plan claude/plan_v0.3/FINAL_ULTIMATE_PLAN.md`
+- `check this plans/plan claude/plan_v0.3/upgrades/12_durable_execution.md`
 - `plans/ELIXIR_CLI_AGENT_GLOBAL_VISION.md`
 - `plans/ELIXIR_CLI_AGENT_PHASED_IMPLEMENTATION.md`
 

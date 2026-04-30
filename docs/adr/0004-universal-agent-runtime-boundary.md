@@ -14,8 +14,8 @@ Primary sources:
 
 - `plans/ELIXIR_CLI_AGENT_GLOBAL_VISION.md`
 - `plans/ELIXIR_CLI_AGENT_PHASED_IMPLEMENTATION.md`
-- `/Users/adam2/projects/tet/check this plans/plan claude/plan_v0.3/upgrades/12_durable_execution.md`
-- `/Users/adam2/projects/tet/check this plans/plan claude/plan_v0.3/extensions/15_mcp_and_agents.md`
+- `check this plans/plan claude/plan_v0.3/upgrades/12_durable_execution.md`
+- `check this plans/plan claude/plan_v0.3/extensions/15_mcp_and_agents.md`
 - [BD-0001 source inventory and missing-input report](../research/BD-0001_SOURCE_INVENTORY_AND_MISSING_INPUT_REPORT.md)
 
 ## Decision

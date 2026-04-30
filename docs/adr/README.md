@@ -21,11 +21,11 @@ The repository did not have an existing ADR directory or template before this is
 - `check this plans/plan 3/plan/docs/04_data_storage_events.md`
 - `check this plans/plan 3/plan/docs/05_tools_policy_approvals_verification.md`
 - `check this plans/plan 3/plan/docs/09_phoenix_optional_module.md`
-- `/Users/adam2/projects/tet/check this plans/plan claude/plan_v0.3/FINAL_ULTIMATE_PLAN.md`
-- `/Users/adam2/projects/tet/check this plans/plan claude/plan_v0.3/upgrades/12_durable_execution.md`
-- `/Users/adam2/projects/tet/check this plans/plan claude/plan_v0.3/upgrades/13_operations_and_telemetry.md`
-- `/Users/adam2/projects/tet/check this plans/plan claude/plan_v0.3/upgrades/17_phasing_and_scope.md`
-- `/Users/adam2/projects/tet/check this plans/plan claude/plan_v0.3/extensions/15_mcp_and_agents.md`
+- `check this plans/plan claude/plan_v0.3/FINAL_ULTIMATE_PLAN.md`
+- `check this plans/plan claude/plan_v0.3/upgrades/12_durable_execution.md`
+- `check this plans/plan claude/plan_v0.3/upgrades/13_operations_and_telemetry.md`
+- `check this plans/plan claude/plan_v0.3/upgrades/17_phasing_and_scope.md`
+- `check this plans/plan claude/plan_v0.3/extensions/15_mcp_and_agents.md`
 - `plans/ELIXIR_CLI_AGENT_GLOBAL_VISION.md`
 - `plans/ELIXIR_CLI_AGENT_PHASED_IMPLEMENTATION.md`
 

@@ -20,7 +20,7 @@ cute; duplicated policy engines are not.
 - `check this plans/plan 3/plan/docs/01_architecture.md`
 - `check this plans/plan 3/plan/docs/02_dependency_rules_and_guards.md`
 - `check this plans/plan 3/plan/docs/09_phoenix_optional_module.md`
-- `/Users/adam2/projects/tet/source/code_puppy-main/code_puppy/api/app.py`
+- `source/code_puppy-main/code_puppy/api/app.py`
 
 The Code Puppy FastAPI source is useful as a reminder that web adapters often
 own request lifecycle, middleware, HTTP routes, and WebSocket plumbing. Tet keeps
@@ -83,9 +83,14 @@ Current and future facade examples include calls shaped like:
 
 ```elixir
 Tet.doctor(opts)
+Tet.model_registry(opts)
 Tet.start_session(workspace_ref, opts)
 Tet.send_prompt(session_id, prompt, opts)
 Tet.ask(prompt, opts)
+Tet.compact_context(session_id, opts)
+Tet.autosave_session(session_id, prompt_attrs, opts)
+Tet.restore_autosave(session_id, opts)
+Tet.list_autosaves(opts)
 Tet.list_messages(session_id, opts)
 Tet.list_events(session_id, opts)
 Tet.subscribe_events()
@@ -98,9 +103,13 @@ Tet.subscribe_events(session_id)
 ```
 
 The web adapter may pattern-match or render core data contracts such as
-`%Tet.Event{}`, `%Tet.Message{}`, `%Tet.Session{}`, `%Tet.Task{}`,
-`%Tet.ToolRun{}`, `%Tet.Approval{}`, and `%Tet.Artifact{}` when those contracts
-exist. Rendering a struct is not permission to own its state machine.
+`%Tet.Event{}`, `%Tet.Message{}`, `%Tet.Session{}`, `%Tet.ModelRegistry{}`,
+`%Tet.Tool.Contract{}`, `%Tet.Task{}`, `%Tet.ToolRun{}`, `%Tet.Approval{}`, and
+`%Tet.Artifact{}` when those contracts exist. For the current read-only tool
+catalog, the optional web adapter may render the pure public
+`Tet.Tool.read_only_contracts/0` data from `tet_core`; any future tool execution
+must be exposed through a runtime-owned `Tet.*` facade first. Rendering a struct
+is not permission to own its state machine.
 
 ## Explicitly forbidden ownership
 

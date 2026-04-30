@@ -3,13 +3,14 @@
 This repository contains the minimal Elixir umbrella/release scaffold plus the
 standalone streaming chat, session resume, event timeline shell,
 autosave/restore checkpoints, compacted context, editable model registry
-schema, Prompt Lab model/history storage, and doctor diagnostics path. It
-includes the optional web facade contract from `tet-db6.7` / `BD-0007`, the
-event timeline shell from `tet-db6.8` / `BD-0008`, the web removability gate from
-`tet-db6.9` / `BD-0009`, the prompt-layer contract from `tet-db6.10` /
-`BD-0010`, autosave/restore checkpoints from `tet-db6.11` / `BD-0011`, compacted
-context from `tet-db6.12` / `BD-0012`, the editable model registry schema from
-`tet-db6.13` / `BD-0013`, and the Prompt Lab preset/refiner model from
+schema, read-only tool contracts, Prompt Lab model/history storage, and doctor
+diagnostics path. It includes the optional web facade contract from `tet-db6.7` /
+`BD-0007`, the event timeline shell from `tet-db6.8` / `BD-0008`, the web
+removability gate from `tet-db6.9` / `BD-0009`, the prompt-layer contract from
+`tet-db6.10` / `BD-0010`, autosave/restore checkpoints from `tet-db6.11` /
+`BD-0011`, compacted context from `tet-db6.12` / `BD-0012`, the editable model
+registry schema from `tet-db6.13` / `BD-0013`, read-only tool contracts from
+`tet-db6.20` / `BD-0020`, and the Prompt Lab preset/refiner model from
 `tet-db6.47` / `BD-0047`.
 
 The implementation stays CLI-first and OTP-first. The CLI parses arguments and
@@ -27,7 +28,7 @@ The `tet_standalone` release contains these conceptual applications:
 
 | App | Boundary role | Current implementation scope |
 |---|---|---|
-| `tet_core` | Pure domain/contracts boundary | Metadata, `%Tet.Event{}`, `%Tet.Message{}`, `%Tet.Session{}`, `%Tet.Autosave{}`, `Tet.Prompt` prompt-layer contract, `Tet.Compaction` compacted-context contract, model registry schema/validation, `Tet.PromptLab`, `Tet.Provider` behaviour, and `Tet.Store` behaviour |
+| `tet_core` | Pure domain/contracts boundary | Metadata, `%Tet.Event{}`, `%Tet.Message{}`, `%Tet.Session{}`, `%Tet.Autosave{}`, `Tet.Prompt` prompt-layer contract, `Tet.Compaction` compacted-context contract, model registry schema/validation, `Tet.Tool` read-only tool contracts, `Tet.PromptLab`, `Tet.Provider` behaviour, and `Tet.Store` behaviour |
 | `tet_store_sqlite` | Default standalone store adapter boundary | Dependency-free durable JSON Lines message, derived-session, autosave checkpoint, event timeline, and Prompt Lab history store for this phase; true SQLite can replace the file format later behind the same behaviour |
 | `tet_runtime` | OTP runtime and public `Tet.*` facade owner | Supervised runtime shell, Registry-backed event bus, `Tet.doctor/1`, `Tet.ask/2`, `Tet.model_registry/1`, session query/resume/autosave orchestration, compacted-context orchestration, Prompt Lab facade/history orchestration, `Tet.list_events/1/2`, `Tet.subscribe_events/0/1`, provider config, editable model registry loader, mock provider, and OpenAI-compatible streaming adapter |
 | `tet_cli` | Thin terminal adapter | `tet ask`, `tet events`, `tet timeline`, `tet sessions`, `tet session show`, `tet doctor`, and help output through the public facade |
@@ -503,6 +504,24 @@ Every compaction result records deterministic metadata:
 model call while still persisting the full user/assistant message log. Autosave
 accepts the same `:compaction` option and records the generated prompt
 compaction layer in prompt debug artifacts.
+
+## Read-only tool contracts
+
+BD-0020 adds pure `tet_core` contracts for the native read-only tool catalog:
+`list`, `read`, `search`, `repo-scan`, `git-diff`, and `ask-user`. They are
+available through `Tet.Tool.read_only_contracts/0`,
+`Tet.Tool.read_only_contract_names/0`, and
+`Tet.Tool.fetch_read_only_contract/1`.
+
+The contracts include JSON-schema-like input/output/error shapes, uniform
+paths/results/bytes/timeouts limits, redaction metadata, required
+session/task/tool-call correlation, mode/category metadata for future gates, and
+explicit `read_only: true` / `mutation: :none` execution posture. `ask-user` is
+interactive but still non-mutating. No executor, filesystem access, git command,
+Event Log write, or web dependency is introduced by this issue.
+
+See [`BD-0020_READ_ONLY_TOOL_CONTRACTS.md`](BD-0020_READ_ONLY_TOOL_CONTRACTS.md)
+for the catalog, stable error envelope, and future plan-mode/executor guidance.
 
 ## Persistence
 

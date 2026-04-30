@@ -16,7 +16,7 @@ Primary sources:
 - `check this plans/plan 3/plan/docs/02_dependency_rules_and_guards.md`
 - `plans/ELIXIR_CLI_AGENT_GLOBAL_VISION.md`
 - `plans/ELIXIR_CLI_AGENT_PHASED_IMPLEMENTATION.md`
-- `/Users/adam2/projects/tet/check this plans/plan claude/plan_v0.3/extensions/15_mcp_and_agents.md`
+- `check this plans/plan claude/plan_v0.3/extensions/15_mcp_and_agents.md`
 
 ## Decision
 
