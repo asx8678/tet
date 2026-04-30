@@ -6,7 +6,7 @@ defmodule Tet.Runtime.Chat do
   selection, message persistence, event publication, and session ids.
   """
 
-  alias Tet.Runtime.{Ids, ProviderConfig}
+  alias Tet.Runtime.{Ids, ProviderConfig, StoreConfig}
 
   @doc "Runs one prompt turn, streams assistant chunks, and persists both messages."
   def ask(prompt, opts \\ []) when is_binary(prompt) and is_list(opts) do
@@ -14,7 +14,8 @@ defmodule Tet.Runtime.Chat do
 
     with :ok <- validate_prompt(prompt),
          {:ok, {provider, provider_opts}} <- ProviderConfig.resolve(opts),
-         {:ok, store_adapter, store_opts} <- resolve_store(opts) do
+         {:ok, store_adapter, store_opts} <-
+           StoreConfig.resolve(opts, [:save_message, :list_messages]) do
       session_id = Keyword.get(opts, :session_id) || Ids.session_id()
       emit = Keyword.get(opts, :on_event, fn _event -> :ok end)
       emit_event = &emit_event(session_id, emit, &1)
@@ -43,7 +44,7 @@ defmodule Tet.Runtime.Chat do
 
   @doc "Lists persisted messages for a session through the configured store."
   def list_messages(session_id, opts \\ []) when is_binary(session_id) and is_list(opts) do
-    with {:ok, store_adapter, store_opts} <- resolve_store(opts) do
+    with {:ok, store_adapter, store_opts} <- StoreConfig.resolve(opts, [:list_messages]) do
       list_messages(store_adapter, session_id, store_opts)
     end
   end
@@ -59,32 +60,6 @@ defmodule Tet.Runtime.Chat do
       content: content,
       timestamp: Ids.timestamp()
     })
-  end
-
-  defp resolve_store(opts) do
-    adapter = Keyword.get(opts, :store_adapter, Application.get_env(:tet_runtime, :store_adapter))
-
-    cond do
-      is_nil(adapter) ->
-        {:error, :store_not_configured}
-
-      Code.ensure_loaded?(adapter) and function_exported?(adapter, :save_message, 2) and
-          function_exported?(adapter, :list_messages, 2) ->
-        {:ok, adapter, store_opts(opts)}
-
-      true ->
-        {:error, {:store_adapter_unavailable, adapter}}
-    end
-  end
-
-  defp store_opts(opts) do
-    path =
-      Keyword.get(opts, :store_path) ||
-        Keyword.get(opts, :path) ||
-        System.get_env("TET_STORE_PATH") ||
-        Application.get_env(:tet_runtime, :store_path)
-
-    if path, do: [path: path], else: []
   end
 
   defp save_message(adapter, message, store_opts, emit) do

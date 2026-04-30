@@ -33,8 +33,14 @@ defmodule Tet.CLI do
       ["doctor" | _rest] ->
         doctor()
 
-      ["ask" | prompt_parts] ->
-        ask(prompt_parts)
+      ["sessions" | rest] ->
+        sessions(rest)
+
+      ["session" | rest] ->
+        session(rest)
+
+      ["ask" | args] ->
+        ask(args)
 
       [unknown | _] ->
         IO.puts(:stderr, "unknown tet command: #{unknown}")
@@ -47,7 +53,7 @@ defmodule Tet.CLI do
     case Tet.doctor() do
       {:ok, report} ->
         IO.puts(Render.doctor(report))
-        0
+        if Map.get(report, :status, :ok) == :ok, do: 0, else: 1
 
       {:error, reason} ->
         IO.puts(:stderr, "tet doctor failed: #{inspect(reason)}")
@@ -55,18 +61,88 @@ defmodule Tet.CLI do
     end
   end
 
-  defp ask(prompt_parts) do
-    prompt = prompt_parts |> Enum.join(" ") |> String.trim()
+  defp sessions([]) do
+    case Tet.list_sessions() do
+      {:ok, sessions} ->
+        IO.puts(Render.sessions(sessions))
+        0
 
-    if prompt == "" do
-      IO.puts(:stderr, "usage: tet ask PROMPT")
-      64
-    else
-      run_ask(prompt)
+      {:error, reason} ->
+        IO.puts(:stderr, "tet sessions failed: #{Render.error(reason)}")
+        1
     end
   end
 
-  defp run_ask(prompt) do
+  defp sessions(_args) do
+    IO.puts(:stderr, "usage: tet sessions")
+    64
+  end
+
+  defp session(["show", session_id]) do
+    case Tet.show_session(session_id) do
+      {:ok, session} ->
+        IO.puts(Render.session_show(session))
+        0
+
+      {:error, reason} ->
+        IO.puts(:stderr, "tet session show failed: #{Render.error(reason)}")
+        if reason == :session_not_found, do: 66, else: 1
+    end
+  end
+
+  defp session(_args) do
+    IO.puts(:stderr, "usage: tet session show SESSION_ID")
+    64
+  end
+
+  defp ask(args) do
+    case parse_ask(args, []) do
+      {:ok, opts, prompt_parts} ->
+        prompt = prompt_parts |> Enum.join(" ") |> String.trim()
+
+        if prompt == "" do
+          IO.puts(:stderr, "usage: tet ask [--session SESSION_ID] PROMPT")
+          64
+        else
+          run_ask(prompt, opts)
+        end
+
+      {:error, message} ->
+        IO.puts(:stderr, message)
+        IO.puts(:stderr, "usage: tet ask [--session SESSION_ID] PROMPT")
+        64
+    end
+  end
+
+  defp parse_ask([], opts), do: {:ok, Enum.reverse(opts), []}
+
+  defp parse_ask(["--" | prompt_parts], opts), do: {:ok, Enum.reverse(opts), prompt_parts}
+
+  defp parse_ask(["--session", session_id | rest], opts) do
+    session_id = String.trim(session_id)
+
+    if session_id == "" do
+      {:error, "--session requires a non-empty session id"}
+    else
+      parse_ask(rest, [{:session_id, session_id} | opts])
+    end
+  end
+
+  defp parse_ask(["--session"], _opts), do: {:error, "--session requires a session id"}
+
+  defp parse_ask(["--session=" <> session_id | rest], opts) do
+    session_id = String.trim(session_id)
+
+    if session_id == "" do
+      {:error, "--session requires a non-empty session id"}
+    else
+      parse_ask(rest, [{:session_id, session_id} | opts])
+    end
+  end
+
+  defp parse_ask(prompt_parts, opts), do: {:ok, Enum.reverse(opts), prompt_parts}
+
+  defp run_ask(prompt, opts) do
     on_event = fn event ->
       case Render.stream_event(event) do
         nil -> :ok
@@ -74,7 +150,7 @@ defmodule Tet.CLI do
       end
     end
 
-    case Tet.ask(prompt, on_event: on_event) do
+    case Tet.ask(prompt, Keyword.put(opts, :on_event, on_event)) do
       {:ok, _result} ->
         IO.write("\n")
         0
