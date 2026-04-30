@@ -3,6 +3,7 @@ defmodule Tet.Runtime.Ids do
 
   def session_id, do: "ses_" <> unique_suffix()
   def message_id, do: "msg_" <> unique_suffix()
+  def request_id, do: "req_" <> unique_suffix()
 
   def timestamp do
     DateTime.utc_now()

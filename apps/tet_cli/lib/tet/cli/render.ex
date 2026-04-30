@@ -16,8 +16,16 @@ defmodule Tet.CLI.Render do
     """
   end
 
-  def stream_event(%Tet.Event{type: :assistant_chunk, payload: payload}) do
-    Map.get(payload, :content) || Map.get(payload, "content") || ""
+  def stream_event(%Tet.Event{type: :provider_text_delta, payload: payload}) do
+    Map.get(payload, :text) || Map.get(payload, "text") || ""
+  end
+
+  def stream_event(%Tet.Event{type: :assistant_chunk, metadata: metadata} = event) do
+    if normalized_text_compat?(metadata) do
+      nil
+    else
+      assistant_chunk_content(event)
+    end
   end
 
   def stream_event(_event), do: nil
@@ -141,6 +149,24 @@ defmodule Tet.CLI.Render do
     |> compact_details()
   end
 
+  defp event_details(%Tet.Event{type: :provider_text_delta, payload: payload}) do
+    [
+      maybe_detail("text", payload_value(payload, :text), quoted?: true),
+      maybe_detail("provider", payload_value(payload, :provider)),
+      maybe_detail("model", payload_value(payload, :model))
+    ]
+    |> compact_details()
+  end
+
+  defp event_details(%Tet.Event{type: :provider_error, payload: payload}) do
+    [
+      maybe_detail("kind", payload_value(payload, :kind)),
+      maybe_detail("retryable", payload_value(payload, :retryable?)),
+      maybe_detail("detail", payload_value(payload, :detail), quoted?: true)
+    ]
+    |> compact_details()
+  end
+
   defp event_details(%Tet.Event{payload: payload}) when map_size(payload) == 0, do: ""
 
   defp event_details(%Tet.Event{payload: payload}) do
@@ -148,6 +174,14 @@ defmodule Tet.CLI.Render do
     |> Enum.sort_by(fn {key, _value} -> to_string(key) end)
     |> Enum.map(fn {key, value} -> maybe_detail(to_string(key), value) end)
     |> compact_details()
+  end
+
+  defp normalized_text_compat?(metadata) do
+    payload_value(metadata, :normalized_type) in [:provider_text_delta, "provider_text_delta"]
+  end
+
+  defp assistant_chunk_content(%Tet.Event{payload: payload}) do
+    Map.get(payload, :content) || Map.get(payload, "content") || ""
   end
 
   defp maybe_detail(key, value, opts \\ [])
@@ -184,6 +218,7 @@ defmodule Tet.CLI.Render do
 
   defp format_value(value) when is_binary(value), do: preview(value)
   defp format_value(value) when is_atom(value), do: Atom.to_string(value)
+  defp format_value(value) when is_boolean(value), do: to_string(value)
   defp format_value(value) when is_integer(value), do: Integer.to_string(value)
   defp format_value(value), do: inspect(value)
 

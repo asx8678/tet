@@ -68,35 +68,43 @@ defmodule Tet.ChatTest do
 
     live_events = collect_tet_events(session_id)
 
-    assert Enum.map(live_events, & &1.type) == [
-             :message_persisted,
-             :assistant_chunk,
-             :assistant_chunk,
-             :assistant_chunk,
-             :message_persisted
-           ]
+    expected_types = [
+      :message_persisted,
+      :provider_start,
+      :provider_text_delta,
+      :assistant_chunk,
+      :provider_text_delta,
+      :assistant_chunk,
+      :provider_text_delta,
+      :assistant_chunk,
+      :provider_done,
+      :message_persisted
+    ]
+
+    assert Enum.map(live_events, & &1.type) == expected_types
 
     assert {:ok, events} = Tet.list_events(session_id, store_path: path)
 
-    assert Enum.map(events, & &1.sequence) == [1, 2, 3, 4, 5]
+    assert Enum.map(events, & &1.sequence) == Enum.to_list(1..10)
 
-    assert Enum.map(events, & &1.type) == [
-             :message_persisted,
-             :assistant_chunk,
-             :assistant_chunk,
-             :assistant_chunk,
-             :message_persisted
-           ]
+    assert Enum.map(events, & &1.type) == expected_types
 
     assert Enum.all?(events, &(&1.session_id == session_id))
     assert event_value(List.first(events), :role) == "user"
     assert event_value(List.last(events), :role) == "assistant"
 
-    assert Enum.map(Enum.slice(events, 1, 3), &event_value(&1, :content)) == [
-             "mock",
-             ": ",
-             "timeline please"
-           ]
+    assert events |> Enum.find(&(&1.type == :provider_start)) |> event_value(:provider) == "mock"
+
+    assert events |> Enum.find(&(&1.type == :provider_done)) |> event_value(:stop_reason) ==
+             "stop"
+
+    assert events
+           |> Enum.filter(&(&1.type == :provider_text_delta))
+           |> Enum.map(&event_value(&1, :text)) == ["mock", ": ", "timeline please"]
+
+    assert events
+           |> Enum.filter(&(&1.type == :assistant_chunk))
+           |> Enum.map(&event_value(&1, :content)) == ["mock", ": ", "timeline please"]
   end
 
   test "session resume appends turns under the same session id", %{tmp_root: tmp_root} do
@@ -474,94 +482,6 @@ defmodule Tet.ChatTest do
   end
 
   defp start_openai_stream_server(chunks, opts \\ []) do
-    parent = self()
-
-    {:ok, listen} =
-      :gen_tcp.listen(0, [
-        :binary,
-        active: false,
-        ip: {127, 0, 0, 1},
-        packet: :raw,
-        reuseaddr: true
-      ])
-
-    {:ok, port} = :inet.port(listen)
-
-    pid =
-      spawn_link(fn ->
-        {:ok, socket} = :gen_tcp.accept(listen)
-        {:ok, request} = recv_request(socket, "")
-        send(parent, {:openai_request, request})
-        send_response(socket, chunks, opts)
-        :gen_tcp.close(socket)
-        :gen_tcp.close(listen)
-      end)
-
-    {:ok, %{pid: pid, base_url: "http://127.0.0.1:#{port}/v1"}}
-  end
-
-  defp recv_request(socket, acc) do
-    case :gen_tcp.recv(socket, 0, 1_000) do
-      {:ok, data} ->
-        acc = acc <> data
-
-        if String.contains?(acc, "\r\n\r\n") and complete_body?(acc) do
-          {:ok, acc}
-        else
-          recv_request(socket, acc)
-        end
-
-      {:error, reason} ->
-        {:error, reason}
-    end
-  end
-
-  defp complete_body?(request) do
-    [headers, body] = String.split(request, "\r\n\r\n", parts: 2)
-
-    case Regex.run(~r/content-length:\s*(\d+)/i, headers) do
-      [_, length] -> byte_size(body) >= String.to_integer(length)
-      _ -> true
-    end
-  end
-
-  defp send_response(socket, chunks, opts) do
-    :gen_tcp.send(socket, [
-      "HTTP/1.1 200 OK\r\n",
-      "content-type: text/event-stream\r\n",
-      "transfer-encoding: chunked\r\n",
-      "connection: close\r\n\r\n"
-    ])
-
-    Enum.each(chunks, fn chunk ->
-      send_chunk(socket, "data: #{json_chunk(chunk)}\n\n")
-    end)
-
-    if Keyword.get(opts, :send_done, true) do
-      send_chunk(socket, "data: [DONE]\n\n")
-    end
-
-    opts
-    |> Keyword.get(:after_done, [])
-    |> Enum.each(fn chunk ->
-      send_chunk(socket, "data: #{json_chunk(chunk)}\n\n")
-    end)
-
-    if trailing = Keyword.get(opts, :trailing) do
-      send_chunk(socket, trailing)
-    end
-
-    :gen_tcp.send(socket, "0\r\n\r\n")
-  end
-
-  defp send_chunk(socket, data) do
-    size = data |> byte_size() |> Integer.to_string(16)
-    :gen_tcp.send(socket, [size, "\r\n", data, "\r\n"])
-  end
-
-  defp json_chunk(content) do
-    %{"choices" => [%{"delta" => %{"content" => content}}]}
-    |> :json.encode()
-    |> IO.iodata_to_binary()
+    Tet.Runtime.OpenAIStreamServer.start(self(), chunks, opts)
   end
 end
