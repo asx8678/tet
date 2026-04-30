@@ -8,6 +8,7 @@ defmodule Tet.Core do
   """
 
   @capabilities [
+    :compaction,
     :contracts,
     :events,
     :messages,

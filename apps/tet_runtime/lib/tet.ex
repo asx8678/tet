@@ -7,7 +7,7 @@ defmodule Tet do
   CLI and optional adapters pointed at the same public API.
   """
 
-  alias Tet.Runtime.{Autosave, Boundary, Doctor, PromptLab, Sessions, Timeline}
+  alias Tet.Runtime.{Autosave, Boundary, Compaction, Doctor, PromptLab, Sessions, Timeline}
 
   @doc "Returns the standalone boundary declared for this release profile."
   def boundary do
@@ -53,6 +53,11 @@ defmodule Tet do
   @doc "Resumes a persisted session by sending another prompt under the same id."
   def resume_session(session_id, prompt, opts \\ []) when is_binary(session_id) do
     send_prompt(session_id, prompt, opts)
+  end
+
+  @doc "Compacts persisted session context without mutating the durable message log."
+  def compact_context(session_id, opts \\ []) do
+    Compaction.compact_context(session_id, opts)
   end
 
   @doc "Autosaves a persisted session with prompt metadata and debug artifacts."

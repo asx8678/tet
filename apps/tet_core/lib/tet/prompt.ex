@@ -506,5 +506,11 @@ defmodule Tet.Prompt do
   end
 
   defp put_present(map, _key, nil), do: map
-  defp put_present(map, key, value), do: Map.put(map, key, value)
+
+  defp put_present(map, key, value) do
+    map
+    |> Map.delete(key)
+    |> Map.delete(Atom.to_string(key))
+    |> Map.put(key, value)
+  end
 end
