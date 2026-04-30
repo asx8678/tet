@@ -49,7 +49,9 @@ defmodule Tet.Umbrella.MixProject do
         "standalone.check": :test,
         "web.facade_contract": :test,
         "web.removability": :test,
-        "release.standalone": :prod
+        "release.acceptance": :test,
+        "release.standalone": :prod,
+        "smoke.first_mile": :prod
       ]
     ]
   end
@@ -64,7 +66,9 @@ defmodule Tet.Umbrella.MixProject do
       ],
       "web.facade_contract": [&check_web_facade_contract/1],
       "web.removability": [&check_web_removability/1],
-      "release.standalone": ["release tet_standalone --overwrite"]
+      "release.acceptance": [&check_release_acceptance/1],
+      "release.standalone": ["release tet_standalone --overwrite"],
+      "smoke.first_mile": [&smoke_first_mile/1]
     ]
   end
 
@@ -80,10 +84,18 @@ defmodule Tet.Umbrella.MixProject do
     run_script!("tools/check_web_removability.sh")
   end
 
-  defp run_script!(path) do
+  defp check_release_acceptance(args) do
+    run_script!("tools/check_release_acceptance.sh", args)
+  end
+
+  defp smoke_first_mile(args) do
+    run_script!("tools/smoke_first_mile.sh", args)
+  end
+
+  defp run_script!(path, args \\ []) do
     script = Path.expand(path, __DIR__)
 
-    case System.cmd(script, [], cd: __DIR__, stderr_to_stdout: true) do
+    case System.cmd(script, args, cd: __DIR__, stderr_to_stdout: true) do
       {output, 0} ->
         Mix.shell().info(output)
 
