@@ -17,6 +17,12 @@ defmodule Tet.Event do
     :provider_error
   ]
 
+  @profile_swap_types [
+    :profile_swap_queued,
+    :profile_swap_applied,
+    :profile_swap_rejected
+  ]
+
   @provider_route_types [
     :provider_route_decision,
     :provider_route_attempt,
@@ -31,7 +37,7 @@ defmodule Tet.Event do
                  :message_persisted,
                  :session_started,
                  :session_resumed
-               ] ++ @provider_types ++ @provider_route_types
+               ] ++ @provider_types ++ @provider_route_types ++ @profile_swap_types
 
   @enforce_keys [:type]
   defstruct [:type, :session_id, :sequence, payload: %{}, metadata: %{}]
@@ -41,6 +47,9 @@ defmodule Tet.Event do
           | :message_persisted
           | :session_started
           | :session_resumed
+          | :profile_swap_queued
+          | :profile_swap_applied
+          | :profile_swap_rejected
           | :provider_start
           | :provider_text_delta
           | :provider_tool_call_delta
@@ -70,6 +79,24 @@ defmodule Tet.Event do
 
   @doc "Returns auditable provider router decision event types."
   def provider_route_types, do: @provider_route_types
+
+  @doc "Returns profile swap lifecycle event types."
+  def profile_swap_types, do: @profile_swap_types
+
+  @doc "Builds a normalized profile-swap-queued event."
+  def profile_swap_queued(payload \\ %{}, opts \\ []) when is_map(payload) and is_list(opts) do
+    swap_event(:profile_swap_queued, payload, opts)
+  end
+
+  @doc "Builds a normalized profile-swap-applied event."
+  def profile_swap_applied(payload \\ %{}, opts \\ []) when is_map(payload) and is_list(opts) do
+    swap_event(:profile_swap_applied, payload, opts)
+  end
+
+  @doc "Builds a normalized profile-swap-rejected event."
+  def profile_swap_rejected(payload \\ %{}, opts \\ []) when is_map(payload) and is_list(opts) do
+    swap_event(:profile_swap_rejected, payload, opts)
+  end
 
   @doc "Builds a normalized provider-start event."
   def provider_start(payload \\ %{}, opts \\ []) when is_map(payload) and is_list(opts) do
@@ -164,6 +191,16 @@ defmodule Tet.Event do
   def from_map(attrs) when is_map(attrs), do: new(attrs)
 
   defp provider_event(type, payload, opts) do
+    %__MODULE__{
+      type: type,
+      session_id: Keyword.get(opts, :session_id),
+      sequence: Keyword.get(opts, :sequence),
+      payload: payload,
+      metadata: Keyword.get(opts, :metadata, %{})
+    }
+  end
+
+  defp swap_event(type, payload, opts) do
     %__MODULE__{
       type: type,
       session_id: Keyword.get(opts, :session_id),

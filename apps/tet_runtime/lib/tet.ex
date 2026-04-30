@@ -17,6 +17,8 @@ defmodule Tet do
     PromptLab,
     Remote,
     Sessions,
+    Session,
+    SessionRegistry,
     Timeline
   }
 
@@ -50,10 +52,94 @@ defmodule Tet do
     ProfileRegistry.get(profile_id, opts)
   end
 
-  @doc "Starts a standalone session id for prompt turns."
-  def start_session(_workspace_ref, _opts \\ []) do
-    {:ok, %{session_id: Tet.Runtime.Ids.session_id()}}
+  @doc """
+  Starts a runtime session process with the given profile and returns its
+  session id and pid.
+  """
+  def start_session(workspace_ref_or_opts, opts \\ []) do
+    {workspace_ref, session_opts} = normalize_start_args(workspace_ref_or_opts, opts)
+
+    session_id = session_opts[:session_id] || Tet.Runtime.Ids.session_id()
+    profile = session_opts[:profile] || "planner"
+
+    state_opts = %{
+      session_id: session_id,
+      active_profile: profile
+    }
+
+    name = session_opts[:name] || {:via, Registry, {SessionRegistry.name(), session_id}}
+
+    case Session.start_link(state_opts, name: name) do
+      {:ok, pid} ->
+        SessionRegistry.register(session_id, pid)
+
+        event =
+          Tet.Event.new(%{
+            type: :session_started,
+            session_id: session_id,
+            payload: %{profile: profile, workspace_ref: workspace_ref}
+          })
+
+        case event do
+          {:ok, event} ->
+            Tet.EventBus.publish(Timeline.all_topic(), event)
+            Tet.EventBus.publish({:session, session_id}, event)
+
+          _ ->
+            :ok
+        end
+
+        {:ok, %{session_id: session_id, pid: pid}}
+
+      {:error, reason} ->
+        {:error, reason}
+    end
   end
+
+  @doc """
+  Requests a profile swap on a running session.
+
+  If the session is at a safe turn boundary, the swap is applied immediately.
+  If the session is mid-turn, the swap is queued (default) or rejected
+  depending on the mode option.
+
+  Returns `{:ok, state, events}` on success or `{:error, reason}` on failure.
+  """
+  def switch_profile(session_id_or_pid, profile, opts \\ [])
+      when is_list(opts) do
+    with {:ok, session} <- resolve_session(session_id_or_pid) do
+      Session.request_swap(session, profile, opts)
+    end
+  end
+
+  @doc "Returns the current runtime state for a session."
+  def session_state(session_id_or_pid) do
+    with {:ok, session} <- resolve_session(session_id_or_pid) do
+      {:ok, Session.get_state(session)}
+    end
+  end
+
+  @doc "Lists all running session ids."
+  def list_running_sessions do
+    {:ok, SessionRegistry.list_sessions()}
+  end
+
+  defp normalize_start_args(workspace_ref, opts) when is_list(opts),
+    do: {workspace_ref, opts}
+
+  defp normalize_start_args(opts, []) when is_list(opts),
+    do: {nil, opts}
+
+  defp normalize_start_args(workspace_ref, opts) when is_binary(workspace_ref) and is_list(opts),
+    do: {workspace_ref, opts}
+
+  defp resolve_session(pid) when is_pid(pid), do: {:ok, pid}
+
+  defp resolve_session(session_id) when is_binary(session_id) do
+    SessionRegistry.lookup(session_id)
+  end
+
+  defp resolve_session(_other), do: {:error, :invalid_session}
 
   @doc "Runs a single prompt turn in an existing session."
   def send_prompt(session_id, prompt, opts \\ []) when is_binary(session_id) do
