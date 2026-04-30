@@ -53,6 +53,13 @@ Accepted fields:
 | `retained_message_count` | non-negative integer | Optional retained count. |
 | `metadata` | map | Optional extra metadata. Sensitive keys are redacted in debug output. |
 
+`Tet.Compaction.to_prompt_compactions/1` emits this shape for BD-0012 compacted
+context. Its metadata includes the deterministic split contract used by runtime:
+original count/range, retained count/ranges, compacted count/range, strategy,
+sanized options, tool-pair locations, protected tool-pair records, and orphaned
+tool-call/result diagnostics. Prompt debug redacts metadata through the central
+redactor and still does not print raw summary content.
+
 ### Attachment fields
 
 Attachment layers use system role and render whitelisted metadata only. Accepted
@@ -158,8 +165,12 @@ text, layer order, stable hashes, and redaction behavior.
 
 - The contract lives in `tet_core` because it is pure data validation and
   deterministic transformation.
-- Runtime session UX is unchanged; existing `%Tet.Message{}` values are consumed
+- Runtime session UX is unchanged by default; existing `%Tet.Message{}` values are consumed
   as session message layers without changing resume behavior.
+- When runtime or autosave opts into `Tet.Compaction`, retained original messages
+  are supplied as session message layers and generated compaction metadata is
+  supplied as a `compaction_metadata` layer, so prompt debug can show the split
+  without making the summary message part of durable session truth.
 - Provider adapters remain free to convert `Tet.Prompt.to_provider_messages/1`
   into whatever request shape their APIs require.
 - Autosave restore uses `Tet.Prompt.attachment_metadata/1` to persist normalized

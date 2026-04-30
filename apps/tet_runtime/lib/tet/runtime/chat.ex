@@ -6,7 +6,7 @@ defmodule Tet.Runtime.Chat do
   selection, message persistence, event publication, and session ids.
   """
 
-  alias Tet.Runtime.{Ids, ProviderConfig, StoreConfig}
+  alias Tet.Runtime.{Compaction, Ids, ProviderConfig, StoreConfig}
 
   @doc "Runs one prompt turn, streams assistant chunks, and persists both messages."
   def ask(prompt, opts \\ []) when is_binary(prompt) and is_list(opts) do
@@ -24,6 +24,7 @@ defmodule Tet.Runtime.Chat do
            {:ok, user_message} <-
              save_message(store_adapter, user_message, store_opts, emit_event),
            {:ok, history} <- list_messages(store_adapter, session_id, store_opts),
+           {:ok, history, compaction} <- maybe_compact_history(history, opts),
            provider_opts <- Keyword.put(provider_opts, :session_id, session_id),
            {:ok, response} <- provider.stream_chat(history, provider_opts, emit_event),
            {:ok, assistant_message} <- build_message(:assistant, response.content, session_id),
@@ -36,6 +37,7 @@ defmodule Tet.Runtime.Chat do
            model: Map.get(response, :model),
            user_message: user_message,
            assistant_message: assistant_message,
+           compaction: compaction,
            content: assistant_message.content
          }}
       end
@@ -80,6 +82,19 @@ defmodule Tet.Runtime.Chat do
 
   defp list_messages(adapter, session_id, store_opts) do
     adapter.list_messages(session_id, store_opts)
+  end
+
+  defp maybe_compact_history(history, opts) do
+    case Keyword.get(opts, :compaction, false) do
+      false ->
+        {:ok, history, nil}
+
+      _compaction ->
+        with {:ok, compaction_opts} <- Compaction.compaction_opts(opts),
+             {:ok, result} <- Tet.Compaction.compact(history, compaction_opts) do
+          {:ok, Tet.Compaction.to_provider_messages(result), result.metadata}
+        end
+    end
   end
 
   defp emit_event(session_id, adapter, store_opts, emit, %Tet.Event{} = event) do
