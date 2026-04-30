@@ -139,11 +139,9 @@ Optional environment variables:
 - `TET_STORE_PATH` — message log path; defaults to `.tet/messages.jsonl`.
 
 OpenAI-compatible streams are considered complete only after a `data: [DONE]`
-SSE payload. Non-empty trailing SSE buffers are rejected as incomplete/malformed
-so partial assistant turns are not persisted as successful responses. If a
-legacy/proxy endpoint is known to omit `[DONE]`, runtime/application config may
-set the explicit compatibility option `allow_incomplete_stream: true`; this does
-not permit malformed trailing SSE data.
+SSE payload. Missing `[DONE]`, content after `[DONE]`, and non-empty trailing
+SSE buffers are rejected as incomplete/malformed so partial assistant turns are
+not persisted as successful responses.
 
 Example:
 

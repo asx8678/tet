@@ -5,10 +5,9 @@ defmodule Tet.Runtime.Provider.OpenAICompatible do
   It calls `/chat/completions` with `stream: true` and emits assistant chunks
   from Server-Sent Event `data:` payloads. No SDK, no web stack, no drama.
 
-  Successful streams must end with `data: [DONE]` by default. For temporary
-  compatibility with non-conforming OpenAI-like endpoints, callers may pass
-  `allow_incomplete_stream: true`; that only relaxes the missing `[DONE]`
-  sentinel and still rejects a non-empty trailing SSE buffer as malformed.
+  Successful streams must end with `data: [DONE]`. Missing the sentinel,
+  receiving content after it, or leaving a non-empty trailing SSE buffer is
+  treated as incomplete/malformed.
   """
 
   @behaviour Tet.Provider
@@ -62,8 +61,13 @@ defmodule Tet.Runtime.Provider.OpenAICompatible do
         collect_stream(request_id, opts, emit, buffer, chunks, done?)
 
       {:http, {^request_id, :stream, part}} ->
-        with {:ok, buffer, chunks, done?} <- handle_part(part, buffer, chunks, done?, opts, emit) do
-          collect_stream(request_id, opts, emit, buffer, chunks, done?)
+        case handle_part(part, buffer, chunks, done?, opts, emit) do
+          {:ok, buffer, chunks, done?} ->
+            collect_stream(request_id, opts, emit, buffer, chunks, done?)
+
+          {:error, reason} ->
+            cancel_request(request_id)
+            {:error, reason}
         end
 
       {:http, {^request_id, :stream_end, _headers}} ->
@@ -119,22 +123,16 @@ defmodule Tet.Runtime.Provider.OpenAICompatible do
     {:error, :provider_stream_incomplete}
   end
 
-  defp finish(chunks, opts, done?, _buffer) do
-    if done? or allow_incomplete_stream?(opts) do
-      {:ok,
-       %{
-         content: chunks |> Enum.reverse() |> Enum.join(),
-         provider: :openai_compatible,
-         model: Keyword.fetch!(opts, :model)
-       }}
-    else
-      {:error, :provider_stream_incomplete}
-    end
+  defp finish(chunks, opts, true, _buffer) do
+    {:ok,
+     %{
+       content: chunks |> Enum.reverse() |> Enum.join(),
+       provider: :openai_compatible,
+       model: Keyword.fetch!(opts, :model)
+     }}
   end
 
-  defp allow_incomplete_stream?(opts) do
-    Keyword.get(opts, :allow_incomplete_stream, false) == true
-  end
+  defp finish(_chunks, _opts, false, _buffer), do: {:error, :provider_stream_incomplete}
 
   defp sse_payloads(data) do
     normalized = :binary.replace(data, "\r\n", "\n", [:global])

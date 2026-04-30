@@ -131,11 +131,11 @@ defmodule Tet.ChatTest do
     assert_receive {:openai_request, _request}, 1_000
   end
 
-  test "direct openai-compatible provider allows missing done only with compatibility option" do
-    session_id = unique_session("provider-compat")
+  test "direct openai-compatible provider rejects missing done even with obsolete option" do
+    session_id = unique_session("provider-obsolete-compat")
     {:ok, server} = start_openai_stream_server(["legacy"], send_done: false)
 
-    assert {:ok, result} =
+    assert {:error, :provider_stream_incomplete} =
              Tet.Runtime.Provider.OpenAICompatible.stream_chat(
                provider_history(session_id, "hello"),
                provider_opts(server, session_id, allow_incomplete_stream: true),
@@ -143,8 +143,38 @@ defmodule Tet.ChatTest do
              )
 
     assert_receive {:openai_request, _request}, 1_000
-    assert result.content == "legacy"
-    assert result.provider == :openai_compatible
+  end
+
+  test "provider config does not forward obsolete incomplete-stream option paths" do
+    with_app_env(
+      :tet_runtime,
+      :openai_compatible,
+      [allow_incomplete_stream: true],
+      fn ->
+        assert {:ok, {Tet.Runtime.Provider.OpenAICompatible, opts}} =
+                 Tet.Runtime.ProviderConfig.resolve(
+                   provider: :openai_compatible,
+                   api_key: "test-key",
+                   allow_incomplete_stream: true
+                 )
+
+        refute Keyword.has_key?(opts, :allow_incomplete_stream)
+      end
+    )
+  end
+
+  test "direct openai-compatible provider rejects content after done" do
+    session_id = unique_session("provider-after-done")
+    {:ok, server} = start_openai_stream_server(["first"], after_done: ["nope"])
+
+    assert {:error, :provider_stream_incomplete} =
+             Tet.Runtime.Provider.OpenAICompatible.stream_chat(
+               provider_history(session_id, "hello"),
+               provider_opts(server, session_id),
+               fn _event -> :ok end
+             )
+
+    assert_receive {:openai_request, _request}, 1_000
   end
 
   test "direct openai-compatible provider rejects a trailing partial SSE buffer" do
@@ -170,22 +200,25 @@ defmodule Tet.ChatTest do
     session_id = unique_session("runtime-incomplete")
     {:ok, server} = start_openai_stream_server(["partial"], send_done: false)
 
-    assert {:error, :provider_stream_incomplete} =
-             Tet.ask("please fail safely",
-               provider: :openai_compatible,
-               api_key: "test-key",
-               base_url: server.base_url,
-               model: "unit-test-model",
-               store_path: path,
-               session_id: session_id
-             )
+    with_app_env(:tet_runtime, :openai_compatible, [allow_incomplete_stream: true], fn ->
+      assert {:error, :provider_stream_incomplete} =
+               Tet.ask("please fail safely",
+                 provider: :openai_compatible,
+                 api_key: "test-key",
+                 base_url: server.base_url,
+                 model: "unit-test-model",
+                 store_path: path,
+                 session_id: session_id,
+                 allow_incomplete_stream: true
+               )
 
-    assert_receive {:openai_request, _request}, 1_000
+      assert_receive {:openai_request, _request}, 1_000
 
-    assert {:ok, [user_message]} = Tet.list_messages(session_id, store_path: path)
-    assert user_message.role == :user
-    assert user_message.content == "please fail safely"
-    refute File.read!(path) =~ ~s("role":"assistant")
+      assert {:ok, [user_message]} = Tet.list_messages(session_id, store_path: path)
+      assert user_message.role == :user
+      assert user_message.content == "please fail safely"
+      refute File.read!(path) =~ ~s("role":"assistant")
+    end)
   end
 
   test "store reports non-map JSONL records without crashing", %{tmp_root: tmp_root} do
@@ -251,6 +284,22 @@ defmodule Tet.ChatTest do
     with_env(%{name => nil}, fun)
   end
 
+  defp with_app_env(app, key, value, fun) do
+    old_value = Application.get_env(app, key)
+
+    Application.put_env(app, key, value)
+
+    try do
+      fun.()
+    after
+      if is_nil(old_value) do
+        Application.delete_env(app, key)
+      else
+        Application.put_env(app, key, old_value)
+      end
+    end
+  end
+
   defp with_env(vars, fun) do
     old_values = Map.new(vars, fn {name, _value} -> {name, System.get_env(name)} end)
 
@@ -271,7 +320,16 @@ defmodule Tet.ChatTest do
 
   defp start_openai_stream_server(chunks, opts \\ []) do
     parent = self()
-    {:ok, listen} = :gen_tcp.listen(0, [:binary, active: false, packet: :raw, reuseaddr: true])
+
+    {:ok, listen} =
+      :gen_tcp.listen(0, [
+        :binary,
+        active: false,
+        ip: {127, 0, 0, 1},
+        packet: :raw,
+        reuseaddr: true
+      ])
+
     {:ok, port} = :inet.port(listen)
 
     pid =
@@ -327,6 +385,12 @@ defmodule Tet.ChatTest do
     if Keyword.get(opts, :send_done, true) do
       send_chunk(socket, "data: [DONE]\n\n")
     end
+
+    opts
+    |> Keyword.get(:after_done, [])
+    |> Enum.each(fn chunk ->
+      send_chunk(socket, "data: #{json_chunk(chunk)}\n\n")
+    end)
 
     if trailing = Keyword.get(opts, :trailing) do
       send_chunk(socket, trailing)
