@@ -69,10 +69,10 @@ fields:
 | `metadata` | map | Optional control/debug metadata; not rendered into prompt content except through redacted debug output. |
 
 Rejected attachment payload keys: `content`, `data`, `bytes`, and `body`. The
-prompt layer carries metadata, not raw attachment bytes. This is the handoff
-point for future `BD-0011` autosave/attachments work: autosave can provide
-stable artifact ids, byte sizes, digests, media types, and storage references
-without making the prompt contract responsible for reading or embedding files.
+prompt layer carries metadata, not raw attachment bytes. Autosave checkpoints
+reuse this same metadata-only rule: they may persist stable artifact ids, byte
+sizes, digests, media types, source labels, and storage references, but they do
+not make the prompt contract responsible for reading or embedding files.
 
 ## Layer order
 
@@ -122,7 +122,9 @@ Each `%Tet.Prompt.Layer{}` contains:
 ## Debug output
 
 Use `Tet.Prompt.debug/1` for structured data or `Tet.Prompt.debug_text/1` for a
-stable line-oriented snapshot.
+stable line-oriented snapshot. Autosave checkpoints persist these debug
+artifacts as produced by `Tet.Prompt` so restore fixtures can compare prompt
+metadata, hashes, and attachment metadata without rebuilding history from vibes.
 
 Debug output includes:
 
@@ -160,4 +162,6 @@ text, layer order, stable hashes, and redaction behavior.
   as session message layers without changing resume behavior.
 - Provider adapters remain free to convert `Tet.Prompt.to_provider_messages/1`
   into whatever request shape their APIs require.
+- Autosave restore uses `Tet.Prompt.attachment_metadata/1` to persist normalized
+  attachment metadata separately from the redacted debug artifact.
 - No provider credentials or raw attachment bytes belong in prompt debug output.

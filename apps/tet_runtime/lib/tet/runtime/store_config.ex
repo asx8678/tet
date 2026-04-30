@@ -6,7 +6,16 @@ defmodule Tet.Runtime.StoreConfig do
   should not each grow its own tiny config parser like gremlins after midnight.
   """
 
-  @all_callbacks [:health, :save_message, :list_messages, :list_sessions, :fetch_session]
+  @all_callbacks [
+    :health,
+    :save_message,
+    :list_messages,
+    :list_sessions,
+    :fetch_session,
+    :save_autosave,
+    :load_autosave,
+    :list_autosaves
+  ]
 
   @doc "Resolves the configured store adapter and normalized store opts."
   def resolve(opts \\ [], required_callbacks \\ @all_callbacks) when is_list(opts) do
@@ -41,10 +50,9 @@ defmodule Tet.Runtime.StoreConfig do
 
   @doc "Returns normalized store adapter options."
   def store_opts(opts \\ []) when is_list(opts) do
-    case path(opts) do
-      nil -> []
-      path -> [path: path]
-    end
+    []
+    |> put_present(:path, path(opts))
+    |> put_present(:autosave_path, autosave_path(opts))
   end
 
   @doc "Returns the effective store path from opts, environment, or app config."
@@ -53,6 +61,13 @@ defmodule Tet.Runtime.StoreConfig do
       Keyword.get(opts, :path) ||
       System.get_env("TET_STORE_PATH") ||
       Application.get_env(:tet_runtime, :store_path)
+  end
+
+  @doc "Returns an explicit autosave path, if one was configured."
+  def autosave_path(opts \\ []) when is_list(opts) do
+    Keyword.get(opts, :autosave_path) ||
+      System.get_env("TET_AUTOSAVE_PATH") ||
+      Application.get_env(:tet_runtime, :autosave_path)
   end
 
   defp missing_callbacks(adapter, callbacks) do
@@ -76,4 +91,16 @@ defmodule Tet.Runtime.StoreConfig do
 
   defp callback_exported?(adapter, :fetch_session),
     do: function_exported?(adapter, :fetch_session, 2)
+
+  defp callback_exported?(adapter, :save_autosave),
+    do: function_exported?(adapter, :save_autosave, 2)
+
+  defp callback_exported?(adapter, :load_autosave),
+    do: function_exported?(adapter, :load_autosave, 2)
+
+  defp callback_exported?(adapter, :list_autosaves),
+    do: function_exported?(adapter, :list_autosaves, 1)
+
+  defp put_present(opts, _key, nil), do: opts
+  defp put_present(opts, key, value), do: Keyword.put(opts, key, value)
 end

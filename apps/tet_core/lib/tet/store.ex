@@ -4,7 +4,8 @@ defmodule Tet.Store do
 
   Concrete store applications implement this behaviour. Runtime code selects an
   adapter through configuration and calls it through this contract instead of
-  binding UI code or orchestration code to storage internals.
+  binding UI code or orchestration code to storage internals. The contract owns
+  both primary chat messages and autosave checkpoint snapshots.
   """
 
   @type health :: %{
@@ -21,4 +22,8 @@ defmodule Tet.Store do
   @callback list_messages(binary(), keyword()) :: {:ok, [Tet.Message.t()]} | {:error, term()}
   @callback list_sessions(keyword()) :: {:ok, [Tet.Session.t()]} | {:error, term()}
   @callback fetch_session(binary(), keyword()) :: {:ok, Tet.Session.t()} | {:error, term()}
+  @callback save_autosave(Tet.Autosave.t(), keyword()) ::
+              {:ok, Tet.Autosave.t()} | {:error, term()}
+  @callback load_autosave(binary(), keyword()) :: {:ok, Tet.Autosave.t()} | {:error, term()}
+  @callback list_autosaves(keyword()) :: {:ok, [Tet.Autosave.t()]} | {:error, term()}
 end

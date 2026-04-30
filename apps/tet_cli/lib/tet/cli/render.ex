@@ -23,6 +23,7 @@ defmodule Tet.CLI.Render do
   def error(:empty_prompt), do: "prompt cannot be empty"
   def error(:empty_session_id), do: "session id cannot be empty"
   def error(:session_not_found), do: "session not found"
+  def error(:autosave_not_found), do: "autosave checkpoint not found"
   def error(:store_not_configured), do: "store is not configured"
 
   def error({:missing_provider_env, env_name}) do
