@@ -7,7 +7,7 @@ defmodule Tet do
   CLI and optional adapters pointed at the same public API.
   """
 
-  alias Tet.Runtime.{Autosave, Boundary, Compaction, Doctor, Sessions, Timeline}
+  alias Tet.Runtime.{Autosave, Boundary, Compaction, Doctor, ModelRegistry, Sessions, Timeline}
 
   @doc "Returns the standalone boundary declared for this release profile."
   def boundary do
@@ -17,6 +17,11 @@ defmodule Tet do
   @doc "Runs standalone health diagnostics through the public facade."
   def doctor(opts \\ []) when is_list(opts) do
     Doctor.run(opts)
+  end
+
+  @doc "Loads and validates the editable model registry."
+  def model_registry(opts \\ []) when is_list(opts) do
+    ModelRegistry.load(opts)
   end
 
   @doc "Starts a standalone session id for prompt turns."

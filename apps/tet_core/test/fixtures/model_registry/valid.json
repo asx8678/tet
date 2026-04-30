@@ -1,0 +1,67 @@
+{
+  "schema_version": 1,
+  "providers": {
+    "mock": {
+      "type": "mock",
+      "display_name": "Deterministic mock provider",
+      "config": {}
+    },
+    "openai_compatible": {
+      "type": "openai_compatible",
+      "display_name": "OpenAI-compatible chat completions",
+      "config": {
+        "base_url": "https://api.openai.com/v1",
+        "api_key_env": "TET_OPENAI_API_KEY"
+      }
+    }
+  },
+  "models": {
+    "mock/default": {
+      "provider": "mock",
+      "model": "mock-default",
+      "display_name": "Mock default response model",
+      "capabilities": {
+        "context": {
+          "window_tokens": 8192,
+          "max_output_tokens": 4096
+        },
+        "cache": {
+          "supported": false
+        },
+        "tool_calls": {
+          "supported": false,
+          "parallel": false
+        }
+      }
+    },
+    "openai/gpt-4o-mini": {
+      "provider": "openai_compatible",
+      "model": "gpt-4o-mini",
+      "display_name": "GPT-4o mini",
+      "capabilities": {
+        "context": {
+          "window_tokens": 128000,
+          "max_output_tokens": 16384
+        },
+        "cache": {
+          "supported": true,
+          "prompt": true
+        },
+        "tool_calls": {
+          "supported": true,
+          "parallel": true
+        }
+      }
+    }
+  },
+  "profile_pins": {
+    "tet_standalone": {
+      "default_model": "mock/default",
+      "fallback_models": []
+    },
+    "chat": {
+      "default_model": "openai/gpt-4o-mini",
+      "fallback_models": ["mock/default"]
+    }
+  }
+}
