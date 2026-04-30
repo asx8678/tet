@@ -85,6 +85,65 @@ defmodule Tet.AutosaveRestoreTest do
     assert first.prompt_metadata == %{"request_id" => "req-1", "suite" => "autosave"}
   end
 
+  test "runtime compacts persisted context and autosave records compaction metadata", %{
+    tmp_root: tmp_root
+  } do
+    store_path = Path.join(tmp_root, "compact-messages.jsonl")
+    autosave_path = Path.join(tmp_root, "compact-autosaves.jsonl")
+    session_id = unique_session("compact")
+
+    for prompt <- ["first", "second", "third"] do
+      assert {:ok, _result} =
+               Tet.ask(prompt,
+                 provider: :mock,
+                 store_path: store_path,
+                 session_id: session_id
+               )
+    end
+
+    assert {:ok, context} =
+             Tet.compact_context(session_id,
+               store_path: store_path,
+               force: true,
+               recent_count: 2,
+               strategy: :autosave_summary
+             )
+
+    assert context.changed?
+
+    assert Enum.map(context.compacted_messages, & &1.content) == [
+             "first",
+             "mock: first",
+             "second",
+             "mock: second"
+           ]
+
+    assert Enum.map(context.retained_messages, & &1.content) == ["third", "mock: third"]
+
+    assert {:ok, autosave} =
+             Tet.autosave_session(session_id, prompt_attrs("compact-req"),
+               store_path: store_path,
+               autosave_path: autosave_path,
+               saved_at: "2025-01-01T00:00:02.000Z",
+               compaction: [force: true, recent_count: 2, strategy: :autosave_summary]
+             )
+
+    assert length(autosave.messages) == 6
+
+    kinds = Enum.map(autosave.prompt_debug["layers"], & &1["kind"])
+    assert Enum.count(kinds, &(&1 == "session_message")) == 2
+    assert "compaction_metadata" in kinds
+
+    compaction_layer =
+      Enum.find(autosave.prompt_debug["layers"], &(&1["kind"] == "compaction_metadata"))
+
+    assert compaction_layer["metadata"]["strategy"] == "autosave_summary"
+    assert compaction_layer["metadata"]["original_message_count"] == 6
+    assert compaction_layer["metadata"]["retained_message_count"] == 2
+    assert compaction_layer["metadata"]["compacted_message_count"] == 4
+    assert compaction_layer["metadata"]["source_message_ids"] |> length() == 4
+  end
+
   test "autosave rejects raw attachment payload fields and does not write a checkpoint", %{
     tmp_root: tmp_root
   } do
