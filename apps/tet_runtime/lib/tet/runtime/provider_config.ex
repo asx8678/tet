@@ -59,7 +59,13 @@ defmodule Tet.Runtime.ProviderConfig do
           base_url:
             value(opts, app_config, :base_url, "TET_OPENAI_BASE_URL", @default_openai_base_url),
           model: value(opts, app_config, :model, "TET_OPENAI_MODEL", @default_openai_model),
-          timeout: Keyword.get(opts, :timeout, Keyword.get(app_config, :timeout, 60_000))
+          timeout: Keyword.get(opts, :timeout, Keyword.get(app_config, :timeout, 60_000)),
+          allow_incomplete_stream:
+            Keyword.get(
+              opts,
+              :allow_incomplete_stream,
+              Keyword.get(app_config, :allow_incomplete_stream, false)
+            )
         ]}}
     end
   end

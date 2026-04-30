@@ -64,6 +64,10 @@ Event and workflow boundaries:
 
 SQLite is the default standalone store. Postgres is optional and selected by release/config for team, hosted, or future multi-node use. Phoenix must never be the reason Postgres exists; store selection is a runtime/storage decision.
 
+### Implementation note for BD-0005
+
+BD-0005's first standalone chat persistence path deliberately writes dependency-free JSON Lines at `.tet/messages.jsonl` inside the `tet_store_sqlite` application boundary. This is a temporary message log implementation, not a new storage boundary and not a replacement decision for the reserved `.tet/tet.sqlite` target. Later storage work may move the adapter internals to true SQLite while preserving the `Tet.Store` contract for runtime, CLI, and UI callers.
+
 ## Conflict resolution
 
 If a plan or source uses `Agent` as the root namespace, translate to `Tet` unless a later naming ADR supersedes this. Do not create a root `Agent` module.

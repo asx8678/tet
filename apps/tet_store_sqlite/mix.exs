@@ -10,6 +10,7 @@ defmodule TetStoreSQLite.MixProject do
       deps_path: "../../deps",
       lockfile: "../../mix.lock",
       elixir: ">= 1.16.0",
+      erlang: ">= 27.0",
       start_permanent: Mix.env() == :prod,
       deps: deps()
     ]

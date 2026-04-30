@@ -32,6 +32,12 @@ The standalone release explicitly excludes:
 No Phoenix/web dependency has been added to `mix.exs`, any child app, or
 `mix.lock`.
 
+## Runtime requirements
+
+The project uses Erlang/OTP's built-in `:json` module for dependency-free JSON
+encoding/decoding, so builds require Erlang/OTP 27 or newer. `mix.exs` pins this
+with `erlang: ">= 27.0"`.
+
 ## Build and check
 
 From the repository root:
@@ -131,6 +137,13 @@ Optional environment variables:
 - `TET_OPENAI_BASE_URL` — base URL; defaults to `https://api.openai.com/v1`.
 - `TET_OPENAI_MODEL` — model name; defaults to `gpt-4o-mini`.
 - `TET_STORE_PATH` — message log path; defaults to `.tet/messages.jsonl`.
+
+OpenAI-compatible streams are considered complete only after a `data: [DONE]`
+SSE payload. Non-empty trailing SSE buffers are rejected as incomplete/malformed
+so partial assistant turns are not persisted as successful responses. If a
+legacy/proxy endpoint is known to omit `[DONE]`, runtime/application config may
+set the explicit compatibility option `allow_incomplete_stream: true`; this does
+not permit malformed trailing SSE data.
 
 Example:
 

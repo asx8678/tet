@@ -1,9 +1,21 @@
 defmodule Tet.ChatTest do
   use ExUnit.Case, async: false
 
-  test "mock provider streams chunks and persists user and assistant messages" do
-    path = tmp_path("mock")
-    session_id = "session-mock"
+  setup do
+    tmp_root = unique_tmp_root("tet-chat-test")
+
+    File.rm_rf!(tmp_root)
+    File.mkdir_p!(tmp_root)
+    on_exit(fn -> File.rm_rf!(tmp_root) end)
+
+    {:ok, tmp_root: tmp_root}
+  end
+
+  test "mock provider streams chunks and persists user and assistant messages", %{
+    tmp_root: tmp_root
+  } do
+    path = tmp_path(tmp_root, "mock")
+    session_id = unique_session("mock")
     parent = self()
 
     assert {:ok, result} =
@@ -36,10 +48,14 @@ defmodule Tet.ChatTest do
     assert is_binary(assistant_message.timestamp)
   end
 
-  test "openai-compatible provider validation rejects missing API key env" do
+  test "openai-compatible provider validation rejects missing API key env", %{tmp_root: tmp_root} do
     without_env("TET_OPENAI_API_KEY", fn ->
       assert {:error, {:missing_provider_env, "TET_OPENAI_API_KEY"}} =
-               Tet.ask("hello", provider: :openai_compatible, store_path: tmp_path("missing-env"))
+               Tet.ask(
+                 "hello",
+                 provider: :openai_compatible,
+                 store_path: tmp_path(tmp_root, "missing-env")
+               )
     end)
   end
 
@@ -61,9 +77,11 @@ defmodule Tet.ChatTest do
     )
   end
 
-  test "configured openai-compatible provider streams SSE chunks and persists messages" do
-    path = tmp_path("openai")
-    session_id = "session-openai"
+  test "configured openai-compatible provider streams SSE chunks and persists messages", %{
+    tmp_root: tmp_root
+  } do
+    path = tmp_path(tmp_root, "openai")
+    session_id = unique_session("openai")
     parent = self()
     {:ok, server} = start_openai_stream_server(["configured", " provider"])
 
@@ -99,6 +117,85 @@ defmodule Tet.ChatTest do
     assert assistant_message.content == "configured provider"
   end
 
+  test "direct openai-compatible provider rejects chunks that close without done" do
+    session_id = unique_session("provider-incomplete")
+    {:ok, server} = start_openai_stream_server(["partial"], send_done: false)
+
+    assert {:error, :provider_stream_incomplete} =
+             Tet.Runtime.Provider.OpenAICompatible.stream_chat(
+               provider_history(session_id, "hello"),
+               provider_opts(server, session_id),
+               fn _event -> :ok end
+             )
+
+    assert_receive {:openai_request, _request}, 1_000
+  end
+
+  test "direct openai-compatible provider allows missing done only with compatibility option" do
+    session_id = unique_session("provider-compat")
+    {:ok, server} = start_openai_stream_server(["legacy"], send_done: false)
+
+    assert {:ok, result} =
+             Tet.Runtime.Provider.OpenAICompatible.stream_chat(
+               provider_history(session_id, "hello"),
+               provider_opts(server, session_id, allow_incomplete_stream: true),
+               fn _event -> :ok end
+             )
+
+    assert_receive {:openai_request, _request}, 1_000
+    assert result.content == "legacy"
+    assert result.provider == :openai_compatible
+  end
+
+  test "direct openai-compatible provider rejects a trailing partial SSE buffer" do
+    session_id = unique_session("provider-leftover")
+
+    {:ok, server} =
+      start_openai_stream_server([], send_done: false, trailing: ~s(data: {"choices"))
+
+    assert {:error, :provider_stream_incomplete} =
+             Tet.Runtime.Provider.OpenAICompatible.stream_chat(
+               provider_history(session_id, "hello"),
+               provider_opts(server, session_id),
+               fn _event -> :ok end
+             )
+
+    assert_receive {:openai_request, _request}, 1_000
+  end
+
+  test "Tet.ask does not persist assistant message when provider stream is incomplete", %{
+    tmp_root: tmp_root
+  } do
+    path = tmp_path(tmp_root, "runtime-incomplete")
+    session_id = unique_session("runtime-incomplete")
+    {:ok, server} = start_openai_stream_server(["partial"], send_done: false)
+
+    assert {:error, :provider_stream_incomplete} =
+             Tet.ask("please fail safely",
+               provider: :openai_compatible,
+               api_key: "test-key",
+               base_url: server.base_url,
+               model: "unit-test-model",
+               store_path: path,
+               session_id: session_id
+             )
+
+    assert_receive {:openai_request, _request}, 1_000
+
+    assert {:ok, [user_message]} = Tet.list_messages(session_id, store_path: path)
+    assert user_message.role == :user
+    assert user_message.content == "please fail safely"
+    refute File.read!(path) =~ ~s("role":"assistant")
+  end
+
+  test "store reports non-map JSONL records without crashing", %{tmp_root: tmp_root} do
+    path = tmp_path(tmp_root, "non-map")
+    File.write!(path, "[\"not\",\"a\",\"message\"]\n")
+
+    assert {:error, {:invalid_store_record, :not_a_map}} =
+             Tet.list_messages(unique_session("non-map"), store_path: path)
+  end
+
   defp assistant_chunks(acc \\ []) do
     receive do
       {:event, %Tet.Event{type: :assistant_chunk, payload: %{content: content}}} ->
@@ -111,9 +208,43 @@ defmodule Tet.ChatTest do
     end
   end
 
-  defp tmp_path(name) do
-    root = Path.join(System.tmp_dir!(), "tet-chat-test-#{System.unique_integer([:positive])}")
-    Path.join(root, "#{name}.jsonl")
+  defp tmp_path(tmp_root, name), do: Path.join(tmp_root, "#{name}.jsonl")
+
+  defp unique_tmp_root(prefix) do
+    suffix = "#{System.pid()}-#{System.system_time(:nanosecond)}-#{unique_integer()}"
+    Path.join(System.tmp_dir!(), "#{prefix}-#{suffix}")
+  end
+
+  defp unique_session(name), do: "session-#{name}-#{System.pid()}-#{unique_integer()}"
+
+  defp unique_integer do
+    System.unique_integer([:positive, :monotonic])
+  end
+
+  defp provider_history(session_id, content) do
+    [
+      %Tet.Message{
+        id: "msg-#{unique_integer()}",
+        session_id: session_id,
+        role: :user,
+        content: content,
+        timestamp: "2025-01-01T00:00:00.000Z",
+        metadata: %{}
+      }
+    ]
+  end
+
+  defp provider_opts(server, session_id, opts \\ []) do
+    Keyword.merge(
+      [
+        api_key: "test-key",
+        base_url: server.base_url,
+        model: "unit-test-model",
+        timeout: 1_000,
+        session_id: session_id
+      ],
+      opts
+    )
   end
 
   defp without_env(name, fun) do
@@ -138,7 +269,7 @@ defmodule Tet.ChatTest do
     end
   end
 
-  defp start_openai_stream_server(chunks) do
+  defp start_openai_stream_server(chunks, opts \\ []) do
     parent = self()
     {:ok, listen} = :gen_tcp.listen(0, [:binary, active: false, packet: :raw, reuseaddr: true])
     {:ok, port} = :inet.port(listen)
@@ -148,7 +279,7 @@ defmodule Tet.ChatTest do
         {:ok, socket} = :gen_tcp.accept(listen)
         {:ok, request} = recv_request(socket, "")
         send(parent, {:openai_request, request})
-        send_response(socket, chunks)
+        send_response(socket, chunks, opts)
         :gen_tcp.close(socket)
         :gen_tcp.close(listen)
       end)
@@ -181,7 +312,7 @@ defmodule Tet.ChatTest do
     end
   end
 
-  defp send_response(socket, chunks) do
+  defp send_response(socket, chunks, opts) do
     :gen_tcp.send(socket, [
       "HTTP/1.1 200 OK\r\n",
       "content-type: text/event-stream\r\n",
@@ -193,7 +324,14 @@ defmodule Tet.ChatTest do
       send_chunk(socket, "data: #{json_chunk(chunk)}\n\n")
     end)
 
-    send_chunk(socket, "data: [DONE]\n\n")
+    if Keyword.get(opts, :send_done, true) do
+      send_chunk(socket, "data: [DONE]\n\n")
+    end
+
+    if trailing = Keyword.get(opts, :trailing) do
+      send_chunk(socket, trailing)
+    end
+
     :gen_tcp.send(socket, "0\r\n\r\n")
   end
 

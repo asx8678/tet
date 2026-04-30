@@ -4,6 +4,11 @@ defmodule Tet.Runtime.Provider.OpenAICompatible do
 
   It calls `/chat/completions` with `stream: true` and emits assistant chunks
   from Server-Sent Event `data:` payloads. No SDK, no web stack, no drama.
+
+  Successful streams must end with `data: [DONE]` by default. For temporary
+  compatibility with non-conforming OpenAI-like endpoints, callers may pass
+  `allow_incomplete_stream: true`; that only relaxes the missing `[DONE]`
+  sentinel and still rejects a non-empty trailing SSE buffer as malformed.
   """
 
   @behaviour Tet.Provider
@@ -57,15 +62,15 @@ defmodule Tet.Runtime.Provider.OpenAICompatible do
         collect_stream(request_id, opts, emit, buffer, chunks, done?)
 
       {:http, {^request_id, :stream, part}} ->
-        with {:ok, buffer, chunks, done?} <- handle_part(part, buffer, chunks, opts, emit) do
+        with {:ok, buffer, chunks, done?} <- handle_part(part, buffer, chunks, done?, opts, emit) do
           collect_stream(request_id, opts, emit, buffer, chunks, done?)
         end
 
       {:http, {^request_id, :stream_end, _headers}} ->
-        finish(chunks, opts, done?)
+        finish(chunks, opts, done?, buffer)
 
       {:http, {^request_id, :stream_end}} ->
-        finish(chunks, opts, done?)
+        finish(chunks, opts, done?, buffer)
 
       {:http, {^request_id, {{_version, status, reason_phrase}, _headers, body}}} ->
         {:error,
@@ -80,40 +85,55 @@ defmodule Tet.Runtime.Provider.OpenAICompatible do
     end
   end
 
-  defp handle_part(part, buffer, chunks, opts, emit) do
+  defp handle_part(part, buffer, chunks, done?, opts, emit) do
     data = buffer <> IO.iodata_to_binary(part)
     {payloads, rest} = sse_payloads(data)
 
     payloads
-    |> Enum.reduce_while({:ok, chunks, false}, fn payload, {:ok, acc, done?} ->
+    |> Enum.reduce_while({:ok, chunks, done?}, fn payload, {:ok, acc, seen_done?} ->
       case decode_payload(payload) do
+        {:chunk, _content} when seen_done? ->
+          {:halt, {:error, :provider_stream_incomplete}}
+
         {:chunk, content} ->
           emit_chunk(content, opts, emit)
-          {:cont, {:ok, [content | acc], done?}}
+          {:cont, {:ok, [content | acc], seen_done?}}
 
         :done ->
           {:cont, {:ok, acc, true}}
 
         :skip ->
-          {:cont, {:ok, acc, done?}}
+          {:cont, {:ok, acc, seen_done?}}
 
         {:error, reason} ->
           {:halt, {:error, reason}}
       end
     end)
     |> case do
-      {:ok, new_chunks, done?} -> {:ok, rest, new_chunks, done?}
+      {:ok, new_chunks, new_done?} -> {:ok, rest, new_chunks, new_done?}
       {:error, reason} -> {:error, reason}
     end
   end
 
-  defp finish(chunks, opts, _done?) do
-    {:ok,
-     %{
-       content: chunks |> Enum.reverse() |> Enum.join(),
-       provider: :openai_compatible,
-       model: Keyword.fetch!(opts, :model)
-     }}
+  defp finish(_chunks, _opts, _done?, buffer) when byte_size(buffer) > 0 do
+    {:error, :provider_stream_incomplete}
+  end
+
+  defp finish(chunks, opts, done?, _buffer) do
+    if done? or allow_incomplete_stream?(opts) do
+      {:ok,
+       %{
+         content: chunks |> Enum.reverse() |> Enum.join(),
+         provider: :openai_compatible,
+         model: Keyword.fetch!(opts, :model)
+       }}
+    else
+      {:error, :provider_stream_incomplete}
+    end
+  end
+
+  defp allow_incomplete_stream?(opts) do
+    Keyword.get(opts, :allow_incomplete_stream, false) == true
   end
 
   defp sse_payloads(data) do

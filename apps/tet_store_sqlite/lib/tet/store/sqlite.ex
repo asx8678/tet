@@ -72,6 +72,7 @@ defmodule Tet.Store.SQLite do
 
       true ->
         with {:ok, decoded} <- decode_json(line),
+             :ok <- ensure_record_map(decoded),
              {:ok, message} <- Tet.Message.from_map(decoded) do
           if message.session_id == session_id do
             {:cont, {:ok, [message | messages]}}
@@ -102,6 +103,9 @@ defmodule Tet.Store.SQLite do
   rescue
     exception -> {:error, {:invalid_store_record, Exception.message(exception)}}
   end
+
+  defp ensure_record_map(record) when is_map(record), do: :ok
+  defp ensure_record_map(_record), do: {:error, {:invalid_store_record, :not_a_map}}
 
   defp started? do
     Enum.any?(Application.started_applications(), fn {application, _description, _version} ->
