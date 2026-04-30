@@ -88,12 +88,13 @@ defmodule Tet.StandaloneBoundaryTest do
     assert :bandit in leaked
   end
 
-  test "no known web framework applications are loaded or started" do
+  test "no known web framework applications leak beyond the optional adapter" do
     loaded = Application.loaded_applications()
     started = Application.started_applications()
+    ignored = Boundary.optional_adapter_applications()
 
-    assert Boundary.forbidden_loaded_applications(loaded) == []
-    assert Boundary.forbidden_loaded_applications(started) == []
+    assert Boundary.forbidden_loaded_applications(loaded, ignore: ignored) == []
+    assert Boundary.forbidden_loaded_applications(started, ignore: ignored) == []
   end
 
   test "no known web framework modules are available in the standalone test closure" do

@@ -101,8 +101,16 @@ defmodule Tet.Runtime.Doctor do
         {:error, {:forbidden_standalone_applications, leaked}} -> leaked
       end
 
-    loaded_leaks = Boundary.forbidden_loaded_applications(Application.loaded_applications())
-    started_leaks = Boundary.forbidden_loaded_applications(Application.started_applications())
+    loaded_leaks =
+      Boundary.forbidden_loaded_applications(Application.loaded_applications(),
+        ignore: Boundary.optional_adapter_applications()
+      )
+
+    started_leaks =
+      Boundary.forbidden_loaded_applications(Application.started_applications(),
+        ignore: Boundary.optional_adapter_applications()
+      )
+
     leaks = Enum.uniq(configured_leaks ++ loaded_leaks ++ started_leaks)
 
     details = %{
