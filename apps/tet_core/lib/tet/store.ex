@@ -19,4 +19,6 @@ defmodule Tet.Store do
   @callback health(keyword()) :: {:ok, health()} | {:error, term()}
   @callback save_message(Tet.Message.t(), keyword()) :: {:ok, Tet.Message.t()} | {:error, term()}
   @callback list_messages(binary(), keyword()) :: {:ok, [Tet.Message.t()]} | {:error, term()}
+  @callback list_sessions(keyword()) :: {:ok, [Tet.Session.t()]} | {:error, term()}
+  @callback fetch_session(binary(), keyword()) :: {:ok, Tet.Session.t()} | {:error, term()}
 end

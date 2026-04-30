@@ -7,28 +7,16 @@ defmodule Tet do
   CLI and optional adapters pointed at the same public API.
   """
 
-  alias Tet.Runtime.Boundary
+  alias Tet.Runtime.{Boundary, Doctor, Sessions}
 
   @doc "Returns the standalone boundary declared for this release profile."
   def boundary do
     Boundary.standalone()
   end
 
-  @doc "Runs a minimal standalone health check through the public facade."
+  @doc "Runs standalone health diagnostics through the public facade."
   def doctor(opts \\ []) when is_list(opts) do
-    applications = Boundary.standalone_applications()
-
-    with :ok <- Boundary.validate_standalone_applications(applications),
-         {:ok, store} <- store_health(opts) do
-      {:ok,
-       %{
-         profile: Application.get_env(:tet_runtime, :release_profile, :tet_standalone),
-         applications: applications,
-         core: Tet.Core.boundary(),
-         runtime: %{application: :tet_runtime, status: :ok},
-         store: store
-       }}
-    end
+    Doctor.run(opts)
   end
 
   @doc "Starts a standalone session id for prompt turns."
@@ -52,23 +40,23 @@ defmodule Tet do
     Tet.Runtime.Chat.list_messages(session_id, opts)
   end
 
+  @doc "Lists persisted chat sessions."
+  def list_sessions(opts \\ []) do
+    Sessions.list(opts)
+  end
+
+  @doc "Shows one persisted chat session and its messages."
+  def show_session(session_id, opts \\ []) do
+    Sessions.show(session_id, opts)
+  end
+
+  @doc "Resumes a persisted session by sending another prompt under the same id."
+  def resume_session(session_id, prompt, opts \\ []) when is_binary(session_id) do
+    send_prompt(session_id, prompt, opts)
+  end
+
   @doc "Reserved event-list facade for future durable Event Log work."
   def list_events(_session_id, _opts \\ []) do
     {:ok, []}
-  end
-
-  defp store_health(opts) do
-    adapter = Keyword.get(opts, :store_adapter, Application.get_env(:tet_runtime, :store_adapter))
-
-    cond do
-      is_nil(adapter) ->
-        {:ok, %{application: :none, adapter: nil, status: :not_configured}}
-
-      Code.ensure_loaded?(adapter) and function_exported?(adapter, :health, 1) ->
-        apply(adapter, :health, [opts])
-
-      true ->
-        {:error, {:store_adapter_unavailable, adapter}}
-    end
   end
 end
