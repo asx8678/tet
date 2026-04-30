@@ -1,11 +1,13 @@
 # Tet standalone umbrella boundary
 
 This repository contains the minimal Elixir umbrella/release scaffold plus the
-standalone streaming chat, session resume, event timeline shell, autosave/restore
-checkpoints, and doctor diagnostics path. It includes `tet-db6.8` / `BD-0008`,
-the optional web facade contract from `tet-db6.7` / `BD-0007`, the prompt-layer
-contract from `tet-db6.10` / `BD-0010`, and autosave/restore checkpoints from
-`tet-db6.11` / `BD-0011`.
+standalone streaming chat, session resume, event timeline shell,
+autosave/restore checkpoints, and doctor diagnostics path through `tet-db6.6` /
+`BD-0006`. It includes the optional web facade contract from `tet-db6.7` /
+`BD-0007`, the event timeline shell from `tet-db6.8` / `BD-0008`, the web
+removability gate from `tet-db6.9` / `BD-0009`, the prompt-layer contract from
+`tet-db6.10` / `BD-0010`, and autosave/restore checkpoints from `tet-db6.11` /
+`BD-0011`.
 
 The implementation stays CLI-first and OTP-first. The CLI parses arguments and
 renders streamed chunks; runtime owns session orchestration, provider selection,
@@ -60,6 +62,31 @@ mix web.facade_contract
 The guard succeeds when `apps/tet_web_phoenix` is absent and checks obvious
 facade-contract violations if that optional app is introduced later.
 
+## Web removability gate
+
+BD-0009 adds a local CI-like removability gate documented in
+[BD-0009 — Web removability acceptance gate](BD-0009_WEB_REMOVABILITY_GATE.md).
+It proves the standalone path compiles, tests, and assembles its release after
+optional `apps/tet_web*` directories are deleted from a sandbox copy.
+
+Run it directly:
+
+```bash
+tools/check_web_removability.sh
+```
+
+or through Mix:
+
+```bash
+mix web.removability
+```
+
+The gate builds on `tools/check_web_facade_contract.sh`,
+`tools/check_release_closure.sh`, and `mix standalone.check`. It also runs a
+negative smoke that injects a temporary non-web Phoenix dependency and verifies
+the source/dependency guard rejects it. No Phoenix dependency is installed or
+required for the standalone proof.
+
 ## Runtime requirements
 
 The project uses Erlang/OTP's built-in `:json` module for dependency-free JSON
@@ -74,6 +101,7 @@ From the repository root:
 mix format --check-formatted
 mix web.facade_contract
 mix test
+tools/check_web_removability.sh
 MIX_ENV=prod mix release tet_standalone --overwrite
 tools/check_release_closure.sh --no-build
 ```
