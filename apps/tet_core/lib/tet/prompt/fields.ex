@@ -59,9 +59,6 @@ defmodule Tet.Prompt.Fields do
   def optional_string(value, _error) when is_atom(value), do: {:ok, Atom.to_string(value)}
   def optional_string(_value, error), do: {:error, error}
 
-  def optional_binary_value(value) when is_binary(value) and value != "", do: value
-  def optional_binary_value(_value), do: nil
-
   def optional_count(nil, _index, _field), do: {:ok, nil}
 
   def optional_count(value, _index, _field) when is_integer(value) and value >= 0,

@@ -66,11 +66,67 @@ defmodule Tet.PromptTest do
     assert Tet.Redactor.sensitive_key?("apikey")
     assert Tet.Redactor.sensitive_key?("bearer_header")
     assert Tet.Redactor.sensitive_key?("session_token")
+    assert Tet.Redactor.sensitive_key?("accessToken")
+    assert Tet.Redactor.sensitive_key?("refreshToken")
+    assert Tet.Redactor.sensitive_key?("privateKey")
+    assert Tet.Redactor.sensitive_key?("accessKey")
+    assert Tet.Redactor.sensitive_key?("access-token")
+    assert Tet.Redactor.sensitive_key?("private.key")
 
-    assert Tet.Redactor.redact(%{"bearer_header" => "secret", safe: "ok"}) == %{
-             "bearer_header" => "[REDACTED]",
-             safe: "ok"
-           }
+    refute Tet.Redactor.sensitive_key?("token_count")
+    refute Tet.Redactor.sensitive_key?("tokenCount")
+    refute Tet.Redactor.sensitive_key?(123)
+    refute Tet.Redactor.sensitive_key?({:privateKey})
+
+    assert Tet.Redactor.redact(%{"bearer_header" => "secret", :safe => "ok", 123 => "visible"}) ==
+             %{
+               "bearer_header" => "[REDACTED]",
+               :safe => "ok",
+               123 => "visible"
+             }
+  end
+
+  test "redacts camelCase secret metadata keys at top-level and nested debug depths" do
+    assert {:ok, prompt} =
+             Tet.Prompt.build(
+               system: "base",
+               metadata: camel_secret_metadata(12),
+               attachments: [
+                 %{
+                   name: "debug.json",
+                   metadata: %{
+                     nested: camel_secret_metadata(34)
+                   }
+                 }
+               ]
+             )
+
+    debug = Tet.Prompt.debug(prompt)
+    redacted = Tet.Redactor.redacted_value()
+
+    for key <- ["accessToken", "refreshToken", "privateKey", "accessKey"] do
+      assert debug.metadata[key] == redacted
+    end
+
+    assert debug.metadata["token_count"] == 12
+
+    attachment_layer = Enum.find(debug.layers, &(&1.kind == "attachment_metadata"))
+    [attachment] = attachment_layer.metadata["attachments"]
+    nested = attachment["metadata"]["nested"]
+
+    for key <- ["accessToken", "refreshToken", "privateKey", "accessKey"] do
+      assert nested[key] == redacted
+    end
+
+    assert nested["token_count"] == 34
+
+    debug_text = Tet.Prompt.debug_text(prompt)
+
+    refute debug_text =~ "super-secret"
+    assert debug_text =~ ~s("accessToken":"[REDACTED]")
+    assert debug_text =~ ~s("privateKey":"[REDACTED]")
+    assert debug_text =~ ~s("token_count":12)
+    assert debug_text =~ ~s("token_count":34)
   end
 
   test "build! raises on invalid prompt input" do
@@ -122,6 +178,40 @@ defmodule Tet.PromptTest do
     assert Enum.map(omitted.layers, & &1.id) == Enum.map(explicit_nil.layers, & &1.id)
   end
 
+  test "empty attachment strings are treated as omitted metadata" do
+    omitted =
+      Tet.Prompt.build!(
+        system: "base",
+        attachments: [%{media_type: "text/plain"}]
+      )
+
+    empty_strings =
+      Tet.Prompt.build!(
+        system: "base",
+        attachments: [
+          %{name: "", media_type: "text/plain", sha256: "", source: ""}
+        ]
+      )
+
+    assert omitted.hash == empty_strings.hash
+    assert Enum.map(omitted.layers, & &1.id) == Enum.map(empty_strings.layers, & &1.id)
+    assert Tet.Prompt.debug_text(omitted) == Tet.Prompt.debug_text(empty_strings)
+    refute Tet.Prompt.debug_text(empty_strings) =~ ~s("name":"")
+    refute Tet.Prompt.debug_text(empty_strings) =~ ~s("sha256":"")
+    refute Tet.Prompt.debug_text(empty_strings) =~ ~s("source":"")
+  end
+
+  for field <- [:name, :media_type, :sha256, :source] do
+    test "rejects non-string attachment #{field}" do
+      attrs = [
+        system: "base",
+        attachments: [Map.put(%{byte_size: 1}, unquote(field), 123)]
+      ]
+
+      assert {:error, {:invalid_prompt_attachment, 0, unquote(field)}} = Tet.Prompt.build(attrs)
+    end
+  end
+
   test "rejects duplicate layer ids" do
     attrs = [
       system: "base",
@@ -142,6 +232,16 @@ defmodule Tet.PromptTest do
 
     assert {:error, {:invalid_prompt_attachment, 0, :content_not_allowed}} =
              Tet.Prompt.build(attrs)
+  end
+
+  defp camel_secret_metadata(token_count) do
+    %{
+      "accessKey" => "super-secret",
+      "accessToken" => "super-secret",
+      "privateKey" => "super-secret",
+      "refreshToken" => "super-secret",
+      "token_count" => token_count
+    }
   end
 
   defp prompt_attrs do

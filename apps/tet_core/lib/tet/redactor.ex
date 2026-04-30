@@ -9,16 +9,21 @@ defmodule Tet.Redactor do
   """
 
   @redacted "[REDACTED]"
-  @sensitive_key_substrings [
-    "api_key",
+  @sensitive_key_compact_substrings [
+    "accesskey",
     "apikey",
     "authorization",
     "bearer",
     "credential",
     "password",
-    "private_key",
-    "secret",
-    "access_key"
+    "privatekey",
+    "secret"
+  ]
+  @sensitive_token_compact_keys [
+    "accesstoken",
+    "idtoken",
+    "refreshtoken",
+    "sessiontoken"
   ]
 
   @doc "Returns the canonical replacement string for redacted values."
@@ -27,11 +32,36 @@ defmodule Tet.Redactor do
 
   @doc "Returns true when a metadata key name should have its value redacted."
   @spec sensitive_key?(term()) :: boolean()
-  def sensitive_key?(key) do
-    key = key |> to_string() |> String.downcase()
+  def sensitive_key?(key) when is_atom(key) do
+    key
+    |> Atom.to_string()
+    |> sensitive_key_name?()
+  end
 
-    key == "token" or String.ends_with?(key, "_token") or
-      Enum.any?(@sensitive_key_substrings, &String.contains?(key, &1))
+  def sensitive_key?(key) when is_binary(key), do: sensitive_key_name?(key)
+  def sensitive_key?(_key), do: false
+
+  defp sensitive_key_name?(key) do
+    fragments = key_fragments(key)
+    compact = Enum.join(fragments, "")
+
+    token_key?(fragments, compact) or
+      Enum.any?(@sensitive_key_compact_substrings, &String.contains?(compact, &1))
+  end
+
+  defp key_fragments(key) do
+    key
+    |> String.replace(~r/([A-Z]+)([A-Z][a-z])/, "\\1_\\2")
+    |> String.replace(~r/([a-z0-9])([A-Z])/, "\\1_\\2")
+    |> String.downcase()
+    |> String.split(~r/[^a-z0-9]+/, trim: true)
+  end
+
+  defp token_key?([], _compact), do: false
+
+  defp token_key?(fragments, compact) do
+    fragments == ["token"] or List.last(fragments) == "token" or
+      compact in @sensitive_token_compact_keys
   end
 
   @doc "Recursively redacts map/list values whose keys look sensitive."

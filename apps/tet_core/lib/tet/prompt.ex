@@ -15,11 +15,14 @@ defmodule Tet.Prompt do
   5. attachment metadata;
   6. session messages.
 
+  Attachment `name`, `media_type`, `sha256`, and `source` values must be
+  strings when present. Empty strings are treated as omitted metadata.
+
   `debug/1` and `debug_text/1` expose ordered layer ids, hashes, byte counts,
   and redacted metadata without dumping raw prompt content.
   """
 
-  alias Tet.Prompt.{Canonical, Debug, Fields, Layer, Render}
+  alias Tet.Prompt.{Attachments, Canonical, Debug, Fields, Layer, Render}
 
   @version "tet.prompt.v1"
   @layer_kinds [
@@ -67,17 +70,6 @@ defmodule Tet.Prompt do
     "source_message_ids" => :source_message_ids,
     "strategy" => :strategy,
     "summary" => :summary
-  }
-
-  @attachment_aliases %{
-    "byte_size" => :byte_size,
-    "id" => :id,
-    "media_type" => :media_type,
-    "metadata" => :metadata,
-    "name" => :name,
-    "sha256" => :sha256,
-    "size" => :byte_size,
-    "source" => :source
   }
 
   @typedoc "Accepted prompt build input shape."
@@ -320,7 +312,7 @@ defmodule Tet.Prompt do
 
   defp attachment_layers(value) do
     with {:ok, items} <- optional_item_list(value, :invalid_prompt_attachments),
-         {:ok, attachments} <- normalize_attachments(items) do
+         {:ok, attachments} <- Attachments.normalize(items) do
       content = Render.attachments(attachments)
       metadata = %{attachment_count: length(attachments), attachments: attachments}
       {:ok, [raw_layer(:attachment_metadata, :system, content, metadata, nil)]}
@@ -456,85 +448,6 @@ defmodule Tet.Prompt do
     })
   end
 
-  defp normalize_attachments(items) do
-    items
-    |> Enum.with_index()
-    |> Enum.reduce_while({:ok, []}, fn {item, index}, {:ok, acc} ->
-      case normalize_attachment(item, index) do
-        {:ok, attachment} -> {:cont, {:ok, [attachment | acc]}}
-        {:error, reason} -> {:halt, {:error, reason}}
-      end
-    end)
-    |> Fields.reverse_ok()
-  end
-
-  defp normalize_attachment(item, index) when is_map(item) do
-    with :ok <- reject_attachment_payload_fields(item, index),
-         {:ok, fields} <-
-           Fields.normalize(item, @attachment_aliases, {:invalid_prompt_attachment, index}),
-         {:ok, metadata} <- Fields.metadata(Map.get(fields, :metadata, %{})),
-         {:ok, byte_size} <- Fields.optional_count(Map.get(fields, :byte_size), index, :byte_size),
-         :ok <- ensure_attachment_has_metadata(fields, index),
-         {:ok, id} <- attachment_id(fields, index) do
-      {:ok,
-       %{
-         byte_size: byte_size,
-         id: id,
-         media_type: Fields.optional_binary_value(Map.get(fields, :media_type)),
-         metadata: metadata,
-         name: Fields.optional_binary_value(Map.get(fields, :name)),
-         sha256: Fields.optional_binary_value(Map.get(fields, :sha256)),
-         source: Fields.optional_binary_value(Map.get(fields, :source))
-       }
-       |> drop_nil_values()}
-    end
-  end
-
-  defp normalize_attachment(_item, index), do: {:error, {:invalid_prompt_attachment, index}}
-
-  defp reject_attachment_payload_fields(item, index) do
-    payload_keys = MapSet.new(["body", "bytes", "content", "data"])
-
-    has_payload? =
-      Enum.any?(item, fn {key, _value} ->
-        case Fields.key_name(key) do
-          {:ok, name} -> MapSet.member?(payload_keys, name)
-          :error -> false
-        end
-      end)
-
-    if has_payload? do
-      {:error, {:invalid_prompt_attachment, index, :content_not_allowed}}
-    else
-      :ok
-    end
-  end
-
-  defp attachment_id(fields, index) do
-    case Map.get(fields, :id) do
-      nil ->
-        seed =
-          fields
-          |> Map.take([:byte_size, :media_type, :name, :sha256, :source])
-          |> drop_nil_values()
-          |> Map.put(:index, index)
-
-        {:ok, "attachment-" <> String.slice(canonical_hash!(seed), 0, 12)}
-
-      id ->
-        Fields.optional_layer_id(id, index)
-    end
-  end
-
-  defp ensure_attachment_has_metadata(fields, index) do
-    visible? =
-      fields
-      |> Map.take([:id, :name, :media_type, :byte_size, :sha256, :source])
-      |> Enum.any?(fn {_key, value} -> not is_nil(value) end)
-
-    if visible?, do: :ok, else: {:error, {:invalid_prompt_attachment, index, :empty_metadata}}
-  end
-
   defp compaction_metadata(fields, source_message_ids, strategy, original_count, retained_count) do
     with {:ok, metadata} <- Fields.metadata(Map.get(fields, :metadata, %{})) do
       {:ok,
@@ -581,8 +494,4 @@ defmodule Tet.Prompt do
 
   defp put_present(map, _key, nil), do: map
   defp put_present(map, key, value), do: Map.put(map, key, value)
-
-  defp drop_nil_values(map) do
-    Map.reject(map, fn {_key, value} -> is_nil(value) end)
-  end
 end
