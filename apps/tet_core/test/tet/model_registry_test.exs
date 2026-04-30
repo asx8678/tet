@@ -51,6 +51,27 @@ defmodule Tet.ModelRegistryTest do
     assert error.details.expected == "object"
   end
 
+  describe "string field validation" do
+    test "rejects JSON boolean and null model names" do
+      for {value, actual_type} <- [{true, "boolean"}, {nil, "null"}] do
+        raw = put_path(valid_raw(), ["models", @openai_model, "model"], value)
+
+        assert_invalid_type(
+          raw,
+          ["models", @openai_model, "model"],
+          "non-empty string",
+          actual_type
+        )
+      end
+    end
+
+    test "rejects JSON boolean provider types" do
+      raw = put_path(valid_raw(), ["providers", "mock", "type"], false)
+
+      assert_invalid_type(raw, ["providers", "mock", "type"], "non-empty string", "boolean")
+    end
+  end
+
   describe "context capability validation" do
     test "requires context capability" do
       raw = valid_raw() |> delete_path(["models", @openai_model, "capabilities", "context"])
@@ -166,6 +187,14 @@ defmodule Tet.ModelRegistryTest do
       assert error.details.allowed == ["mock", "openai_compatible"]
     end
 
+    test "rejects boolean model provider references as invalid type before lookup" do
+      path = ["models", @openai_model, "provider"]
+      raw = put_path(valid_raw(), path, true)
+
+      assert_invalid_type(raw, path, "non-empty string", "boolean")
+      refute_error(raw, path, :unknown_reference)
+    end
+
     test "requires profile default model references" do
       raw = valid_raw() |> delete_path(["profile_pins", "chat", "default_model"])
 
@@ -180,6 +209,14 @@ defmodule Tet.ModelRegistryTest do
       assert error.details.allowed == ["mock/default", @openai_model]
     end
 
+    test "rejects null profile default model references as invalid type before lookup" do
+      path = ["profile_pins", "chat", "default_model"]
+      raw = put_path(valid_raw(), path, nil)
+
+      assert_invalid_type(raw, path, "non-empty string", "null")
+      refute_error(raw, path, :unknown_reference)
+    end
+
     test "rejects unknown profile fallback model references" do
       raw = put_path(valid_raw(), ["profile_pins", "chat", "fallback_models"], ["missing/model"])
 
@@ -187,6 +224,14 @@ defmodule Tet.ModelRegistryTest do
         assert_error(raw, ["profile_pins", "chat", "fallback_models", 0], :unknown_reference)
 
       assert error.details.reference == "missing/model"
+    end
+
+    test "rejects boolean fallback model references as invalid type before lookup" do
+      path = ["profile_pins", "chat", "fallback_models", 0]
+      raw = put_path(valid_raw(), ["profile_pins", "chat", "fallback_models"], [true])
+
+      assert_invalid_type(raw, path, "string", "boolean")
+      refute_error(raw, path, :unknown_reference)
     end
   end
 
@@ -213,6 +258,15 @@ defmodule Tet.ModelRegistryTest do
     updated
   end
 
+  defp assert_invalid_type(raw, path, expected, actual) do
+    error = assert_error(raw, path, :invalid_type)
+
+    assert error.details.expected == expected
+    assert error.details.actual == actual
+
+    error
+  end
+
   defp assert_error(raw, path, code) do
     assert {:error, errors} = ModelRegistry.validate(raw)
 
@@ -223,5 +277,12 @@ defmodule Tet.ModelRegistryTest do
     assert is_binary(error.message)
     assert is_map(error.details)
     error
+  end
+
+  defp refute_error(raw, path, code) do
+    assert {:error, errors} = ModelRegistry.validate(raw)
+
+    refute Enum.any?(errors, fn error -> error.path == path and error.code == code end),
+           "expected no #{inspect(code)} at #{inspect(path)}, got #{inspect(errors)}"
   end
 end

@@ -457,6 +457,7 @@ defmodule Tet.ModelRegistry.Validator do
   end
 
   defp string_value(value) when is_binary(value), do: normalize_id(value)
+  defp string_value(value) when is_boolean(value) or is_nil(value), do: :error
   defp string_value(value) when is_atom(value), do: value |> Atom.to_string() |> normalize_id()
   defp string_value(_value), do: :error
 
@@ -482,6 +483,7 @@ defmodule Tet.ModelRegistry.Validator do
   defp actual_type(value) when is_list(value), do: "array"
   defp actual_type(value) when is_binary(value), do: "string"
   defp actual_type(value) when is_boolean(value), do: "boolean"
+  defp actual_type(value) when is_nil(value), do: "null"
   defp actual_type(value) when is_integer(value), do: "integer"
   defp actual_type(value) when is_float(value), do: "float"
   defp actual_type(value) when is_atom(value), do: "atom"
