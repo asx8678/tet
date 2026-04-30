@@ -142,4 +142,67 @@ defmodule Tet.Runtime.Tools.ReadTest do
       assert result.error.code == "invalid_arguments"
     end
   end
+
+  describe "run/2 — arg validation" do
+    test "rejects non-string path", %{workspace: ws} do
+      result = Read.run(%{"path" => 42}, workspace_root: ws)
+
+      assert result.ok == false
+      assert result.error.code == "invalid_arguments"
+    end
+
+    test "rejects invalid start_line", %{workspace: ws} do
+      result = Read.run(%{"path" => "hello.txt", "start_line" => "one"}, workspace_root: ws)
+
+      assert result.ok == false
+      assert result.error.code == "invalid_arguments"
+    end
+
+    test "rejects invalid line_count", %{workspace: ws} do
+      result = Read.run(%{"path" => "hello.txt", "line_count" => -1}, workspace_root: ws)
+
+      assert result.ok == false
+      assert result.error.code == "invalid_arguments"
+    end
+  end
+
+  describe "run/2 — bounded I/O" do
+    test "reads only up to max_bytes from large file", %{workspace: ws} do
+      big_content = String.duplicate("x", 10_000)
+      File.write!(Path.join(@workspace, "big.txt"), big_content)
+
+      result =
+        Read.run(%{"path" => "big.txt"}, workspace_root: ws, max_bytes: 1_000)
+
+      assert result.ok == true
+      assert byte_size(result.data.content) <= 1_000
+    end
+
+    test "handles file larger than max_bytes with line range", %{workspace: ws} do
+      lines = Enum.map(1..500, &"line #{&1}")
+      big_content = Enum.join(lines, "\n")
+      File.write!(Path.join(@workspace, "biglines.txt"), big_content)
+
+      result =
+        Read.run(%{"path" => "biglines.txt", "start_line" => 10, "line_count" => 5},
+          workspace_root: ws,
+          max_bytes: 10_000
+        )
+
+      assert result.ok == true
+      assert result.data.line_count == 5
+    end
+  end
+
+  describe "run/2 — symlink path inside workspace" do
+    test "reads through symlink inside workspace", %{workspace: ws} do
+      link_path = Path.join(ws, "link_to_hello")
+      File.ln_s!("hello.txt", link_path)
+
+      result = Read.run(%{"path" => "link_to_hello"}, workspace_root: ws)
+
+      assert result.ok == true
+      assert result.data.content == "hello world"
+    end
+  end
 end

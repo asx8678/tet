@@ -17,6 +17,7 @@ defmodule Tet.Runtime.Tools.Search do
 
   @max_matches 200
   @max_paths 100
+  @rg_timeout 10_000
 
   @doc """
   Searches bounded text files under a workspace path.
@@ -42,47 +43,77 @@ defmodule Tet.Runtime.Tools.Search do
     include_globs = Map.get(args, "include_globs", [])
     exclude_globs = Map.get(args, "exclude_globs", [])
 
-    condensed_denial =
-      cond do
-        query == "" or query == nil ->
-          %{
-            code: "invalid_arguments",
-            message: "query must be a non-empty string",
-            kind: "invalid_input",
-            retryable: false,
-            details: %{}
-          }
-
-        byte_size(query) > 4_096 ->
-          %{
-            code: "invalid_arguments",
-            message: "query exceeds maximum length of 4096 bytes",
-            kind: "invalid_input",
-            retryable: false,
-            details: %{max_bytes: 4_096}
-          }
-
-        true ->
-          nil
-      end
-
-    if condensed_denial do
-      build_error(condensed_denial)
+    with :ok <- validate_arg_types(args),
+         :ok <- validate_query(query),
+         {:ok, resolved_path} <- PathResolver.resolve(path_str, workspace_root) do
+      do_search(
+        resolved_path,
+        path_str,
+        query,
+        regex,
+        case_sensitive,
+        include_globs,
+        exclude_globs,
+        workspace_root
+      )
     else
-      with {:ok, resolved_path} <- PathResolver.resolve(path_str, workspace_root) do
-        do_search(
-          resolved_path,
-          path_str,
-          query,
-          regex,
-          case_sensitive,
-          include_globs,
-          exclude_globs,
-          workspace_root
-        )
-      else
-        {:error, denial} -> build_error(denial)
-      end
+      {:error, denial} -> build_error(denial)
+    end
+  end
+
+  defp validate_arg_types(args) do
+    with :ok <- PathResolver.validate_string(Map.get(args, "path", "."), "path"),
+         :ok <- PathResolver.validate_string(Map.get(args, "query", ""), "query"),
+         :ok <- PathResolver.validate_boolean(Map.get(args, "regex", false), "regex"),
+         :ok <-
+           PathResolver.validate_boolean(
+             Map.get(args, "case_sensitive", true),
+             "case_sensitive"
+           ),
+         :ok <-
+           PathResolver.validate_glob_list(Map.get(args, "include_globs", []), "include_globs"),
+         :ok <-
+           PathResolver.validate_glob_list(Map.get(args, "exclude_globs", []), "exclude_globs") do
+      :ok
+    else
+      {:error, denial} -> {:error, denial}
+    end
+  end
+
+  defp validate_query(query) do
+    cond do
+      query == "" or query == nil ->
+        {:error,
+         %{
+           code: "invalid_arguments",
+           message: "query must be a non-empty string",
+           kind: "invalid_input",
+           retryable: false,
+           details: %{}
+         }}
+
+      not is_binary(query) ->
+        {:error,
+         %{
+           code: "invalid_arguments",
+           message: "query must be a string",
+           kind: "invalid_input",
+           retryable: false,
+           details: %{}
+         }}
+
+      byte_size(query) > 4_096 ->
+        {:error,
+         %{
+           code: "invalid_arguments",
+           message: "query exceeds maximum length of 4096 bytes",
+           kind: "invalid_input",
+           retryable: false,
+           details: %{max_bytes: 4_096}
+         }}
+
+      true ->
+        :ok
     end
   end
 
@@ -112,6 +143,15 @@ defmodule Tet.Runtime.Tools.Search do
           details: %{}
         })
 
+      {:error, :rg_timeout} ->
+        build_error(%{
+          code: "timeout",
+          message: "Search timed out after #{@rg_timeout}ms",
+          kind: "timeout",
+          retryable: true,
+          details: %{timeout_ms: @rg_timeout}
+        })
+
       {:error, reason} ->
         build_error(%{
           code: "internal_error",
@@ -131,10 +171,11 @@ defmodule Tet.Runtime.Tools.Search do
       "--max-filesize",
       "1M",
       "--no-ignore",
-      "--follow",
       "--color",
       "never"
     ]
+
+    # NOTE: --follow deliberately omitted to prevent symlink escape
 
     args = if regex, do: args, else: args ++ ["--fixed-strings"]
     args = if case_sensitive, do: args, else: args ++ ["-i"]
@@ -149,7 +190,8 @@ defmodule Tet.Runtime.Tools.Search do
         acc ++ ["--glob", "!#{glob}"]
       end)
 
-    args ++ [query, to_string(search_path)]
+    # Use `--` separator to prevent option injection from query
+    args ++ ["--", query, to_string(search_path)]
   end
 
   defp run_rg(args) do
@@ -160,18 +202,26 @@ defmodule Tet.Runtime.Tools.Search do
       _rg_path ->
         opts = [stderr_to_stdout: true, parallelism: false]
 
-        case System.cmd("rg", args, opts) do
-          {output, 0} ->
+        task =
+          Task.async(fn ->
+            System.cmd("rg", args, opts)
+          end)
+
+        case Task.yield(task, @rg_timeout) || Task.shutdown(task, :brutal_kill) do
+          {:ok, {output, 0}} ->
             parse_rg_json_output(output)
 
-          {output, 1} ->
+          {:ok, {output, 1}} ->
             parse_rg_json_output(output)
 
-          {_output, 2} ->
+          {:ok, {_output, 2}} ->
             {:error, :rg_error}
 
-          {output, _other} ->
+          {:ok, {output, _other}} ->
             parse_rg_json_output(output)
+
+          nil ->
+            {:error, :rg_timeout}
         end
     end
   end

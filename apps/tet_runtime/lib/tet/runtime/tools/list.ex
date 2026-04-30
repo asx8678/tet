@@ -7,13 +7,14 @@ defmodule Tet.Runtime.Tools.List do
   - Recursive listing with max depth
   - Entry size metadata
   - Summary rollup
-  - Truncation at limits
+  - Truncation at limits enforced at the I/O boundary
   - No mutation
   """
 
   alias Tet.Runtime.Tools.PathResolver
 
   @max_entries 5_000
+  @max_depth_limit 12
   @type result :: map()
 
   @doc """
@@ -32,82 +33,174 @@ defmodule Tet.Runtime.Tools.List do
     workspace_root = Keyword.fetch!(opts, :workspace_root)
     path_str = Map.get(args, "path", ".")
     recursive = Map.get(args, "recursive", false)
-    max_depth = Map.get(args, "max_depth", if(recursive, do: 12, else: 0))
+    max_depth = Map.get(args, "max_depth", if(recursive, do: @max_depth_limit, else: 0))
 
-    with {:ok, resolved_path} <- PathResolver.resolve_directory(path_str, workspace_root) do
+    with :ok <- validate_arg_types(args),
+         {:ok, resolved_path} <- PathResolver.resolve_directory(path_str, workspace_root) do
       list_entries(resolved_path, path_str, recursive, max_depth, workspace_root)
     else
       {:error, denial} -> build_error(denial)
     end
   end
 
-  defp list_entries(dir_path, rel_path, recursive, max_depth, workspace_root) do
-    case File.ls(dir_path) do
-      {:ok, names} ->
-        entries = build_entries(names, dir_path, rel_path, workspace_root, 0)
-        {filtered, truncated} = apply_truncation(entries, recursive, max_depth)
-
-        summary = %{
-          entry_count: length(filtered),
-          file_count: Enum.count(filtered, &(&1.type == "file")),
-          directory_count: Enum.count(filtered, &(&1.type == "directory")),
-          total_bytes: Enum.reduce(filtered, 0, &(&1.size_bytes + &2)),
-          truncated: truncated
-        }
-
-        build_success(rel_path, filtered, truncated, summary)
-
-      {:error, :enoent} ->
-        {:error,
-         %{
-           code: "not_found",
-           message: "Directory not found: #{rel_path}",
-           kind: "not_found",
-           retryable: false,
-           details: %{}
-         }}
-
-      {:error, :eacces} ->
-        {:error,
-         %{
-           code: "permission_denied",
-           message: "Permission denied listing directory",
-           kind: "permission",
-           retryable: false,
-           details: %{}
-         }}
-
-      {:error, reason} ->
-        {:error,
-         %{
-           code: "internal_error",
-           message: "Failed to list directory: #{reason}",
-           kind: "internal",
-           retryable: true,
-           details: %{}
-         }}
+  defp validate_arg_types(args) do
+    with :ok <- PathResolver.validate_string(Map.get(args, "path", "."), "path"),
+         :ok <- PathResolver.validate_boolean(Map.get(args, "recursive", false), "recursive"),
+         :ok <-
+           PathResolver.validate_integer(
+             Map.get(args, "max_depth", 0),
+             "max_depth",
+             0,
+             @max_depth_limit
+           ) do
+      :ok
+    else
+      {:error, denial} -> {:error, denial}
     end
   end
 
-  defp build_entries(names, dir_path, rel_path, workspace_root, depth) do
+  defp list_entries(dir_path, rel_path, recursive, max_depth, workspace_root) do
+    case File.ls(dir_path) do
+      {:ok, names} ->
+        {entries, entry_count, truncated} =
+          if recursive and max_depth > 0 do
+            collect_recursive(names, dir_path, rel_path, workspace_root, 0, max_depth, [])
+          else
+            entries = build_entries(names, dir_path, rel_path, workspace_root, 0, 0, %{})
+            {entries, length(entries), false}
+          end
+
+        summary = %{
+          entry_count: entry_count,
+          file_count: Enum.count(entries, &(&1.type == "file")),
+          directory_count: Enum.count(entries, &(&1.type == "directory")),
+          total_bytes: Enum.reduce(entries, 0, &(&1.size_bytes + &2)),
+          truncated: truncated
+        }
+
+        build_success(rel_path, entries, truncated, summary)
+
+      {:error, :enoent} ->
+        build_error(%{
+          code: "not_found",
+          message: "Directory not found: #{rel_path}",
+          kind: "not_found",
+          retryable: false,
+          details: %{path: rel_path}
+        })
+
+      {:error, :eacces} ->
+        build_error(%{
+          code: "permission_denied",
+          message: "Permission denied listing directory",
+          kind: "permission",
+          retryable: false,
+          details: %{path: rel_path}
+        })
+
+      {:error, reason} ->
+        build_error(%{
+          code: "internal_error",
+          message: "Failed to list directory: #{reason}",
+          kind: "internal",
+          retryable: true,
+          details: %{path: rel_path}
+        })
+    end
+  end
+
+  defp collect_recursive(_names, _dir_path, _rel_path, _workspace_root, _depth, _max_depth, acc)
+       when length(acc) >= @max_entries do
+    {Enum.reverse(acc), @max_entries, true}
+  end
+
+  defp collect_recursive(_names, _dir_path, _rel_path, _workspace_root, depth, max_depth, acc)
+       when depth > max_depth do
+    {acc, length(acc), false}
+  end
+
+  defp collect_recursive(names, dir_path, rel_path, workspace_root, depth, max_depth, acc) do
+    entries = build_entries(names, dir_path, rel_path, workspace_root, depth, 0, %{})
+    all_acc = acc ++ entries
+
+    if length(all_acc) >= @max_entries do
+      {Enum.take(all_acc, @max_entries), @max_entries, true}
+    else
+      dirs = Enum.filter(entries, &(&1.type == "directory"))
+
+      sub_results =
+        Enum.reduce_while(dirs, {all_acc, false, false}, fn dir,
+                                                            {inner_acc, _trunc, _skip} = state ->
+          if length(inner_acc) >= @max_entries do
+            {:halt, {Enum.take(inner_acc, @max_entries), true, true}}
+          else
+            sub_path = Path.join(rel_path, Path.basename(dir.path))
+            sub_full = Path.join(dir_path, Path.basename(dir.path))
+
+            case File.ls(sub_full) do
+              {:ok, sub_names} ->
+                {result_acc, _t, result_trunc} =
+                  collect_recursive(
+                    sub_names,
+                    sub_full,
+                    sub_path,
+                    workspace_root,
+                    depth + 1,
+                    max_depth,
+                    []
+                  )
+
+                new_acc = inner_acc ++ result_acc
+                truncated = elem(state, 1) || result_trunc || length(new_acc) >= @max_entries
+                new_acc_t = if truncated, do: Enum.take(new_acc, @max_entries), else: new_acc
+                {:cont, {new_acc_t, truncated, false}}
+
+              {:error, _reason} ->
+                {:cont, state}
+            end
+          end
+        end)
+
+      {final_entries, truncated, _} = sub_results
+      {final_entries, length(final_entries), truncated}
+    end
+  end
+
+  defp build_entries(names, dir_path, rel_path, workspace_root, depth, _acc_count, _parents_seen) do
+    # Normalize rel_path: strip leading "./" so paths are clean
+    normalized_rel = String.replace_prefix(rel_path, "./", "")
+
     names
     |> Enum.sort()
     |> Enum.reduce([], fn name, acc ->
-      full = Path.join(dir_path, name)
-      entry_rel = if rel_path == ".", do: name, else: Path.join(rel_path, name)
+      if length(acc) >= @max_entries do
+        acc
+      else
+        full = Path.join(dir_path, name)
 
-      case entry_type(full, entry_rel, workspace_root) do
-        {:ok, type, size} ->
-          [%{path: entry_rel, type: type, size_bytes: size, depth: depth, redacted: false} | acc]
+        entry_rel =
+          if normalized_rel == "." or normalized_rel == "" do
+            name
+          else
+            Path.join(normalized_rel, name)
+          end
 
-        {:skip, _reason} ->
-          [%{path: entry_rel, type: "other", size_bytes: 0, depth: depth, redacted: true} | acc]
+        case entry_type(full, entry_rel, workspace_root) do
+          {:ok, type, size} ->
+            [
+              %{path: entry_rel, type: type, size_bytes: size, depth: depth, redacted: false}
+              | acc
+            ]
+
+          {:skip, _reason} ->
+            [%{path: entry_rel, type: "other", size_bytes: 0, depth: depth, redacted: true} | acc]
+        end
       end
     end)
     |> Enum.reverse()
   end
 
-  defp entry_type(full_path, _entry_rel, workspace_root) do
+  defp entry_type(full_path, entry_rel, workspace_root) do
     case File.lstat(full_path) do
       {:ok, stat} ->
         case stat.type do
@@ -118,10 +211,10 @@ defmodule Tet.Runtime.Tools.List do
             {:ok, "file", stat.size}
 
           :symlink ->
-            resolved = PathResolver.resolve(Path.basename(full_path), workspace_root)
-
-            case resolved do
-              {:ok, _target} -> {:ok, "symlink", stat.size}
+            # Check if the symlink is safe using the entry's relative context
+            # We use entry_rel as the path to resolve since it's workspace-relative
+            case PathResolver.resolve(entry_rel, workspace_root) do
+              {:ok, _} -> {:ok, "symlink", stat.size}
               {:error, _} -> {:skip, :escape}
             end
 
@@ -131,15 +224,6 @@ defmodule Tet.Runtime.Tools.List do
 
       {:error, _reason} ->
         {:ok, "other", 0}
-    end
-  end
-
-  defp apply_truncation(entries, recursive, max_depth) do
-    if recursive and max_depth > 0 do
-      # Simple flat truncation for now — future: proper recursive walk
-      {Enum.take(entries, @max_entries), length(entries) > @max_entries}
-    else
-      {entries, false}
     end
   end
 
@@ -153,7 +237,7 @@ defmodule Tet.Runtime.Tools.List do
       },
       truncated: truncated,
       limit_usage: %{
-        paths: %{used: 1, max: 5_000},
+        paths: %{used: 1, max: @max_entries},
         results: %{used: length(entries), max: @max_entries}
       }
     }
@@ -165,7 +249,7 @@ defmodule Tet.Runtime.Tools.List do
       error: denial,
       truncated: false,
       limit_usage: %{
-        paths: %{used: 0, max: 5_000},
+        paths: %{used: 0, max: @max_entries},
         results: %{used: 0, max: @max_entries}
       }
     }

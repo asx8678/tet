@@ -105,16 +105,41 @@ defmodule Tet.Runtime.Tools.PathResolverTest do
 
   describe "symlink detection" do
     test "rejects symlink that escapes workspace", %{workspace: ws} do
-      # Create a symlink outside the workspace
       outside = "/tmp/tet_test_outside_#{System.unique_integer([:positive])}"
       File.write!(outside, "outside content")
+      on_exit(fn -> File.rm(outside) end)
+
       link_path = Path.join(ws, "escape_link")
       File.ln_s!(outside, link_path)
 
       assert {:error, denial} = PathResolver.resolve("escape_link", ws)
       assert denial.code == "workspace_escape"
-    after
-      File.rm("/tmp/tet_test_outside_#{System.unique_integer([:positive])}")
+    end
+
+    test "rejects read via workspace/linkdir/file where linkdir points outside", %{workspace: ws} do
+      outside = "/tmp/tet_test_outside_dir_#{System.unique_integer([:positive])}"
+      File.mkdir_p!(outside)
+      File.write!(Path.join(outside, "secret.txt"), "outside content")
+      on_exit(fn -> File.rm_rf!(outside) end)
+
+      linkdir = Path.join(ws, "linkdir")
+      File.ln_s!(outside, linkdir)
+
+      assert {:error, denial} = PathResolver.resolve("linkdir/secret.txt", ws)
+      assert denial.code == "workspace_escape"
+    end
+
+    test "rejects list via linkdir/subdir where linkdir points outside", %{workspace: ws} do
+      outside = "/tmp/tet_test_outside_sub_#{System.unique_integer([:positive])}"
+      File.mkdir_p!(outside)
+      File.mkdir_p!(Path.join(outside, "subdir"))
+      on_exit(fn -> File.rm_rf!(outside) end)
+
+      linkdir = Path.join(ws, "linkdir")
+      File.ln_s!(outside, linkdir)
+
+      assert {:error, denial} = PathResolver.resolve("linkdir/subdir", ws)
+      assert denial.code == "workspace_escape"
     end
 
     test "allows symlink that stays inside workspace", %{workspace: ws} do
@@ -131,8 +156,71 @@ defmodule Tet.Runtime.Tools.PathResolverTest do
       File.ln_s!("hello.txt", link_path)
 
       assert {:ok, resolved} = PathResolver.resolve("rel_link", ws)
-      # The resolved path may be the link path (not the target)
       assert String.starts_with?(resolved, ws)
+    end
+
+    test "rejects nested symlink chain where intermediate escapes", %{workspace: ws} do
+      outside = "/tmp/tet_test_nested_outside_#{System.unique_integer([:positive])}"
+      File.mkdir_p!(outside)
+      File.write!(Path.join(outside, "target.txt"), "escaped")
+      on_exit(fn -> File.rm_rf!(outside) end)
+
+      escape_link = Path.join(ws, "sub/escape_link")
+      File.ln_s!(outside, escape_link)
+
+      nested_link = Path.join(ws, "sub/nested_link")
+      File.ln_s!("escape_link", nested_link)
+
+      assert {:error, denial} = PathResolver.resolve("sub/nested_link/target.txt", ws)
+      assert denial.code == "workspace_escape"
+    end
+  end
+
+  describe "validate helpers" do
+    test "validate_boolean rejects non-booleans" do
+      assert {:error, d} = PathResolver.validate_boolean("yes", "flag")
+      assert d.code == "invalid_arguments"
+
+      assert {:error, d} = PathResolver.validate_boolean(1, "flag")
+      assert d.code == "invalid_arguments"
+
+      assert :ok = PathResolver.validate_boolean(true, "flag")
+      assert :ok = PathResolver.validate_boolean(false, "flag")
+    end
+
+    test "validate_integer rejects non-integers and out-of-range" do
+      assert {:error, d} = PathResolver.validate_integer("one", "count", 0, 10)
+      assert d.code == "invalid_arguments"
+
+      assert {:error, d} = PathResolver.validate_integer(-1, "count", 0, 10)
+      assert d.code == "invalid_arguments"
+
+      assert {:error, d} = PathResolver.validate_integer(20, "count", 0, 10)
+      assert d.code == "invalid_arguments"
+
+      assert :ok = PathResolver.validate_integer(5, "count", 0, 10)
+      assert :ok = PathResolver.validate_integer(0, "count", 0)
+    end
+
+    test "validate_string rejects non-strings" do
+      assert {:error, d} = PathResolver.validate_string(42, "name")
+      assert d.code == "invalid_arguments"
+
+      assert {:error, d} = PathResolver.validate_string(nil, "name")
+      assert d.code == "invalid_arguments"
+
+      assert :ok = PathResolver.validate_string("valid", "name")
+    end
+
+    test "validate_glob_list rejects non-lists and non-string elements" do
+      assert {:error, d} = PathResolver.validate_glob_list("*.txt", "globs")
+      assert d.code == "invalid_arguments"
+
+      assert {:error, d} = PathResolver.validate_glob_list([:atom, 42], "globs")
+      assert d.code == "invalid_arguments"
+
+      assert :ok = PathResolver.validate_glob_list([], "globs")
+      assert :ok = PathResolver.validate_glob_list(["*.txt", "*.ex"], "globs")
     end
   end
 end

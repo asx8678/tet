@@ -9,12 +9,14 @@ defmodule Tet.Runtime.Tools.Read do
   - Binary file detection
   - Structured denial reasons
   - No mutation
+  - Bounded file reads at the I/O boundary
   """
 
   alias Tet.Runtime.Tools.PathResolver
 
   @default_max_bytes 1_000_000
   @default_max_lines 5_000
+  @read_chunk_size 65_536
 
   @type result :: %{
           required(:ok) => boolean(),
@@ -43,12 +45,28 @@ defmodule Tet.Runtime.Tools.Read do
     max_bytes = Keyword.get(opts, :max_bytes, @default_max_bytes)
     max_lines = Keyword.get(opts, :max_lines, @default_max_lines)
 
-    with {:ok, resolved_path} <- PathResolver.resolve_file(path_str, workspace_root),
+    with :ok <- validate_arg_types(args),
+         {:ok, resolved_path} <- PathResolver.resolve_file(path_str, workspace_root),
          :ok <- validate_line_range(start_line, line_count, max_lines),
          {:ok, content, meta} <- read_file_range(resolved_path, start_line, line_count, max_bytes) do
       build_success(path_str, content, meta)
     else
       {:error, denial} -> build_error(denial)
+    end
+  end
+
+  defp validate_arg_types(args) do
+    with :ok <- PathResolver.validate_string(Map.get(args, "path", ""), "path"),
+         :ok <- PathResolver.validate_integer(Map.get(args, "start_line", 1), "start_line", 1),
+         :ok <-
+           PathResolver.validate_integer(
+             Map.get(args, "line_count", @default_max_lines),
+             "line_count",
+             1
+           ) do
+      :ok
+    else
+      {:error, denial} -> {:error, denial}
     end
   end
 
@@ -88,20 +106,60 @@ defmodule Tet.Runtime.Tools.Read do
   defp validate_line_range(_start_line, _line_count, _max_lines), do: :ok
 
   defp read_file_range(path, start_line, line_count, max_bytes) do
-    case File.read(path) do
-      {:ok, content} ->
-        if binary_content?(content) do
-          {:ok, "",
-           %{
-             start_line: 1,
-             line_count: 0,
-             total_lines: 0,
-             bytes_read: 0,
-             total_bytes: byte_size(content),
-             binary: true
-           }}
-        else
-          read_text_range(content, start_line, line_count, max_bytes)
+    # Read bounded bytes at the I/O boundary: never read more than
+    # what's needed for the requested line range + max_bytes
+    case File.stat(path) do
+      {:ok, stat} ->
+        total_file_bytes = stat.size
+        # a bit extra for line splitting
+        read_limit = max_bytes + @read_chunk_size
+        bytes_to_read = min(total_file_bytes, read_limit)
+
+        case read_bounded(path, bytes_to_read) do
+          {:ok, content} ->
+            if binary_content?(content) do
+              {:ok, "",
+               %{
+                 start_line: 1,
+                 line_count: 0,
+                 total_lines: 0,
+                 bytes_read: 0,
+                 total_bytes: total_file_bytes,
+                 binary: true
+               }}
+            else
+              read_text_range(content, start_line, line_count, max_bytes, total_file_bytes)
+            end
+
+          {:error, :enoent} ->
+            {:error,
+             %{
+               code: "not_found",
+               message: "File not found",
+               kind: "not_found",
+               retryable: false,
+               details: %{}
+             }}
+
+          {:error, :eacces} ->
+            {:error,
+             %{
+               code: "permission_denied",
+               message: "Permission denied reading file",
+               kind: "permission",
+               retryable: false,
+               details: %{}
+             }}
+
+          {:error, reason} ->
+            {:error,
+             %{
+               code: "internal_error",
+               message: "Failed to read file: #{reason}",
+               kind: "internal",
+               retryable: true,
+               details: %{}
+             }}
         end
 
       {:error, :enoent} ->
@@ -136,21 +194,27 @@ defmodule Tet.Runtime.Tools.Read do
     end
   end
 
+  defp read_bounded(path, max_bytes) do
+    File.open(path, [:read, :binary], fn io_device ->
+      IO.binread(io_device, max_bytes)
+    end)
+  end
+
   defp binary_content?(content) do
     # Check first 8KB for null bytes as a heuristic
-    sample = binary_part(content, 0, min(byte_size(content), 8_192))
+    sample = String.slice(content, 0, 8_192)
     String.contains?(sample, <<0>>)
   end
 
-  defp read_text_range(content, start_line, line_count, max_bytes) do
+  defp read_text_range(content, start_line, line_count, max_bytes, total_file_bytes) do
     lines = String.split(content, "\n")
     total_lines = length(lines)
 
     if start_line > total_lines do
       {:ok, "",
        %{
-         total_bytes: byte_size(content),
-         bytes_read: 0,
+         total_bytes: total_file_bytes,
+         bytes_read: byte_size(content),
          start_line: start_line,
          line_count: 0,
          total_lines: total_lines,
@@ -160,10 +224,10 @@ defmodule Tet.Runtime.Tools.Read do
     else
       selected = Enum.drop(lines, start_line - 1) |> Enum.take(line_count)
       result = Enum.join(selected, "\n")
-      total_bytes = byte_size(result)
+      result_bytes = byte_size(result)
 
       {truncated, final_result} =
-        if total_bytes > max_bytes do
+        if result_bytes > max_bytes do
           {true, binary_part(result, 0, max_bytes)}
         else
           {false, result}
@@ -171,8 +235,8 @@ defmodule Tet.Runtime.Tools.Read do
 
       {:ok, final_result,
        %{
-         total_bytes: byte_size(content),
-         bytes_read: byte_size(result),
+         total_bytes: total_file_bytes,
+         bytes_read: result_bytes,
          start_line: start_line,
          line_count: min(length(selected), line_count),
          total_lines: total_lines,
