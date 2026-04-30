@@ -338,6 +338,71 @@ defmodule Tet.ProviderRouterTest do
     end)
   end
 
+  test "router diagnostics normalize explicit candidates before reporting viability" do
+    assert {:error, report} =
+             ProviderConfig.diagnose(provider: :router, candidates: [[provider: :unknown]])
+
+    assert report.status == :error
+    assert report.candidate_count == 1
+    assert report.viable_candidate_count == 0
+    assert report.config_error_count == 1
+    assert report.message == "provider router has no viable candidates"
+    assert report.detail =~ "no_viable_candidates"
+
+    assert {:no_viable_candidates, [config_error]} = report.reason
+    assert config_error.candidate_index == 0
+    assert config_error.provider == :unknown
+    assert config_error.config_error? == true
+    assert config_error.config_error_detail =~ "unknown_provider"
+    refute Map.has_key?(config_error, :config_error)
+  end
+
+  test "router provider config reports malformed candidate lists without leaking details" do
+    secret = "sk-router-malformed-secret-12345"
+
+    malformed_candidates = [
+      [{:provider, :mock}, {:api_key, secret}, :definitely_not_a_pair]
+    ]
+
+    assert {:error, {:invalid_router_candidate, 0, :invalid_candidate_list}} =
+             ProviderConfig.resolve(provider: :router, candidates: malformed_candidates)
+
+    assert {:error, report} =
+             ProviderConfig.diagnose(provider: :router, candidates: malformed_candidates)
+
+    assert report.status == :error
+    assert report.reason == {:invalid_router_candidate, 0, :invalid_candidate_list}
+    assert report.detail =~ "invalid_candidate_list"
+    assert report.message == "provider router configuration failed"
+    refute inspect(report) =~ secret
+  end
+
+  test "router candidate normalization handles unknown and malformed candidates without crashing" do
+    assert {:ok, [candidate]} = Router.route_order([[provider: :unknown]], [])
+    assert candidate.config_error == {:unknown_provider, :unknown}
+
+    assert {:error, {:invalid_router_candidate, 0, :invalid_candidate_list}} =
+             Router.route_order([[:definitely_not_a_pair]], [])
+
+    parent = self()
+
+    assert {:error, {:invalid_router_candidate, 0, :invalid_candidate_list}} =
+             Router.stream_chat(
+               provider_history(unique_session("malformed-candidate"), "hello"),
+               [request_id: "req-malformed-candidate", candidates: [[:definitely_not_a_pair]]],
+               &send(parent, {:event, &1})
+             )
+
+    route_error =
+      collect_events()
+      |> Enum.filter(&route_event?/1)
+      |> List.first()
+
+    assert route_error.type == :provider_route_error
+    assert event_value(route_error, :kind) == :configuration_error
+    assert event_value(route_error, :detail) =~ "invalid_candidate_list"
+  end
+
   test "route order is deterministic for a routing key" do
     candidates = [
       [provider: :mock, model: "model-0", chunks: ["zero"]],

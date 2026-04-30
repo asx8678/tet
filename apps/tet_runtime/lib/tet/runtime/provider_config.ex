@@ -7,6 +7,7 @@ defmodule Tet.Runtime.ProviderConfig do
   """
 
   alias Tet.Runtime.Provider.Error
+  alias Tet.Runtime.Provider.Router.Candidates
 
   @default_openai_base_url "https://api.openai.com/v1"
   @default_openai_model "gpt-4o-mini"
@@ -110,7 +111,8 @@ defmodule Tet.Runtime.ProviderConfig do
   end
 
   defp resolve_router(opts) do
-    with {:ok, candidates} <- router_candidates(opts) do
+    with {:ok, candidates} <- router_candidates(opts),
+         {:ok, candidates} <- Candidates.normalize(candidates) do
       {:ok,
        {Tet.Runtime.Provider.Router,
         opts
@@ -277,42 +279,51 @@ defmodule Tet.Runtime.ProviderConfig do
   end
 
   defp diagnose_router(opts) do
-    case router_candidates(opts) do
-      {:ok, candidates} ->
-        candidates = candidates |> Enum.with_index() |> Enum.map(&sanitize_router_candidate/1)
-        config_errors = Enum.filter(candidates, &Map.get(&1, :config_error?, false))
-        status = router_diagnostic_status(candidates, config_errors)
-
-        report =
-          %{
-            provider: :router,
-            adapter: Tet.Runtime.Provider.Router,
-            status: status,
-            profile: router_profile(opts),
-            candidate_count: length(candidates),
-            viable_candidate_count: length(candidates) - length(config_errors),
-            config_error_count: length(config_errors),
-            candidates: candidates,
-            config_errors: config_errors,
-            reason: router_diagnostic_reason(status, config_errors),
-            message: router_diagnostic_message(status)
-          }
-          |> compact_map()
-
-        if status == :error, do: {:error, report}, else: {:ok, report}
-
-      {:error, reason} ->
-        {:error,
-         %{
-           provider: :router,
-           adapter: Tet.Runtime.Provider.Router,
-           status: :error,
-           profile: router_profile(opts),
-           reason: Tet.Redactor.redact(reason),
-           detail: Error.detail(reason),
-           message: "provider router configuration failed"
-         }}
+    with {:ok, candidates} <- router_candidates(opts),
+         {:ok, candidates} <- Candidates.normalize(candidates) do
+      router_diagnostic_report(candidates, opts)
+    else
+      {:error, reason} -> router_config_error_report(opts, reason)
     end
+  end
+
+  defp router_diagnostic_report(candidates, opts) do
+    candidates = candidates |> Enum.with_index() |> Enum.map(&sanitize_router_candidate/1)
+    config_errors = Enum.filter(candidates, &Map.get(&1, :config_error?, false))
+    status = router_diagnostic_status(candidates, config_errors)
+    reason = router_diagnostic_reason(status, config_errors)
+
+    report =
+      %{
+        provider: :router,
+        adapter: Tet.Runtime.Provider.Router,
+        status: status,
+        profile: router_profile(opts),
+        candidate_count: length(candidates),
+        viable_candidate_count: length(candidates) - length(config_errors),
+        config_error_count: length(config_errors),
+        candidates: candidates,
+        config_errors: config_errors,
+        reason: reason,
+        detail: router_diagnostic_detail(status, reason),
+        message: router_diagnostic_message(status)
+      }
+      |> compact_map()
+
+    if status == :error, do: {:error, report}, else: {:ok, report}
+  end
+
+  defp router_config_error_report(opts, reason) do
+    {:error,
+     %{
+       provider: :router,
+       adapter: Tet.Runtime.Provider.Router,
+       status: :error,
+       profile: router_profile(opts),
+       reason: Tet.Redactor.redact(reason),
+       detail: Error.detail(reason),
+       message: "provider router configuration failed"
+     }}
   end
 
   defp router_diagnostic_status([], _config_errors), do: :error
@@ -332,6 +343,11 @@ defmodule Tet.Runtime.ProviderConfig do
   defp router_diagnostic_reason(:error, []), do: :no_provider_candidates
   defp router_diagnostic_reason(:error, config_errors), do: {:no_viable_candidates, config_errors}
 
+  defp router_diagnostic_detail(:error, reason),
+    do: Error.detail({:provider_candidate_config, reason})
+
+  defp router_diagnostic_detail(_status, _reason), do: nil
+
   defp router_diagnostic_message(:ok), do: "provider router configured"
 
   defp router_diagnostic_message(:degraded),
@@ -340,8 +356,8 @@ defmodule Tet.Runtime.ProviderConfig do
   defp router_diagnostic_message(:error), do: "provider router has no viable candidates"
 
   defp sanitize_router_candidate({candidate, index}) do
-    candidate = if is_list(candidate), do: Map.new(candidate), else: candidate
-    opts = if is_map(candidate), do: candidate_value(candidate, :opts) || [], else: []
+    candidate = diagnostic_candidate(candidate)
+    opts = candidate_value(candidate, :opts) || []
     opts = if is_list(opts), do: opts, else: []
     config_error = candidate_value(candidate, :config_error)
 
@@ -355,6 +371,9 @@ defmodule Tet.Runtime.ProviderConfig do
     }
     |> compact_map()
   end
+
+  defp diagnostic_candidate(candidate) when is_map(candidate), do: candidate
+  defp diagnostic_candidate(_candidate), do: %{}
 
   defp config_error_detail(nil), do: nil
   defp config_error_detail(reason), do: Error.detail({:provider_candidate_config, reason})
