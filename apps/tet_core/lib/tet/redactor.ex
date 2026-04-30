@@ -25,6 +25,11 @@ defmodule Tet.Redactor do
     "refreshtoken",
     "sessiontoken"
   ]
+  @sensitive_value_patterns [
+    ~r/\bBearer\s+[A-Za-z0-9._~+\/=:-]+/i,
+    ~r/\b(api[_-]?key|authorization|access[_-]?token|refresh[_-]?token|id[_-]?token|session[_-]?token|token|password|secret)\b\s*[:=]\s*["']?[^\["'\s,;}\]]+/i,
+    ~r/\bsk-[A-Za-z0-9_-]{6,}\b/
+  ]
 
   @doc "Returns the canonical replacement string for redacted values."
   @spec redacted_value() :: binary()
@@ -64,18 +69,47 @@ defmodule Tet.Redactor do
       compact in @sensitive_token_compact_keys
   end
 
-  @doc "Recursively redacts map/list values whose keys look sensitive."
+  @doc "Recursively redacts values whose keys or string contents look sensitive."
   @spec redact(term()) :: term()
+  def redact(%module{} = value) do
+    value
+    |> Map.from_struct()
+    |> redact()
+    |> then(&struct(module, &1))
+  rescue
+    _exception -> value
+  end
+
   def redact(value) when is_map(value) do
-    Map.new(value, fn {key, item} ->
-      if sensitive_key?(key) do
-        {key, @redacted}
-      else
-        {key, redact(item)}
-      end
-    end)
+    Map.new(value, fn {key, item} -> redact_key_value(key, item) end)
   end
 
   def redact(value) when is_list(value), do: Enum.map(value, &redact/1)
+
+  def redact({key, item}) do
+    redact_key_value(key, item)
+  end
+
+  def redact(value) when is_tuple(value) do
+    value
+    |> Tuple.to_list()
+    |> Enum.map(&redact/1)
+    |> List.to_tuple()
+  end
+
+  def redact(value) when is_binary(value) do
+    Enum.reduce(@sensitive_value_patterns, value, fn pattern, redacted ->
+      Regex.replace(pattern, redacted, @redacted)
+    end)
+  end
+
   def redact(value), do: value
+
+  defp redact_key_value(key, item) do
+    if sensitive_key?(key) do
+      {key, @redacted}
+    else
+      {key, redact(item)}
+    end
+  end
 end

@@ -84,6 +84,17 @@ defmodule Tet.PromptTest do
                :safe => "ok",
                123 => "visible"
              }
+
+    assert Tet.Redactor.redact(api_key: "secret", safe: {:token, "secret"}) ==
+             [api_key: "[REDACTED]", safe: {:token, "[REDACTED]"}]
+
+    already_redacted = ~s(api_key: "[REDACTED]")
+    assert Tet.Redactor.redact(already_redacted) == already_redacted
+
+    redacted_event =
+      Tet.Redactor.redact(%Tet.Event{type: :provider_error, payload: %{api_key: "secret"}})
+
+    assert redacted_event.payload == %{api_key: "[REDACTED]"}
   end
 
   test "redacts camelCase secret metadata keys at top-level and nested debug depths" do

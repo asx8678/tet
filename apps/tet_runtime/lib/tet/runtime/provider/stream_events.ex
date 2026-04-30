@@ -1,6 +1,8 @@
 defmodule Tet.Runtime.Provider.StreamEvents do
   @moduledoc false
 
+  alias Tet.Runtime.Provider.Error
+
   @doc "Emits the normalized provider stream-start event."
   def emit_start(provider, opts, emit, extra \\ %{}) do
     payload = provider_payload(provider, opts, extra)
@@ -64,14 +66,14 @@ defmodule Tet.Runtime.Provider.StreamEvents do
 
   @doc "Emits a normalized provider error event for a returned provider error."
   def emit_error(provider, reason, opts, emit) do
-    kind = error_kind(reason)
+    kind = Error.kind(reason)
 
     payload =
       provider_payload(provider, opts, %{
-        retryable?: retryable?(kind, reason)
+        retryable?: Error.retryable?(kind, reason)
       })
 
-    emit.(Tet.Event.provider_error(kind, inspect(reason), payload, event_opts(opts)))
+    emit.(Tet.Event.provider_error(kind, Error.detail(reason), payload, event_opts(opts)))
   end
 
   defp provider_payload(provider, opts, extra) do
@@ -92,30 +94,4 @@ defmodule Tet.Runtime.Provider.StreamEvents do
   defp maybe_put(payload, _key, nil), do: payload
   defp maybe_put(payload, _key, ""), do: payload
   defp maybe_put(payload, key, value), do: Map.put(payload, key, value)
-
-  defp error_kind({:provider_http_status, 401, _reason, _body}), do: :auth_failed
-  defp error_kind({:provider_http_status, 403, _reason, _body}), do: :auth_failed
-  defp error_kind({:provider_http_status, 404, _reason, _body}), do: :model_not_found
-  defp error_kind({:provider_http_status, 408, _reason, _body}), do: :timeout
-  defp error_kind({:provider_http_status, 429, _reason, _body}), do: :rate_limited
-
-  defp error_kind({:provider_http_status, status, _reason, _body}) when status >= 500,
-    do: :provider_unavailable
-
-  defp error_kind({:provider_http_status, _status, _reason, _body}), do: :invalid_response
-  defp error_kind({:provider_http_error, _reason}), do: :network_error
-  defp error_kind(:provider_timeout), do: :timeout
-  defp error_kind(:provider_stream_incomplete), do: :invalid_response
-  defp error_kind({:invalid_provider_chunk, _detail}), do: :invalid_response
-  defp error_kind({:invalid_provider_chunk, _payload, _detail}), do: :invalid_response
-  defp error_kind({:invalid_tool_arguments, _index, _detail}), do: :tool_args_invalid
-  defp error_kind({:missing_provider_option, _key}), do: :invalid_response
-  defp error_kind(:mock_provider_error), do: :unknown
-  defp error_kind(_reason), do: :unknown
-
-  defp retryable?(:provider_unavailable, _reason), do: true
-  defp retryable?(:rate_limited, _reason), do: true
-  defp retryable?(:network_error, _reason), do: true
-  defp retryable?(:timeout, _reason), do: true
-  defp retryable?(_kind, _reason), do: false
 end
