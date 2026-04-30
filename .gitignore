@@ -1,6 +1,11 @@
 .DS_Store
 source/
 
+# Elixir / Mix build artifacts
+_build/
+deps/
+*.ez
+
 # Beads / Dolt files (added by bd init)
 .dolt/
 *.db
