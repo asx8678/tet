@@ -13,6 +13,7 @@ defmodule Tet do
     Compaction,
     Doctor,
     ModelRegistry,
+    ProfileRegistry,
     PromptLab,
     Sessions,
     Timeline
@@ -31,6 +32,21 @@ defmodule Tet do
   @doc "Loads and validates the editable model registry."
   def model_registry(opts \\ []) when is_list(opts) do
     ModelRegistry.load(opts)
+  end
+
+  @doc "Loads and validates the editable profile registry."
+  def profile_registry(opts \\ []) when is_list(opts) do
+    ProfileRegistry.load(opts)
+  end
+
+  @doc "Lists configured profile descriptors as deterministic summaries."
+  def list_profiles(opts \\ []) when is_list(opts) do
+    ProfileRegistry.list(opts)
+  end
+
+  @doc "Fetches one configured profile descriptor by id."
+  def get_profile(profile_id, opts \\ []) do
+    ProfileRegistry.get(profile_id, opts)
   end
 
   @doc "Starts a standalone session id for prompt turns."

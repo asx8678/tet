@@ -9,6 +9,8 @@ defmodule Tet.CLI.Render do
       tet ask [--session SESSION_ID] PROMPT  Stream a reply and persist the chat turn
       tet events [--session SESSION_ID]     Show the read-only runtime event timeline
       tet timeline [--session SESSION_ID]   Alias for `tet events`
+      tet profiles                         List configured agent profiles
+      tet profile show PROFILE_ID          Inspect one configured agent profile
       tet sessions                         List persisted sessions
       tet session show SESSION_ID          Show a session and its messages
       tet doctor                           Check config/store/provider/release health
@@ -43,6 +45,7 @@ defmodule Tet.CLI.Render do
   def error(:empty_session_id), do: "session id cannot be empty"
   def error(:session_not_found), do: "session not found"
   def error(:autosave_not_found), do: "autosave checkpoint not found"
+  def error(:profile_not_found), do: "profile not found"
   def error(:store_not_configured), do: "store is not configured"
 
   def error({:missing_provider_env, env_name}) do
@@ -75,6 +78,31 @@ defmodule Tet.CLI.Render do
 
   def error(:provider_timeout), do: "provider timed out"
   def error(reason), do: inspect(reason)
+
+  def profiles([]), do: "No profiles found."
+
+  def profiles(profiles) when is_list(profiles) do
+    profiles
+    |> Enum.map(&profile_summary_line/1)
+    |> then(&Enum.join(["Profiles:" | &1], "\n"))
+  end
+
+  def profile_show(profile) when is_map(profile) do
+    model = profile.overlays.model
+    fallbacks = model.fallback_models |> Enum.join(", ") |> blank_label()
+    tags = profile.tags |> Enum.join(", ") |> blank_label()
+
+    [
+      "Profile #{profile.id}",
+      "display_name: #{profile.display_name}",
+      "description: #{profile.description}",
+      "version: #{profile.version}",
+      "tags: #{tags}",
+      "model: default=#{Map.get(model, :default_model, "n/a")} fallbacks=#{fallbacks}",
+      "overlays:" | overlay_lines(profile.overlays)
+    ]
+    |> Enum.join("\n")
+  end
 
   def sessions([]), do: "No sessions found."
 
@@ -222,6 +250,22 @@ defmodule Tet.CLI.Render do
   defp format_value(value) when is_integer(value), do: Integer.to_string(value)
   defp format_value(value), do: inspect(value)
 
+  defp profile_summary_line(profile) do
+    tags = profile.tags |> Enum.join(",") |> blank_label()
+    overlays = profile.overlay_kinds |> Enum.map(&Atom.to_string/1) |> Enum.join(",")
+    model = profile.default_model || "n/a"
+
+    "  #{profile.id}  model=#{model} version=#{profile.version} tags=#{tags} overlays=#{overlays}"
+  end
+
+  defp overlay_lines(overlays) do
+    Tet.ProfileRegistry.overlay_kinds()
+    |> Enum.map(fn kind ->
+      value = Map.fetch!(overlays, kind)
+      "  #{kind}: #{inspect(value, pretty: true, limit: :infinity)}"
+    end)
+  end
+
   defp session_summary_line(session) do
     last =
       case {session.last_role, session.last_content} do
@@ -247,6 +291,9 @@ defmodule Tet.CLI.Render do
     |> String.trim()
     |> String.slice(0, 80)
   end
+
+  defp blank_label(""), do: "n/a"
+  defp blank_label(value), do: value
 
   defp indent_multiline(content) do
     String.replace(content, "\n", "\n    ")

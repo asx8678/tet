@@ -1,0 +1,60 @@
+{
+  "schema_version": 1,
+  "profiles": {
+    "chat": {
+      "display_name": "Chat",
+      "description": "General coding-agent chat profile.",
+      "version": "1.0.0",
+      "tags": ["chat", "coding"],
+      "overlays": {
+        "prompt": {
+          "system": "You are Tet in chat mode.",
+          "layers": [
+            {
+              "id": "style",
+              "label": "Style",
+              "content": "Be direct and cite assumptions.",
+              "metadata": {
+                "source": "fixture"
+              }
+            }
+          ]
+        },
+        "tool": {
+          "mode": "read_only",
+          "allow": ["native.list_files", "native.read_file"],
+          "deny": ["native.patch.apply_unapproved"]
+        },
+        "model": {
+          "profile_pin": "chat",
+          "default_model": "openai/gpt-4o-mini",
+          "fallback_models": ["mock/default"],
+          "settings": {
+            "temperature": 0.2
+          }
+        },
+        "task": {
+          "categories": ["chat", "acting"],
+          "modes": ["assist", "plan"],
+          "default_mode": "assist",
+          "priority": "normal"
+        },
+        "schema": {
+          "response": {
+            "type": "object",
+            "additional_properties": true
+          }
+        },
+        "cache": {
+          "policy": "preserve",
+          "prompt": true,
+          "tools": true,
+          "ttl_seconds": 900
+        }
+      },
+      "metadata": {
+        "source": "fixture"
+      }
+    }
+  }
+}
