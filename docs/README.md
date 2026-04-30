@@ -6,8 +6,8 @@ autosave/restore checkpoints, and doctor diagnostics path through `tet-db6.6` /
 `BD-0006`. It includes the optional web facade contract from `tet-db6.7` /
 `BD-0007`, the event timeline shell from `tet-db6.8` / `BD-0008`, the web
 removability gate from `tet-db6.9` / `BD-0009`, the prompt-layer contract from
-`tet-db6.10` / `BD-0010`, and autosave/restore checkpoints from `tet-db6.11` /
-`BD-0011`.
+`tet-db6.10` / `BD-0010`, autosave/restore checkpoints from `tet-db6.11` /
+`BD-0011`, and compacted context from `tet-db6.12` / `BD-0012`.
 
 The implementation stays CLI-first and OTP-first. The CLI parses arguments and
 renders streamed chunks; runtime owns session orchestration, provider selection,
@@ -24,7 +24,7 @@ The `tet_standalone` release contains these conceptual applications:
 
 | App | Boundary role | Current implementation scope |
 |---|---|---|
-| `tet_core` | Pure domain/contracts boundary | Metadata, `%Tet.Event{}`, `%Tet.Message{}`, `%Tet.Session{}`, `%Tet.Autosave{}`, `Tet.Prompt` prompt-layer contract, `Tet.Provider` behaviour, and `Tet.Store` behaviour |
+| `tet_core` | Pure domain/contracts boundary | Metadata, `%Tet.Event{}`, `%Tet.Message{}`, `%Tet.Session{}`, `%Tet.Autosave{}`, `Tet.Prompt` prompt-layer contract, `Tet.Compaction` compacted-context contract, `Tet.Provider` behaviour, and `Tet.Store` behaviour |
 | `tet_store_sqlite` | Default standalone store adapter boundary | Dependency-free durable JSON Lines message, derived-session, autosave checkpoint, and event timeline store for this phase; true SQLite can replace the file format later behind the same behaviour |
 | `tet_runtime` | OTP runtime and public `Tet.*` facade owner | Supervised runtime shell, Registry-backed event bus, `Tet.doctor/1`, `Tet.ask/2`, session query/resume/autosave orchestration, `Tet.list_events/1/2`, `Tet.subscribe_events/0/1`, provider config, mock provider, and OpenAI-compatible streaming adapter |
 | `tet_cli` | Thin terminal adapter | `tet ask`, `tet events`, `tet timeline`, `tet sessions`, `tet session show`, `tet doctor`, and help output through the public facade |
@@ -376,6 +376,64 @@ without dumping raw prompt content.
 
 See [`prompt_contract.md`](prompt_contract.md) for the schema, fixed layer
 order, debug output format, and the autosave/attachments handoff.
+
+## Compacted context
+
+`Tet.Compaction` implements the pure compacted-context split for §12.8 / BD-0012.
+It accepts ordered `%Tet.Message{}` records, keeps leading system prompt messages,
+keeps a configurable recent-message window, and adjusts the split backward when a
+retained tool result would otherwise be separated from its assistant tool call.
+Tool-call/result pairs are treated as atomic units: a complete pair is either
+retained together or compacted/summarized together.
+
+Basic direct use:
+
+```elixir
+{:ok, context} =
+  Tet.Compaction.compact(messages,
+    force: true,
+    recent_count: 8,
+    strategy: :deterministic_summary
+  )
+
+provider_messages = Tet.Compaction.to_provider_messages(context)
+prompt_messages = Tet.Compaction.to_prompt_messages(context)
+prompt_compactions = Tet.Compaction.to_prompt_compactions(context)
+```
+
+Runtime exposes the same contract for persisted sessions without mutating the
+message log:
+
+```elixir
+{:ok, context} =
+  Tet.compact_context("demo-session",
+    store_path: ".tet/messages.jsonl",
+    force: true,
+    recent_count: 8
+  )
+```
+
+`context.messages` is provider-ready and includes a synthetic system summary
+message when compaction happened. `context.retained_messages` contains only
+original messages and should be paired with `context.compactions` when building a
+`Tet.Prompt` so the summary is represented as a `compaction_metadata` layer.
+
+Every compaction result records deterministic metadata:
+
+- original message count and first/last id/index range;
+- retained message count, retained ids, and retained ranges;
+- compacted message count, compacted ids, and compacted range;
+- strategy plus sanitized option values (`recent_count`, `max_messages`,
+  `min_compacted_count`, `force`);
+- protected split details, including requested and adjusted recent start index;
+- complete tool pair locations (`retained` or `compacted`);
+- protected tool pairs that caused the split to move backward;
+- orphaned tool calls/results for downstream validation and diagnostics.
+
+`Tet.ask/2` accepts `compaction: [...]` to compact provider context before the
+model call while still persisting the full user/assistant message log. Autosave
+accepts the same `:compaction` option and records the generated prompt
+compaction layer in prompt debug artifacts.
 
 ## Persistence
 
