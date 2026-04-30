@@ -287,21 +287,25 @@ check can replace or extend it once `tet_web_phoenix` exists. The cheap source
 guard still earns its kibble by catching the obvious foot-guns before CI spends
 minutes compiling a web app it should not need.
 
-## Future BD-0009 removability gate
+## BD-0009 removability gate
 
-BD-0009 should add a stronger removability gate for the actual web adapter. The
-gate should prove that deleting or excluding `apps/tet_web_phoenix` still allows:
+BD-0009 adds the local removability gate documented in
+[BD-0009 — Web removability acceptance gate](BD-0009_WEB_REMOVABILITY_GATE.md).
+The gate proves that deleting or excluding optional `apps/tet_web*` directories
+still allows:
 
 ```bash
-mix compile --warnings-as-errors
-mix test
-MIX_ENV=prod mix release tet_standalone --overwrite
-tools/check_release_closure.sh --no-build
-tools/check_web_facade_contract.sh
+MIX_ENV=test mix compile --warnings-as-errors
+MIX_ENV=test mix standalone.check
 ```
 
-The BD-0009 gate should also add a compiled xref/facade-only check for the web
-app when Phoenix exists. Expected failure classes:
+`mix standalone.check` runs formatting, this facade/source guard, the test suite,
+and `tools/check_release_closure.sh`, so the proof includes standalone release
+assembly and release-closure inspection. The BD-0009 script also runs a negative
+smoke that injects a temporary non-web Phoenix dependency and verifies the guard
+fails.
+
+Expected failure classes remain:
 
 - any non-web app depends on `tet_web_phoenix` or web frameworks;
 - standalone release closure contains Phoenix/Plug/Cowboy/websocket server libs;
@@ -309,8 +313,9 @@ app when Phoenix exists. Expected failure classes:
 - removing the web adapter changes CLI behavior, runtime supervision, store
   behavior, approval semantics, or verifier behavior.
 
-Until BD-0009 lands, this document plus the source guard is the contract of
-record.
+A future compiled xref/facade-only check can extend the gate once an actual
+`tet_web_phoenix` app exists. The current gate intentionally does not install or
+compile Phoenix; it proves standalone does not need Phoenix.
 
 ## Review checklist
 
@@ -320,5 +325,5 @@ record.
 - [ ] Web modules do not own policy, state machines, provider adapters, tools,
       store, approval gates, repair, or runtime supervision.
 - [ ] Contract ties back to ADR-0001 through ADR-0005.
-- [ ] Future BD-0009 removability and xref/facade-only gate are named.
+- [ ] BD-0009 removability gate is runnable through `tools/check_web_removability.sh` or `mix web.removability`.
 - [ ] `tools/check_web_facade_contract.sh` passes without Phoenix installed.

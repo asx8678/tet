@@ -60,7 +60,10 @@ When a future plan, ticket, or implementation convenience conflicts with this st
 - [BD-0007 — Optional `tet_web_phoenix` adapter facade contract](../BD-0007_OPTIONAL_WEB_ADAPTER_FACADE_CONTRACT.md)
   specializes ADR-0001 through ADR-0005 for the future Phoenix adapter. It keeps
   `tet_web_phoenix` optional, removable, and limited to public `Tet.*` facade
-  calls, and reserves a future BD-0009 removability/xref gate.
+  calls.
+- [BD-0009 — Web removability acceptance gate](../BD-0009_WEB_REMOVABILITY_GATE.md)
+  proves standalone compile/test/release still passes after optional
+  `apps/tet_web*` directories are removed from a sandbox copy.
 
 ## BD-0002 acceptance checklist
 
