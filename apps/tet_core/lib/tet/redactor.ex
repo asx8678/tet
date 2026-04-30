@@ -1,0 +1,81 @@
+defmodule Tet.Redactor do
+  @moduledoc """
+  Central redaction helper for externally visible debug/diagnostic data.
+
+  This module redacts map values based on sensitive-looking key names while
+  preserving the surrounding shape for deterministic snapshots. It intentionally
+  avoids inspecting raw prompt content; callers decide which values are safe to
+  pass in the first place.
+  """
+
+  @redacted "[REDACTED]"
+  @sensitive_key_compact_substrings [
+    "accesskey",
+    "apikey",
+    "authorization",
+    "bearer",
+    "credential",
+    "password",
+    "privatekey",
+    "secret"
+  ]
+  @sensitive_token_compact_keys [
+    "accesstoken",
+    "idtoken",
+    "refreshtoken",
+    "sessiontoken"
+  ]
+
+  @doc "Returns the canonical replacement string for redacted values."
+  @spec redacted_value() :: binary()
+  def redacted_value, do: @redacted
+
+  @doc "Returns true when a metadata key name should have its value redacted."
+  @spec sensitive_key?(term()) :: boolean()
+  def sensitive_key?(key) when is_atom(key) do
+    key
+    |> Atom.to_string()
+    |> sensitive_key_name?()
+  end
+
+  def sensitive_key?(key) when is_binary(key), do: sensitive_key_name?(key)
+  def sensitive_key?(_key), do: false
+
+  defp sensitive_key_name?(key) do
+    fragments = key_fragments(key)
+    compact = Enum.join(fragments, "")
+
+    token_key?(fragments, compact) or
+      Enum.any?(@sensitive_key_compact_substrings, &String.contains?(compact, &1))
+  end
+
+  defp key_fragments(key) do
+    key
+    |> String.replace(~r/([A-Z]+)([A-Z][a-z])/, "\\1_\\2")
+    |> String.replace(~r/([a-z0-9])([A-Z])/, "\\1_\\2")
+    |> String.downcase()
+    |> String.split(~r/[^a-z0-9]+/, trim: true)
+  end
+
+  defp token_key?([], _compact), do: false
+
+  defp token_key?(fragments, compact) do
+    fragments == ["token"] or List.last(fragments) == "token" or
+      compact in @sensitive_token_compact_keys
+  end
+
+  @doc "Recursively redacts map/list values whose keys look sensitive."
+  @spec redact(term()) :: term()
+  def redact(value) when is_map(value) do
+    Map.new(value, fn {key, item} ->
+      if sensitive_key?(key) do
+        {key, @redacted}
+      else
+        {key, redact(item)}
+      end
+    end)
+  end
+
+  def redact(value) when is_list(value), do: Enum.map(value, &redact/1)
+  def redact(value), do: value
+end

@@ -2,7 +2,8 @@
 
 This repository contains the minimal Elixir umbrella/release scaffold plus the
 standalone streaming chat, session resume, and doctor diagnostics path through
-`tet-db6.6` / `BD-0006`.
+`tet-db6.6` / `BD-0006`, the optional web facade contract from `tet-db6.7` /
+`BD-0007`, and the prompt-layer contract from `tet-db6.10` / `BD-0010`.
 
 The implementation stays CLI-first and OTP-first. The CLI parses arguments and
 renders streamed chunks; runtime owns session orchestration, provider selection,
@@ -17,7 +18,7 @@ The `tet_standalone` release contains these conceptual applications:
 
 | App | Boundary role | Current implementation scope |
 |---|---|---|
-| `tet_core` | Pure domain/contracts boundary | Metadata, `%Tet.Event{}`, `%Tet.Message{}`, `%Tet.Session{}`, `Tet.Provider` behaviour, and `Tet.Store` behaviour |
+| `tet_core` | Pure domain/contracts boundary | Metadata, `%Tet.Event{}`, `%Tet.Message{}`, `%Tet.Session{}`, `Tet.Prompt` prompt-layer contract, `Tet.Provider` behaviour, and `Tet.Store` behaviour |
 | `tet_store_sqlite` | Default standalone store adapter boundary | Dependency-free durable JSON Lines message/session store for this phase; true SQLite can replace the file format later behind the same behaviour |
 | `tet_runtime` | OTP runtime and public `Tet.*` facade owner | Supervised runtime shell, Registry-backed event bus, `Tet.doctor/1`, `Tet.ask/2`, session query/resume orchestration, provider config, mock provider, and OpenAI-compatible streaming adapter |
 | `tet_cli` | Thin terminal adapter | `tet ask`, `tet sessions`, `tet session show`, `tet doctor`, and help output through the public facade |
@@ -275,6 +276,18 @@ TET_STORE_PATH="$PWD/.tet/messages.jsonl" \
 No secrets are stored in config files. Tests use the mock provider and a local
 TCP fake OpenAI-compatible stream server; they do not call real provider APIs.
 
+## Prompt layer contract
+
+`Tet.Prompt` defines the pure, deterministic prompt build contract for system
+prompts, project rules, profile/persona layers, compaction metadata, attachment
+metadata, and session messages. It returns provider-neutral messages plus
+redacted debug output with ordered layer ids, hashes, byte counts, and metadata
+without dumping raw prompt content.
+
+See [`prompt_contract.md`](prompt_contract.md) for the schema, fixed layer
+order, debug output format, and the future `BD-0011` autosave/attachments
+handoff.
+
 ## Persistence
 
 Successful `tet ask` turns persist both messages:
@@ -326,6 +339,8 @@ The scaffold and chat path follow the accepted ADR rules:
 - Runtime uses OTP primitives and a runtime-owned event bus, not Phoenix PubSub.
 - Runtime owns session orchestration, provider selection, streaming, and store
   dispatch.
+- Prompt construction is a pure `tet_core` contract; provider adapters can
+  consume its provider-neutral role/content messages.
 - Store access is behind the core `Tet.Store` behaviour.
 - Provider adapters implement the core `Tet.Provider` behaviour and live in the
   runtime boundary.
