@@ -33,6 +33,12 @@ defmodule Tet.CLI do
       ["doctor" | _rest] ->
         doctor()
 
+      ["profiles" | rest] ->
+        profiles(rest)
+
+      ["profile" | rest] ->
+        profile(rest)
+
       ["sessions" | rest] ->
         sessions(rest)
 
@@ -65,6 +71,40 @@ defmodule Tet.CLI do
         IO.puts(:stderr, "tet doctor failed: #{inspect(reason)}")
         1
     end
+  end
+
+  defp profiles([]) do
+    case Tet.list_profiles() do
+      {:ok, profiles} ->
+        IO.puts(Render.profiles(profiles))
+        0
+
+      {:error, reason} ->
+        IO.puts(:stderr, "tet profiles failed: #{Render.error(reason)}")
+        1
+    end
+  end
+
+  defp profiles(_args) do
+    IO.puts(:stderr, "usage: tet profiles")
+    64
+  end
+
+  defp profile([command, profile_id]) when command in ["show", "inspect"] do
+    case Tet.get_profile(profile_id) do
+      {:ok, profile} ->
+        IO.puts(Render.profile_show(profile))
+        0
+
+      {:error, reason} ->
+        IO.puts(:stderr, "tet profile #{command} failed: #{Render.error(reason)}")
+        if reason == :profile_not_found, do: 66, else: 1
+    end
+  end
+
+  defp profile(_args) do
+    IO.puts(:stderr, "usage: tet profile show PROFILE_ID")
+    64
   end
 
   defp sessions([]) do

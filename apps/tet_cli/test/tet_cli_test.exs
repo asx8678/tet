@@ -12,10 +12,19 @@ defmodule Tet.CLITest do
     File.mkdir_p!(tmp_root)
 
     old_events_path = System.get_env("TET_EVENTS_PATH")
+    old_profile_registry_path = System.get_env("TET_PROFILE_REGISTRY_PATH")
+    old_model_registry_path = System.get_env("TET_MODEL_REGISTRY_PATH")
     System.delete_env("TET_EVENTS_PATH")
+    System.delete_env("TET_PROFILE_REGISTRY_PATH")
+    System.delete_env("TET_MODEL_REGISTRY_PATH")
 
     on_exit(fn ->
-      restore_env(%{"TET_EVENTS_PATH" => old_events_path})
+      restore_env(%{
+        "TET_EVENTS_PATH" => old_events_path,
+        "TET_PROFILE_REGISTRY_PATH" => old_profile_registry_path,
+        "TET_MODEL_REGISTRY_PATH" => old_model_registry_path
+      })
+
       File.rm_rf!(tmp_root)
     end)
 
@@ -50,6 +59,40 @@ defmodule Tet.CLITest do
         assert output =~ "TET_OPENAI_API_KEY"
       end
     )
+  end
+
+  test "profile commands list and inspect configured descriptors" do
+    list_output = capture_io(fn -> assert Tet.CLI.run(["profiles"]) == 0 end)
+
+    assert list_output =~ "Profiles:"
+    assert list_output =~ "chat  model=openai/gpt-4o-mini"
+    assert list_output =~ "overlays=prompt,tool,model,task,schema,cache"
+
+    show_output = capture_io(fn -> assert Tet.CLI.run(["profile", "show", "chat"]) == 0 end)
+
+    assert show_output =~ "Profile chat"
+    assert show_output =~ "display_name: Chat"
+    assert show_output =~ "model: default=openai/gpt-4o-mini fallbacks=mock/default"
+    assert show_output =~ "prompt: %{"
+    assert show_output =~ "tool: %{"
+    assert show_output =~ "cache: %{"
+  end
+
+  test "missing profile returns not found status" do
+    output =
+      capture_io(:stderr, fn -> assert Tet.CLI.run(["profile", "show", "missing"]) == 66 end)
+
+    assert output =~ "profile not found"
+  end
+
+  test "renderer formats profile and model registry validation error lists" do
+    errors = [
+      Tet.ProfileRegistry.error(["profiles"], :invalid_value, "profiles must declare entries"),
+      Tet.ModelRegistry.error(["models"], :invalid_value, "models must declare entries")
+    ]
+
+    assert Render.error(errors) ==
+             "profiles: profiles must declare entries; models: models must declare entries"
   end
 
   test "ask streams mock output and persists the chat turn", %{tmp_root: tmp_root} do

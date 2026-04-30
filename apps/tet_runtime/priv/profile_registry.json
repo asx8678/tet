@@ -1,0 +1,172 @@
+{
+  "schema_version": 1,
+  "profiles": {
+    "tet_standalone": {
+      "display_name": "Tet standalone",
+      "description": "Safe local default profile for standalone CLI smoke tests and offline operation.",
+      "version": "1.0.0",
+      "tags": ["default", "safe", "mock"],
+      "overlays": {
+        "prompt": {
+          "system": "You are Tet, a CLI-first coding assistant. Be concise, deterministic, and explicit about unsupported runtime actions.",
+          "layers": [
+            {
+              "id": "standalone-boundary",
+              "label": "Standalone boundary",
+              "content": "Prefer read-only inspection and deterministic mock responses until a live provider/tool executor is configured."
+            }
+          ]
+        },
+        "tool": {
+          "mode": "read_only",
+          "allow": ["native.list_files", "native.read_file", "native.grep"],
+          "deny": ["native.shell.write", "network.external"]
+        },
+        "model": {
+          "profile_pin": "tet_standalone",
+          "default_model": "mock/default",
+          "fallback_models": [],
+          "settings": {}
+        },
+        "task": {
+          "categories": ["chat", "acting"],
+          "modes": ["assist"],
+          "default_mode": "assist",
+          "priority": "normal"
+        },
+        "schema": {
+          "response": {
+            "type": "object",
+            "description": "Free-form assistant response envelope for standalone operation.",
+            "additional_properties": true
+          }
+        },
+        "cache": {
+          "policy": "preserve",
+          "prompt": true,
+          "tools": false
+        }
+      },
+      "metadata": {
+        "source": "bundled"
+      }
+    },
+    "chat": {
+      "display_name": "Chat",
+      "description": "General conversational coding-agent profile with provider-router model fallback.",
+      "version": "1.0.0",
+      "tags": ["chat", "router"],
+      "overlays": {
+        "prompt": {
+          "system": "You are Tet, a helpful CLI coding agent. Explain tradeoffs, preserve user intent, and avoid executing tools unless runtime policy allows it.",
+          "layers": [
+            {
+              "id": "chat-style",
+              "label": "Chat style",
+              "content": "Answer with practical steps, cite assumptions, and keep responses grounded in inspected repository state."
+            }
+          ]
+        },
+        "tool": {
+          "mode": "standard",
+          "allow": ["native.list_files", "native.read_file", "native.grep", "native.patch.preview"],
+          "deny": ["native.patch.apply_unapproved"]
+        },
+        "model": {
+          "profile_pin": "chat",
+          "default_model": "openai/gpt-4o-mini",
+          "fallback_models": ["mock/default"],
+          "settings": {
+            "temperature": 0.2
+          }
+        },
+        "task": {
+          "categories": ["chat", "planning", "acting"],
+          "modes": ["assist", "plan"],
+          "default_mode": "assist",
+          "priority": "normal"
+        },
+        "schema": {
+          "response": {
+            "type": "object",
+            "description": "Assistant response with optional plan and caveats for renderer adapters.",
+            "additional_properties": true
+          }
+        },
+        "cache": {
+          "policy": "preserve",
+          "prompt": true,
+          "tools": true,
+          "ttl_seconds": 3600
+        }
+      },
+      "metadata": {
+        "source": "bundled"
+      }
+    },
+    "tool_use": {
+      "display_name": "Tool use",
+      "description": "Acting profile for tool-capable turns, keeping policy and approval gates explicit.",
+      "version": "1.0.0",
+      "tags": ["acting", "tools"],
+      "overlays": {
+        "prompt": {
+          "system": "You are Tet in tool-use mode. Prefer the smallest safe tool plan, report policy blockers, and never bypass approval gates.",
+          "layers": [
+            {
+              "id": "tool-discipline",
+              "label": "Tool discipline",
+              "content": "Before tool execution, identify intent, expected effect, required approval, and rollback or verification path."
+            }
+          ]
+        },
+        "tool": {
+          "mode": "standard",
+          "allow": [
+            "native.list_files",
+            "native.read_file",
+            "native.grep",
+            "native.patch.preview",
+            "native.verify.allowlisted"
+          ],
+          "deny": ["native.shell.unbounded", "native.patch.apply_unapproved", "network.external"]
+        },
+        "model": {
+          "profile_pin": "tool_use",
+          "default_model": "openai/gpt-4o-mini",
+          "fallback_models": [],
+          "settings": {
+            "temperature": 0.1,
+            "tool_choice": "auto"
+          }
+        },
+        "task": {
+          "categories": ["acting", "verification"],
+          "modes": ["assist", "act", "verify"],
+          "default_mode": "act",
+          "priority": "normal"
+        },
+        "schema": {
+          "tool_call": {
+            "type": "object",
+            "description": "Provider-neutral tool-call plan emitted before runtime execution.",
+            "additional_properties": true
+          },
+          "response": {
+            "type": "object",
+            "description": "Tool-use response with action summary and verification status.",
+            "additional_properties": true
+          }
+        },
+        "cache": {
+          "policy": "drop",
+          "prompt": true,
+          "tools": false
+        }
+      },
+      "metadata": {
+        "source": "bundled"
+      }
+    }
+  }
+}
