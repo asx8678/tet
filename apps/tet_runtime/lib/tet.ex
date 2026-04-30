@@ -7,7 +7,16 @@ defmodule Tet do
   CLI and optional adapters pointed at the same public API.
   """
 
-  alias Tet.Runtime.{Autosave, Boundary, Compaction, Doctor, ModelRegistry, Sessions, Timeline}
+  alias Tet.Runtime.{
+    Autosave,
+    Boundary,
+    Compaction,
+    Doctor,
+    ModelRegistry,
+    PromptLab,
+    Sessions,
+    Timeline
+  }
 
   @doc "Returns the standalone boundary declared for this release profile."
   def boundary do
@@ -78,6 +87,31 @@ defmodule Tet do
   @doc "Lists autosave checkpoints, newest first."
   def list_autosaves(opts \\ []) do
     Autosave.list(opts)
+  end
+
+  @doc "Lists built-in Prompt Lab presets through the public facade."
+  def prompt_lab_presets do
+    PromptLab.list_presets()
+  end
+
+  @doc "Fetches one built-in Prompt Lab preset through the public facade."
+  def get_prompt_lab_preset(preset_id) do
+    PromptLab.get_preset(preset_id)
+  end
+
+  @doc "Refines prompt text without executing tools or sending a chat turn."
+  def refine_prompt(prompt, opts \\ []) do
+    PromptLab.refine(prompt, opts)
+  end
+
+  @doc "Lists Prompt Lab history entries, newest first."
+  def list_prompt_history(opts \\ []) do
+    PromptLab.list_history(opts)
+  end
+
+  @doc "Fetches one Prompt Lab history entry by id."
+  def fetch_prompt_history(history_id, opts \\ []) do
+    PromptLab.fetch_history(history_id, opts)
   end
 
   @doc "Lists read-only runtime timeline events, optionally filtered by session id."

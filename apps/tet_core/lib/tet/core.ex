@@ -14,6 +14,7 @@ defmodule Tet.Core do
     :messages,
     :model_registry,
     :prompts,
+    :prompt_lab,
     :provider_behaviour,
     :store_behaviour,
     :tool_contracts

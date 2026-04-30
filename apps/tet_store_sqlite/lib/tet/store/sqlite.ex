@@ -3,7 +3,8 @@ defmodule Tet.Store.SQLite do
   Default standalone store boundary.
 
   This phase keeps the adapter dependency-free and persists chat messages,
-  autosave checkpoints, and runtime timeline events as JSON Lines. The
+  autosave checkpoints, runtime timeline events, and Prompt Lab history entries
+  as JSON Lines. The
   app/module name remains the default store boundary reserved by the scaffold; a
   later storage ticket can replace the file format with true SQLite without
   changing callers of `Tet.Store`.
@@ -13,6 +14,7 @@ defmodule Tet.Store.SQLite do
 
   @default_path ".tet/messages.jsonl"
   @default_autosave_filename "autosaves.jsonl"
+  @default_prompt_history_filename "prompt_history.jsonl"
   @default_events_path ".tet/events.jsonl"
 
   @impl true
@@ -24,6 +26,7 @@ defmodule Tet.Store.SQLite do
       path: @default_path,
       autosave_path: default_autosave_path(@default_path),
       events_path: derive_events_path(@default_path),
+      prompt_history_path: default_prompt_history_path(@default_path),
       format: :jsonl
     }
   end
@@ -33,6 +36,7 @@ defmodule Tet.Store.SQLite do
     path = path(opts)
     autosave_path = autosave_path(opts)
     events_path = events_path(opts)
+    prompt_history_path = prompt_history_path(opts)
     directory = Path.dirname(path)
     directory_existed? = File.dir?(directory)
 
@@ -46,6 +50,7 @@ defmodule Tet.Store.SQLite do
            path: path,
            autosave_path: autosave_path,
            events_path: events_path,
+           prompt_history_path: prompt_history_path,
            directory: directory,
            status: :ok,
            readable?: true,
@@ -152,6 +157,36 @@ defmodule Tet.Store.SQLite do
     end
   end
 
+  @impl true
+  def save_prompt_history(%Tet.PromptLab.HistoryEntry{} = history, opts) when is_list(opts) do
+    path = prompt_history_path(opts)
+    line = history |> Tet.PromptLab.HistoryEntry.to_map() |> encode_json!()
+
+    with :ok <- File.mkdir_p(Path.dirname(path)),
+         :ok <- File.write(path, [line, "\n"], [:append]) do
+      {:ok, history}
+    end
+  end
+
+  @impl true
+  def list_prompt_history(opts) when is_list(opts) do
+    with {:ok, history} <- read_prompt_history(prompt_history_path(opts)) do
+      {:ok, Enum.sort(history, &history_newer_or_equal?/2)}
+    end
+  end
+
+  @impl true
+  def fetch_prompt_history(history_id, opts) when is_binary(history_id) and is_list(opts) do
+    with {:ok, history} <- read_prompt_history(prompt_history_path(opts)) do
+      history
+      |> Enum.find(&(&1.id == history_id))
+      |> case do
+        nil -> {:error, :prompt_history_not_found}
+        entry -> {:ok, entry}
+      end
+    end
+  end
+
   defp read_messages(path) do
     read_json_lines(path, &Tet.Message.from_map/1)
   end
@@ -167,6 +202,15 @@ defmodule Tet.Store.SQLite do
 
   defp read_events(path) do
     read_json_lines(path, &Tet.Event.from_map/1)
+  end
+
+  defp read_prompt_history(path) do
+    read_json_lines(
+      path,
+      &Tet.PromptLab.HistoryEntry.from_map/1,
+      :prompt_history_read_failed,
+      {:invalid_prompt_history_record, :not_a_map}
+    )
   end
 
   defp read_json_lines(
@@ -241,6 +285,10 @@ defmodule Tet.Store.SQLite do
     {left.saved_at || "", left.checkpoint_id} >= {right.saved_at || "", right.checkpoint_id}
   end
 
+  defp history_newer_or_equal?(left, right) do
+    {left.created_at || "", left.id} >= {right.created_at || "", right.id}
+  end
+
   defp cleanup_created_directory(_directory, true), do: :ok
 
   defp cleanup_created_directory(directory, false) do
@@ -298,10 +346,24 @@ defmodule Tet.Store.SQLite do
       derive_events_path(path(opts))
   end
 
+  defp prompt_history_path(opts) do
+    Keyword.get(opts, :prompt_history_path) ||
+      Keyword.get(opts, :prompt_lab_history_path) ||
+      System.get_env("TET_PROMPT_HISTORY_PATH") ||
+      Application.get_env(:tet_runtime, :prompt_history_path) ||
+      default_prompt_history_path(path(opts))
+  end
+
   defp default_autosave_path(message_path) do
     message_path
     |> Path.dirname()
     |> Path.join(@default_autosave_filename)
+  end
+
+  defp default_prompt_history_path(message_path) do
+    message_path
+    |> Path.dirname()
+    |> Path.join(@default_prompt_history_filename)
   end
 
   defp derive_events_path(@default_path), do: @default_events_path
