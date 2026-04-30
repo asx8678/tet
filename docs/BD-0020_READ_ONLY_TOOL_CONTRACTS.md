@@ -33,11 +33,13 @@ Plan anchors:
 - Phase 6 / BD-0020: define typed contracts for list/read/search/repo-scan/
   git-diff/ask-user with limits, redaction, task correlation, and error shapes.
 
-Source parity references used for shape only:
+Source parity references used for shape only are neutral provenance labels,
+not host-local paths. Exported contract metadata must not include absolute
+filesystem paths, user-home shortcuts, or machine-specific prefixes:
 
-- `/Users/adam2/projects/tet/source/code_puppy-main/code_puppy/tools/__init__.py`
-- `/Users/adam2/projects/tet/source/code_puppy-main/code_puppy/tools/file_operations.py`
-- `/Users/adam2/projects/tet/source/code_puppy-main/code_puppy/tools/ask_user_question/handler.py`
+- `code_puppy/tools/__init__.py`
+- `code_puppy/tools/file_operations.py`
+- `code_puppy/tools/ask_user_question/handler.py`
 
 ## Public core surface
 

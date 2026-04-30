@@ -18,6 +18,8 @@ defmodule Tet.ToolContractTest do
   @error_fields ["code", "message", "kind", "retryable", "correlation", "details"]
   @correlation_ids ["session_id", "task_id", "tool_call_id"]
   @redaction_sinks [:provider_context, :event_log, :artifact_store, :display, :log]
+  @forbidden_source_reference_prefixes ["/", "~"]
+  @forbidden_source_reference_fragments ["/Users/", "/home/"]
 
   test "catalog exposes the six BD-0020 read-only contracts in stable order" do
     assert ReadOnlyContracts.names() == @expected_names
@@ -143,6 +145,21 @@ defmodule Tet.ToolContractTest do
     assert map["limits"]["timeout_ms"] == 30_000
     assert map["execution"]["status"] == "contract_only"
     assert map["correlation"]["required"] == @correlation_ids
+  end
+
+  test "exported source references are repo-relative and host-neutral" do
+    for contract <- ReadOnlyContracts.all() do
+      contract_map = Contract.to_map(contract)
+      references = get_in(contract_map, ["source", "references"])
+
+      assert is_list(references)
+
+      for reference <- references do
+        assert is_binary(reference)
+        refute String.starts_with?(reference, @forbidden_source_reference_prefixes)
+        refute String.contains?(reference, @forbidden_source_reference_fragments)
+      end
+    end
   end
 
   defp assert_schema(schema) do

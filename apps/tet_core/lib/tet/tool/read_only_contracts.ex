@@ -22,9 +22,9 @@ defmodule Tet.Tool.ReadOnlyContracts do
     phase: "Phase 6 — Read-only tool layer",
     spec_sections: ["§13", "§21"],
     references: [
-      "/Users/adam2/projects/tet/source/code_puppy-main/code_puppy/tools/__init__.py",
-      "/Users/adam2/projects/tet/source/code_puppy-main/code_puppy/tools/file_operations.py",
-      "/Users/adam2/projects/tet/source/code_puppy-main/code_puppy/tools/ask_user_question/handler.py"
+      "code_puppy/tools/__init__.py",
+      "code_puppy/tools/file_operations.py",
+      "code_puppy/tools/ask_user_question/handler.py"
     ]
   }
   @common_error_codes [
