@@ -31,14 +31,25 @@ defmodule Tet do
     end
   end
 
-  @doc "Reserved session-start facade. Provider/chat work belongs to later issues."
+  @doc "Starts a standalone session id for prompt turns."
   def start_session(_workspace_ref, _opts \\ []) do
-    {:error, :not_implemented}
+    {:ok, %{session_id: Tet.Runtime.Ids.session_id()}}
   end
 
-  @doc "Reserved prompt facade. Streaming provider chat is intentionally out of scope."
-  def send_prompt(_session_id, _prompt, _opts \\ []) do
-    {:error, :not_implemented}
+  @doc "Runs a single prompt turn in an existing session."
+  def send_prompt(session_id, prompt, opts \\ []) when is_binary(session_id) do
+    opts = Keyword.put(opts, :session_id, session_id)
+    Tet.Runtime.Chat.ask(prompt, opts)
+  end
+
+  @doc "Runs a one-shot prompt turn, streaming events through `:on_event` if supplied."
+  def ask(prompt, opts \\ []) do
+    Tet.Runtime.Chat.ask(prompt, opts)
+  end
+
+  @doc "Lists persisted chat messages for a session."
+  def list_messages(session_id, opts \\ []) do
+    Tet.Runtime.Chat.list_messages(session_id, opts)
   end
 
   @doc "Reserved event-list facade for future durable Event Log work."

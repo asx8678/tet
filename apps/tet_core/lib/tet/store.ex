@@ -17,4 +17,6 @@ defmodule Tet.Store do
 
   @callback boundary() :: map()
   @callback health(keyword()) :: {:ok, health()} | {:error, term()}
+  @callback save_message(Tet.Message.t(), keyword()) :: {:ok, Tet.Message.t()} | {:error, term()}
+  @callback list_messages(binary(), keyword()) :: {:ok, [Tet.Message.t()]} | {:error, term()}
 end

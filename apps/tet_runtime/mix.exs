@@ -18,7 +18,7 @@ defmodule TetRuntime.MixProject do
   def application do
     [
       mod: {Tet.Application, []},
-      extra_applications: [:logger]
+      extra_applications: [:logger, :inets, :ssl]
     ]
   end
 
