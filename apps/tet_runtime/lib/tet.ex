@@ -15,6 +15,7 @@ defmodule Tet do
     ModelRegistry,
     ProfileRegistry,
     PromptLab,
+    Remote,
     Sessions,
     Timeline
   }
@@ -98,6 +99,27 @@ defmodule Tet do
   @doc "Restores the latest autosave checkpoint for a session."
   def restore_autosave(session_id, opts \\ []) do
     Autosave.restore(session_id, opts)
+  end
+
+  @doc "Bootstraps a remote worker release through a supplied safe transport."
+  @spec bootstrap_remote_worker(term(), keyword()) ::
+          {:ok, Tet.Runtime.Remote.Report.t()} | {:error, term()}
+  def bootstrap_remote_worker(worker_ref, opts \\ []) when is_list(opts) do
+    Remote.bootstrap_worker(worker_ref, opts)
+  end
+
+  @doc "Installs or verifies a remote worker release through a supplied safe transport."
+  @spec install_remote_worker(term(), keyword()) ::
+          {:ok, Tet.Runtime.Remote.Report.t()} | {:error, term()}
+  def install_remote_worker(worker_ref, opts \\ []) when is_list(opts) do
+    Remote.install_worker(worker_ref, opts)
+  end
+
+  @doc "Checks a remote worker release through a supplied safe transport."
+  @spec check_remote_worker(term(), keyword()) ::
+          {:ok, Tet.Runtime.Remote.Report.t()} | {:error, term()}
+  def check_remote_worker(worker_ref, opts \\ []) when is_list(opts) do
+    Remote.check_worker(worker_ref, opts)
   end
 
   @doc "Lists autosave checkpoints, newest first."
