@@ -31,10 +31,15 @@ defmodule Tet.Runtime.Boundary do
     "websock"
   ]
 
+  @optional_adapter_applications [:tet_web_phoenix]
+
   @doc "Returns the applications that may make up the standalone release."
   def standalone_applications do
     Application.get_env(:tet_runtime, :standalone_applications, @standalone_applications)
   end
+
+  @doc "Returns optional adapter applications that may be loaded in umbrella development."
+  def optional_adapter_applications, do: @optional_adapter_applications
 
   @doc "Returns boundary metadata for docs, CLI doctor, and tests."
   def standalone do
@@ -57,10 +62,13 @@ defmodule Tet.Runtime.Boundary do
   end
 
   @doc "Returns forbidden applications from a loaded/started application tuple list."
-  def forbidden_loaded_applications(applications) when is_list(applications) do
+  def forbidden_loaded_applications(applications, opts \\ []) when is_list(applications) do
+    ignored = Keyword.get(opts, :ignore, [])
+
     applications
     |> Enum.map(&application_name/1)
     |> Enum.filter(&forbidden_application?/1)
+    |> Enum.reject(&(&1 in ignored))
   end
 
   @doc "True when an application atom belongs to a web framework or web adapter."
