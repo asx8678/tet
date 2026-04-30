@@ -15,10 +15,10 @@ defmodule Tet.Runtime.Chat do
     with :ok <- validate_prompt(prompt),
          {:ok, {provider, provider_opts}} <- ProviderConfig.resolve(opts),
          {:ok, store_adapter, store_opts} <-
-           StoreConfig.resolve(opts, [:save_message, :list_messages]) do
+           StoreConfig.resolve(opts, [:save_message, :list_messages, :save_event]) do
       session_id = Keyword.get(opts, :session_id) || Ids.session_id()
       emit = Keyword.get(opts, :on_event, fn _event -> :ok end)
-      emit_event = &emit_event(session_id, emit, &1)
+      emit_event = &emit_event(session_id, store_adapter, store_opts, emit, &1)
 
       with {:ok, user_message} <- build_message(:user, prompt, session_id),
            {:ok, user_message} <-
@@ -82,8 +82,13 @@ defmodule Tet.Runtime.Chat do
     adapter.list_messages(session_id, store_opts)
   end
 
-  defp emit_event(session_id, emit, %Tet.Event{} = event) do
-    event = ensure_session_id(event, session_id)
+  defp emit_event(session_id, adapter, store_opts, emit, %Tet.Event{} = event) do
+    event =
+      event
+      |> ensure_session_id(session_id)
+      |> ensure_timestamp()
+      |> persist_event(adapter, store_opts)
+
     publish(event)
     emit.(event)
     :ok
@@ -95,13 +100,27 @@ defmodule Tet.Runtime.Chat do
 
   defp ensure_session_id(event, _session_id), do: event
 
-  defp publish(%Tet.Event{session_id: session_id} = event) when is_binary(session_id) do
-    if Process.whereis(Tet.EventBus.Registry) do
-      Tet.EventBus.publish({:session, session_id}, event)
+  defp ensure_timestamp(%Tet.Event{metadata: metadata} = event) do
+    if Map.has_key?(metadata, :timestamp) or Map.has_key?(metadata, "timestamp") do
+      event
     else
-      :ok
+      %Tet.Event{event | metadata: Map.put(metadata, :timestamp, Ids.timestamp())}
     end
   end
 
-  defp publish(_event), do: :ok
+  defp persist_event(%Tet.Event{} = event, adapter, store_opts) do
+    case adapter.save_event(event, store_opts) do
+      {:ok, saved_event} -> saved_event
+      {:error, _reason} -> event
+    end
+  end
+
+  defp publish(%Tet.Event{} = event) do
+    Tet.EventBus.publish(Tet.Runtime.Timeline.all_topic(), event)
+
+    case event.session_id do
+      session_id when is_binary(session_id) -> Tet.EventBus.publish({:session, session_id}, event)
+      _session_id -> :ok
+    end
+  end
 end

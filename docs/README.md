@@ -1,9 +1,10 @@
 # Tet standalone umbrella boundary
 
 This repository contains the minimal Elixir umbrella/release scaffold plus the
-standalone streaming chat, session resume, and doctor diagnostics path through
-`tet-db6.6` / `BD-0006`, the optional web facade contract from `tet-db6.7` /
-`BD-0007`, and the prompt-layer contract from `tet-db6.10` / `BD-0010`.
+standalone streaming chat, session resume, event timeline shell, and doctor
+diagnostics path through `tet-db6.8` / `BD-0008`, the optional web facade
+contract from `tet-db6.7` / `BD-0007`, and the prompt-layer contract from
+`tet-db6.10` / `BD-0010`.
 
 The implementation stays CLI-first and OTP-first. The CLI parses arguments and
 renders streamed chunks; runtime owns session orchestration, provider selection,
@@ -19,9 +20,9 @@ The `tet_standalone` release contains these conceptual applications:
 | App | Boundary role | Current implementation scope |
 |---|---|---|
 | `tet_core` | Pure domain/contracts boundary | Metadata, `%Tet.Event{}`, `%Tet.Message{}`, `%Tet.Session{}`, `Tet.Prompt` prompt-layer contract, `Tet.Provider` behaviour, and `Tet.Store` behaviour |
-| `tet_store_sqlite` | Default standalone store adapter boundary | Dependency-free durable JSON Lines message/session store for this phase; true SQLite can replace the file format later behind the same behaviour |
-| `tet_runtime` | OTP runtime and public `Tet.*` facade owner | Supervised runtime shell, Registry-backed event bus, `Tet.doctor/1`, `Tet.ask/2`, session query/resume orchestration, provider config, mock provider, and OpenAI-compatible streaming adapter |
-| `tet_cli` | Thin terminal adapter | `tet ask`, `tet sessions`, `tet session show`, `tet doctor`, and help output through the public facade |
+| `tet_store_sqlite` | Default standalone store adapter boundary | Dependency-free durable JSON Lines message/session/event store for this phase; true SQLite can replace the file format later behind the same behaviour |
+| `tet_runtime` | OTP runtime and public `Tet.*` facade owner | Supervised runtime shell, Registry-backed event bus, `Tet.doctor/1`, `Tet.ask/2`, session query/resume orchestration, `Tet.list_events/1/2`, `Tet.subscribe_events/0/1`, provider config, mock provider, and OpenAI-compatible streaming adapter |
+| `tet_cli` | Thin terminal adapter | `tet ask`, `tet events`, `tet timeline`, `tet sessions`, `tet session show`, `tet doctor`, and help output through the public facade |
 
 The standalone release explicitly excludes:
 
@@ -95,9 +96,11 @@ TET_PROVIDER=mock TET_STORE_PATH="$STORE" \
 TET_PROVIDER=mock TET_STORE_PATH="$STORE" \
   _build/prod/rel/tet_standalone/bin/tet ask --session smoke-session "second"
 TET_STORE_PATH="$STORE" _build/prod/rel/tet_standalone/bin/tet session show smoke-session
+TET_STORE_PATH="$STORE" _build/prod/rel/tet_standalone/bin/tet events --session smoke-session
 ```
 
-The final command should show four messages under `smoke-session`.
+The session command should show four messages under `smoke-session`; the events
+command should show the read-only runtime timeline for the same session.
 
 ## `tet ask` streaming chat
 
@@ -179,6 +182,58 @@ renders messages. Runtime owns resume orchestration, and the store owns durable
 session/message queries behind `Tet.Store`. Boring boundaries are good. Spicy
 boundaries are how apps become haunted.
 
+## Runtime event timeline
+
+Runtime emits `%Tet.Event{}` terms for core chat activity and owns live fanout via
+`Tet.EventBus`. The public facade exposes two read-only timeline paths:
+
+- `Tet.list_events/1` / `Tet.list_events/2` lists persisted runtime events,
+  optionally filtered by session id.
+- `Tet.subscribe_events/0` subscribes the caller to future runtime events on the
+  all-events topic.
+- `Tet.subscribe_events(session_id)` subscribes the caller to future events for
+  one session and receives messages shaped as
+  `{:tet_event, {:session, session_id}, %Tet.Event{}}`.
+
+The CLI equivalent renders the same facade data without owning event state:
+
+```bash
+TET_PROVIDER=mock TET_STORE_PATH="$STORE" \
+  _build/prod/rel/tet_standalone/bin/tet ask --session demo-session "timeline me"
+
+TET_STORE_PATH="$STORE" \
+  _build/prod/rel/tet_standalone/bin/tet events --session demo-session
+```
+
+`tet timeline` is an alias for `tet events`:
+
+```bash
+TET_STORE_PATH="$STORE" \
+  _build/prod/rel/tet_standalone/bin/tet timeline --session demo-session
+```
+
+Example output:
+
+```text
+Events:
+  #1 2025-... session=demo-session message_persisted role=user message_id=msg_...
+  #2 2025-... session=demo-session assistant_chunk content="mock" provider=mock
+  #3 2025-... session=demo-session assistant_chunk content=": " provider=mock
+  #4 2025-... session=demo-session assistant_chunk content="timeline me" provider=mock
+  #5 2025-... session=demo-session message_persisted role=assistant message_id=msg_...
+```
+
+The default store persists events to a sibling JSON Lines file derived from
+`TET_STORE_PATH` (for example `/tmp/messages.events.jsonl`). Set
+`TET_EVENTS_PATH` only when a separate event-log path is needed. This is still a
+minimal timeline shell, not a broad event-store architecture wearing a fake
+mustache.
+
+Future optional LiveView parity should render the same `Tet.list_events/*` data
+and subscribe through the same `Tet.subscribe_events/*` facade. Phoenix remains
+optional/removable: no LiveView, Phoenix, Plug, Cowboy, or web dependency is part
+of this standalone timeline path.
+
 ## Doctor diagnostics
 
 The doctor command checks runtime config, store path read/write health, provider
@@ -257,6 +312,7 @@ Optional environment variables:
 - `TET_OPENAI_BASE_URL` — base URL; defaults to `https://api.openai.com/v1`.
 - `TET_OPENAI_MODEL` — model name; defaults to `gpt-4o-mini`.
 - `TET_STORE_PATH` — message log path; defaults to `.tet/messages.jsonl`.
+- `TET_EVENTS_PATH` — optional event timeline log path override; by default it is derived from `TET_STORE_PATH`.
 
 OpenAI-compatible streams are considered complete only after a `data: [DONE]`
 SSE payload. Missing `[DONE]`, content after `[DONE]`, and non-empty trailing

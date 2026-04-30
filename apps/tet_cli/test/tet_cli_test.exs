@@ -3,12 +3,21 @@ defmodule Tet.CLITest do
 
   import ExUnit.CaptureIO
 
+  alias Tet.CLI.Render
+
   setup do
     tmp_root = unique_tmp_root("tet-cli-test")
 
     File.rm_rf!(tmp_root)
     File.mkdir_p!(tmp_root)
-    on_exit(fn -> File.rm_rf!(tmp_root) end)
+
+    old_events_path = System.get_env("TET_EVENTS_PATH")
+    System.delete_env("TET_EVENTS_PATH")
+
+    on_exit(fn ->
+      restore_env(%{"TET_EVENTS_PATH" => old_events_path})
+      File.rm_rf!(tmp_root)
+    end)
 
     {:ok, tmp_root: tmp_root}
   end
@@ -56,6 +65,63 @@ defmodule Tet.CLITest do
       assert persisted =~ ~s("content":"hello cli")
       assert persisted =~ ~s("role":"assistant")
       assert persisted =~ ~s("content":"mock: hello cli")
+    end)
+  end
+
+  test "timeline renderer formats a deterministic core event snapshot" do
+    events = [
+      %Tet.Event{
+        type: :message_persisted,
+        session_id: "ses_demo",
+        sequence: 1,
+        payload: %{"message_id" => "msg_user", "role" => "user"},
+        metadata: %{"timestamp" => "2025-01-01T00:00:00.000Z"}
+      },
+      %Tet.Event{
+        type: :assistant_chunk,
+        session_id: "ses_demo",
+        sequence: 2,
+        payload: %{"content" => "hello world", "provider" => "mock"},
+        metadata: %{"timestamp" => "2025-01-01T00:00:00.001Z"}
+      }
+    ]
+
+    expected =
+      [
+        "Events:",
+        "  #1 2025-01-01T00:00:00.000Z session=ses_demo message_persisted role=user message_id=msg_user",
+        "  #2 2025-01-01T00:00:00.001Z session=ses_demo assistant_chunk content=\"hello world\" provider=mock"
+      ]
+      |> Enum.join("\n")
+
+    assert Render.events(events) == expected
+  end
+
+  test "events command renders persisted timeline with CLI parity snapshot", %{tmp_root: tmp_root} do
+    path = tmp_path(tmp_root, "events")
+    session_id = "cli-events-session"
+
+    with_env(%{"TET_PROVIDER" => "mock", "TET_STORE_PATH" => path}, fn ->
+      output =
+        capture_io(fn ->
+          assert Tet.CLI.run(["ask", "--session", session_id, "timeline", "cli"]) == 0
+        end)
+
+      assert output == "mock: timeline cli\n"
+
+      assert {:ok, events} = Tet.list_events(session_id, store_path: path)
+      expected = Render.events(events) <> "\n"
+
+      event_output =
+        capture_io(fn -> assert Tet.CLI.run(["events", "--session", session_id]) == 0 end)
+
+      alias_output =
+        capture_io(fn -> assert Tet.CLI.run(["timeline", "--session=#{session_id}"]) == 0 end)
+
+      assert event_output == expected
+      assert alias_output == expected
+      assert event_output =~ "message_persisted role=user"
+      assert event_output =~ "assistant_chunk content=\"mock\" provider=mock"
     end)
   end
 
@@ -124,10 +190,14 @@ defmodule Tet.CLITest do
     try do
       fun.()
     after
-      Enum.each(old_values, fn
-        {name, nil} -> System.delete_env(name)
-        {name, value} -> System.put_env(name, value)
-      end)
+      restore_env(old_values)
     end
+  end
+
+  defp restore_env(vars) do
+    Enum.each(vars, fn
+      {name, nil} -> System.delete_env(name)
+      {name, value} -> System.put_env(name, value)
+    end)
   end
 end
