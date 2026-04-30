@@ -17,7 +17,7 @@ The source plans also contain naming and layering conflicts that must be resolve
 Primary sources:
 
 - `check this plans/plan 3/plan/docs/01_architecture.md`
-- `/Users/adam2/projects/tet/check this plans/plan claude/plan_v0.3/FINAL_ULTIMATE_PLAN.md`
+- `check this plans/plan claude/plan_v0.3/FINAL_ULTIMATE_PLAN.md`
 - `plans/ELIXIR_CLI_AGENT_GLOBAL_VISION.md`
 - `plans/ELIXIR_CLI_AGENT_PHASED_IMPLEMENTATION.md`
 

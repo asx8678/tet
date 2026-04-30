@@ -15,9 +15,9 @@ Earlier v1-focused plans defer broad self-healing, while the global vision inclu
 
 Primary sources:
 
-- `/Users/adam2/projects/tet/check this plans/plan claude/plan_v0.3/upgrades/12_durable_execution.md`
-- `/Users/adam2/projects/tet/check this plans/plan claude/plan_v0.3/upgrades/13_operations_and_telemetry.md`
-- `/Users/adam2/projects/tet/check this plans/plan claude/plan_v0.3/upgrades/17_phasing_and_scope.md`
+- `check this plans/plan claude/plan_v0.3/upgrades/12_durable_execution.md`
+- `check this plans/plan claude/plan_v0.3/upgrades/13_operations_and_telemetry.md`
+- `check this plans/plan claude/plan_v0.3/upgrades/17_phasing_and_scope.md`
 - `plans/ELIXIR_CLI_AGENT_GLOBAL_VISION.md`
 - `plans/ELIXIR_CLI_AGENT_PHASED_IMPLEMENTATION.md`
 
