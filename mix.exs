@@ -47,6 +47,7 @@ defmodule Tet.Umbrella.MixProject do
     [
       preferred_envs: [
         "standalone.check": :test,
+        "web.facade_contract": :test,
         "release.standalone": :prod
       ]
     ]
@@ -56,15 +57,25 @@ defmodule Tet.Umbrella.MixProject do
     [
       "standalone.check": [
         "format --check-formatted",
+        "web.facade_contract",
         "test",
         &check_release_closure/1
       ],
+      "web.facade_contract": [&check_web_facade_contract/1],
       "release.standalone": ["release tet_standalone --overwrite"]
     ]
   end
 
   defp check_release_closure(_args) do
-    script = Path.expand("tools/check_release_closure.sh", __DIR__)
+    run_script!("tools/check_release_closure.sh")
+  end
+
+  defp check_web_facade_contract(_args) do
+    run_script!("tools/check_web_facade_contract.sh")
+  end
+
+  defp run_script!(path) do
+    script = Path.expand(path, __DIR__)
 
     case System.cmd(script, [], cd: __DIR__, stderr_to_stdout: true) do
       {output, 0} ->

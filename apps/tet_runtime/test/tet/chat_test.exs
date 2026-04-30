@@ -48,6 +48,48 @@ defmodule Tet.ChatTest do
     assert is_binary(assistant_message.timestamp)
   end
 
+  test "session resume appends turns under the same session id", %{tmp_root: tmp_root} do
+    path = tmp_path(tmp_root, "resume")
+    session_id = unique_session("resume")
+
+    assert {:ok, first} =
+             Tet.ask("first turn", provider: :mock, store_path: path, session_id: session_id)
+
+    assert first.session_id == session_id
+
+    assert {:ok, second} =
+             Tet.resume_session(session_id, "second turn", provider: :mock, store_path: path)
+
+    assert second.session_id == session_id
+
+    assert {:ok, [user_1, assistant_1, user_2, assistant_2]} =
+             Tet.list_messages(session_id, store_path: path)
+
+    assert Enum.map([user_1, assistant_1, user_2, assistant_2], & &1.role) == [
+             :user,
+             :assistant,
+             :user,
+             :assistant
+           ]
+
+    assert user_1.content == "first turn"
+    assert assistant_1.content == "mock: first turn"
+    assert user_2.content == "second turn"
+    assert assistant_2.content == "mock: second turn"
+
+    assert {:ok, [session]} = Tet.list_sessions(store_path: path)
+    assert session.id == session_id
+    assert session.message_count == 4
+    assert session.last_role == :assistant
+    assert session.last_content == "mock: second turn"
+
+    assert {:ok, %{session: shown, messages: shown_messages}} =
+             Tet.show_session(session_id, store_path: path)
+
+    assert shown.id == session_id
+    assert length(shown_messages) == 4
+  end
+
   test "openai-compatible provider validation rejects missing API key env", %{tmp_root: tmp_root} do
     without_env("TET_OPENAI_API_KEY", fn ->
       assert {:error, {:missing_provider_env, "TET_OPENAI_API_KEY"}} =

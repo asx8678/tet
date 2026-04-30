@@ -55,6 +55,13 @@ When a future plan, ticket, or implementation convenience conflicts with this st
 | [ADR-0007 — Remote execution boundary](0007-remote-execution-boundary.md) | Accepted | SSH remote execution model, local control plane, result merge |
 | [ADR-0008 — Repair and error recovery model](0008-repair-and-error-recovery.md) | Accepted | Durable recovery, Error Log, Repair Queue, Nano Repair Mode |
 
+## Related downstream contracts
+
+- [BD-0007 — Optional `tet_web_phoenix` adapter facade contract](../BD-0007_OPTIONAL_WEB_ADAPTER_FACADE_CONTRACT.md)
+  specializes ADR-0001 through ADR-0005 for the future Phoenix adapter. It keeps
+  `tet_web_phoenix` optional, removable, and limited to public `Tet.*` facade
+  calls, and reserves a future BD-0009 removability/xref gate.
+
 ## BD-0002 acceptance checklist
 
 | Acceptance requirement | Covered by | Review check |

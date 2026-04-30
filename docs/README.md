@@ -1,7 +1,9 @@
 # Tet standalone umbrella boundary
 
 This repository contains the minimal Elixir umbrella/release scaffold plus the
-first standalone streaming chat path for `tet-db6.5` / `BD-0005`.
+standalone streaming chat, session resume, and doctor diagnostics path through
+`tet-db6.6` / `BD-0006`, the optional web facade contract from `tet-db6.7` /
+`BD-0007`, and the prompt-layer contract from `tet-db6.10` / `BD-0010`.
 
 The implementation stays CLI-first and OTP-first. The CLI parses arguments and
 renders streamed chunks; runtime owns session orchestration, provider selection,
@@ -16,10 +18,10 @@ The `tet_standalone` release contains these conceptual applications:
 
 | App | Boundary role | Current implementation scope |
 |---|---|---|
-| `tet_core` | Pure domain/contracts boundary | Metadata, `%Tet.Event{}`, `%Tet.Message{}`, `Tet.Prompt` prompt-layer contract, `Tet.Provider` behaviour, and `Tet.Store` behaviour |
-| `tet_store_sqlite` | Default standalone store adapter boundary | Dependency-free durable JSON Lines message store for this phase; true SQLite can replace the file format later behind the same behaviour |
-| `tet_runtime` | OTP runtime and public `Tet.*` facade owner | Supervised runtime shell, Registry-backed event bus, `Tet.doctor/1`, `Tet.ask/2`, provider config, mock provider, and OpenAI-compatible streaming adapter |
-| `tet_cli` | Thin terminal adapter | `tet ask`, `tet doctor`, and help output through the public facade |
+| `tet_core` | Pure domain/contracts boundary | Metadata, `%Tet.Event{}`, `%Tet.Message{}`, `%Tet.Session{}`, `Tet.Prompt` prompt-layer contract, `Tet.Provider` behaviour, and `Tet.Store` behaviour |
+| `tet_store_sqlite` | Default standalone store adapter boundary | Dependency-free durable JSON Lines message/session store for this phase; true SQLite can replace the file format later behind the same behaviour |
+| `tet_runtime` | OTP runtime and public `Tet.*` facade owner | Supervised runtime shell, Registry-backed event bus, `Tet.doctor/1`, `Tet.ask/2`, session query/resume orchestration, provider config, mock provider, and OpenAI-compatible streaming adapter |
+| `tet_cli` | Thin terminal adapter | `tet ask`, `tet sessions`, `tet session show`, `tet doctor`, and help output through the public facade |
 
 The standalone release explicitly excludes:
 
@@ -31,6 +33,28 @@ The standalone release explicitly excludes:
 
 No Phoenix/web dependency has been added to `mix.exs`, any child app, or
 `mix.lock`.
+
+## Optional web adapter facade contract
+
+BD-0007 defines the future optional `tet_web_phoenix` adapter as a facade-only
+caller of public `Tet.*` runtime APIs. The contract is documented in
+[BD-0007 — Optional `tet_web_phoenix` adapter facade contract](BD-0007_OPTIONAL_WEB_ADAPTER_FACADE_CONTRACT.md).
+
+Short version: Phoenix may own browser/HTTP/LiveView presentation concerns, but
+it must not own Tet policy, state machines, providers, tools, storage, approval
+gates, repair, verifier execution, or runtime supervision. Future web actions
+must call the same public facade used by `tet_cli`.
+
+A standalone-safe source guard is available:
+
+```bash
+tools/check_web_facade_contract.sh
+# or
+mix web.facade_contract
+```
+
+The guard succeeds when `apps/tet_web_phoenix` is absent and checks obvious
+facade-contract violations if that optional app is introduced later.
 
 ## Runtime requirements
 
@@ -44,6 +68,7 @@ From the repository root:
 
 ```bash
 mix format --check-formatted
+mix web.facade_contract
 mix test
 MIX_ENV=prod mix release tet_standalone --overwrite
 tools/check_release_closure.sh --no-build
@@ -59,6 +84,20 @@ mix standalone.check
 `--no-build` only when you already built
 `MIX_ENV=prod mix release tet_standalone --overwrite` and want to inspect the
 existing artifact.
+
+A quick release smoke for session resume uses the mock provider and a disposable
+store:
+
+```bash
+STORE=$(mktemp /tmp/tet-session-smoke.XXXXXX)
+TET_PROVIDER=mock TET_STORE_PATH="$STORE" \
+  _build/prod/rel/tet_standalone/bin/tet ask --session smoke-session "first"
+TET_PROVIDER=mock TET_STORE_PATH="$STORE" \
+  _build/prod/rel/tet_standalone/bin/tet ask --session smoke-session "second"
+TET_STORE_PATH="$STORE" _build/prod/rel/tet_standalone/bin/tet session show smoke-session
+```
+
+The final command should show four messages under `smoke-session`.
 
 ## `tet ask` streaming chat
 
@@ -84,18 +123,99 @@ _build/prod/rel/tet_standalone/bin/tet_standalone eval \
   'Tet.CLI.Release.main(["ask", "hello standalone"])'
 ```
 
-The existing doctor command remains available:
+## Session list/show/resume
+
+Every successful `tet ask` turn has a `session_id`. A new id is generated when
+no id is supplied and can be discovered with `tet sessions`; pass
+`--session SESSION_ID` to append a new turn to an existing session and send the
+resumed message history to the provider:
+
+```bash
+STORE=/tmp/tet-smoke/messages.jsonl
+
+TET_PROVIDER=mock TET_STORE_PATH="$STORE" \
+  _build/prod/rel/tet_standalone/bin/tet ask --session demo-session "first turn"
+
+TET_PROVIDER=mock TET_STORE_PATH="$STORE" \
+  _build/prod/rel/tet_standalone/bin/tet ask --session demo-session "second turn"
+```
+
+List persisted sessions:
+
+```bash
+TET_STORE_PATH="$STORE" _build/prod/rel/tet_standalone/bin/tet sessions
+```
+
+Example output:
+
+```text
+Sessions:
+  demo-session  messages=4 updated=2025-... last=assistant: mock: second turn
+```
+
+Show one session and its messages:
+
+```bash
+TET_STORE_PATH="$STORE" \
+  _build/prod/rel/tet_standalone/bin/tet session show demo-session
+```
+
+Example output:
+
+```text
+Session demo-session
+messages: 4
+started_at: 2025-...
+updated_at: 2025-...
+Messages:
+  [user] first turn
+  [assistant] mock: first turn
+  [user] second turn
+  [assistant] mock: second turn
+```
+
+CLI stays intentionally boring here: it parses `--session`, lists summaries, and
+renders messages. Runtime owns resume orchestration, and the store owns durable
+session/message queries behind `Tet.Store`. Boring boundaries are good. Spicy
+boundaries are how apps become haunted.
+
+## Doctor diagnostics
+
+The doctor command checks runtime config, store path read/write health, provider
+configuration, and the standalone release boundary:
 
 ```bash
 _build/prod/rel/tet_standalone/bin/tet doctor
 ```
 
-Expected doctor output includes:
+Expected healthy output includes:
 
 ```text
 Tet standalone doctor: ok
 profile: tet_standalone
 applications: tet_core, tet_store_sqlite, tet_runtime, tet_cli
+store: Tet.Store.SQLite (ok)
+provider: :mock (ok)
+release_boundary: ok
+checks:
+  [ok] config - runtime config loaded
+  [ok] store - store path is readable and writable
+  [ok] provider - mock provider selected
+  [ok] release_boundary - standalone closure excludes web applications
+```
+
+Selecting the OpenAI-compatible provider without an API key is diagnosable and
+returns a non-zero doctor status without breaking the default mock provider path:
+
+```bash
+TET_PROVIDER=openai_compatible TET_OPENAI_API_KEY= tet doctor
+```
+
+Expected failing output includes:
+
+```text
+Tet standalone doctor: error
+  [error] provider - OpenAI-compatible provider is missing required environment variable TET_OPENAI_API_KEY
 ```
 
 ## Provider configuration
@@ -190,11 +310,22 @@ Current default path:
 .tet/messages.jsonl
 ```
 
+Sessions are derived from persisted messages and exposed as `%Tet.Session{}`
+summaries with:
+
+- `id`;
+- `message_count`;
+- `started_at`;
+- `updated_at`;
+- `last_role`;
+- `last_content`.
+
 The storage ADR reserves `.tet/tet.sqlite` as the eventual default database. For
 this phase, adding and migrating a real SQLite dependency would be premature:
-acceptance needs durable messages and a clean boundary, not a fake schema
-ceremony. The `tet_store_sqlite` application therefore writes JSON Lines behind
-`Tet.Store.save_message/2` and `Tet.Store.list_messages/2`; downstream storage
+acceptance needs durable messages/sessions and a clean boundary, not a fake
+schema ceremony. The `tet_store_sqlite` application therefore writes JSON Lines
+behind `Tet.Store.save_message/2`, `Tet.Store.list_messages/2`,
+`Tet.Store.list_sessions/1`, and `Tet.Store.fetch_session/2`; downstream storage
 work can replace the internals with SQLite while keeping runtime and CLI callers
 unchanged.
 
@@ -216,6 +347,9 @@ The scaffold and chat path follow the accepted ADR rules:
 - CLI calls the public `Tet` facade and does not call runtime/store/provider
   internals.
 - Phoenix remains optional/removable and absent from standalone closure.
+- Any future `tet_web_phoenix` app is a facade-only web adapter; it may render
+  runtime/core data and call public `Tet.*`, but it must not own Tet policy,
+  state, providers, tools, storage, approvals, repair, or supervision.
 
 ## What this issue deliberately does not do
 

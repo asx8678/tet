@@ -13,11 +13,34 @@ defmodule Tet.CLITest do
     {:ok, tmp_root: tmp_root}
   end
 
-  test "doctor renders the standalone boundary through the public facade" do
-    output = capture_io(fn -> assert Tet.CLI.run(["doctor"]) == 0 end)
+  test "doctor renders the standalone boundary through the public facade", %{tmp_root: tmp_root} do
+    with_env(%{"TET_STORE_PATH" => tmp_path(tmp_root, "doctor")}, fn ->
+      output = capture_io(fn -> assert Tet.CLI.run(["doctor"]) == 0 end)
 
-    assert output =~ "Tet standalone doctor: ok"
-    assert output =~ "tet_core, tet_store_sqlite, tet_runtime, tet_cli"
+      assert output =~ "Tet standalone doctor: ok"
+      assert output =~ "tet_core, tet_store_sqlite, tet_runtime, tet_cli"
+      assert output =~ "[ok] config"
+      assert output =~ "[ok] store"
+      assert output =~ "[ok] provider"
+      assert output =~ "[ok] release_boundary"
+    end)
+  end
+
+  test "doctor reports selected OpenAI-compatible provider missing config", %{tmp_root: tmp_root} do
+    with_env(
+      %{
+        "TET_PROVIDER" => "openai_compatible",
+        "TET_OPENAI_API_KEY" => nil,
+        "TET_STORE_PATH" => tmp_path(tmp_root, "doctor-openai")
+      },
+      fn ->
+        output = capture_io(fn -> assert Tet.CLI.run(["doctor"]) == 1 end)
+
+        assert output =~ "Tet standalone doctor: error"
+        assert output =~ "[error] provider"
+        assert output =~ "TET_OPENAI_API_KEY"
+      end
+    )
   end
 
   test "ask streams mock output and persists the chat turn", %{tmp_root: tmp_root} do
@@ -36,10 +59,41 @@ defmodule Tet.CLITest do
     end)
   end
 
+  test "session commands list and show resumed messages", %{tmp_root: tmp_root} do
+    path = tmp_path(tmp_root, "sessions")
+    session_id = "cli-resume-session"
+
+    with_env(%{"TET_PROVIDER" => "mock", "TET_STORE_PATH" => path}, fn ->
+      first =
+        capture_io(fn -> assert Tet.CLI.run(["ask", "--session", session_id, "first"]) == 0 end)
+
+      second =
+        capture_io(fn ->
+          assert Tet.CLI.run(["ask", "--session=#{session_id}", "second"]) == 0
+        end)
+
+      assert first == "mock: first\n"
+      assert second == "mock: second\n"
+
+      sessions = capture_io(fn -> assert Tet.CLI.run(["sessions"]) == 0 end)
+      assert sessions =~ "Sessions:"
+      assert sessions =~ session_id
+      assert sessions =~ "messages=4"
+
+      shown = capture_io(fn -> assert Tet.CLI.run(["session", "show", session_id]) == 0 end)
+      assert shown =~ "Session #{session_id}"
+      assert shown =~ "messages: 4"
+      assert shown =~ "[user] first"
+      assert shown =~ "[assistant] mock: first"
+      assert shown =~ "[user] second"
+      assert shown =~ "[assistant] mock: second"
+    end)
+  end
+
   test "ask without a prompt returns a deterministic usage error" do
     output = capture_io(:stderr, fn -> assert Tet.CLI.run(["ask"]) == 64 end)
 
-    assert output =~ "usage: tet ask PROMPT"
+    assert output =~ "usage: tet ask [--session SESSION_ID] PROMPT"
   end
 
   test "unknown commands return a deterministic usage error" do
@@ -62,7 +116,10 @@ defmodule Tet.CLITest do
   defp with_env(vars, fun) do
     old_values = Map.new(vars, fn {name, _value} -> {name, System.get_env(name)} end)
 
-    Enum.each(vars, fn {name, value} -> System.put_env(name, value) end)
+    Enum.each(vars, fn
+      {name, nil} -> System.delete_env(name)
+      {name, value} -> System.put_env(name, value)
+    end)
 
     try do
       fun.()

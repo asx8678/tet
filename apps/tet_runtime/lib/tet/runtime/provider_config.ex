@@ -31,6 +31,61 @@ defmodule Tet.Runtime.ProviderConfig do
     end
   end
 
+  @doc "Returns a sanitized provider configuration diagnostic without network calls."
+  def diagnose(opts \\ []) when is_list(opts) do
+    case provider_name(opts) do
+      :mock ->
+        {:ok,
+         %{
+           provider: :mock,
+           adapter: Tet.Runtime.Provider.Mock,
+           status: :ok,
+           message: "mock provider selected"
+         }}
+
+      :openai_compatible ->
+        settings = openai_settings(opts)
+
+        if blank?(settings.api_key) do
+          {:error,
+           %{
+             provider: :openai_compatible,
+             adapter: Tet.Runtime.Provider.OpenAICompatible,
+             status: :error,
+             reason: {:missing_provider_env, settings.api_key_env},
+             required_env: settings.api_key_env,
+             base_url: settings.base_url,
+             model: settings.model,
+             message:
+               "OpenAI-compatible provider is missing required environment variable #{settings.api_key_env}"
+           }}
+        else
+          {:ok,
+           %{
+             provider: :openai_compatible,
+             adapter: Tet.Runtime.Provider.OpenAICompatible,
+             status: :ok,
+             required_env: settings.api_key_env,
+             api_key_present?: true,
+             base_url: settings.base_url,
+             model: settings.model,
+             timeout: settings.timeout,
+             message: "OpenAI-compatible provider configured"
+           }}
+        end
+
+      unknown ->
+        {:error,
+         %{
+           provider: unknown,
+           adapter: nil,
+           status: :error,
+           reason: {:unknown_provider, unknown},
+           message: "unknown provider #{inspect(unknown)}"
+         }}
+    end
+  end
+
   @doc "Returns the selected provider name after env/config/opts normalization."
   def provider_name(opts \\ []) when is_list(opts) do
     opts
@@ -41,27 +96,40 @@ defmodule Tet.Runtime.ProviderConfig do
   end
 
   defp resolve_openai_compatible(opts) do
-    app_config = Application.get_env(:tet_runtime, :openai_compatible, [])
+    settings = openai_settings(opts)
 
-    api_key_env =
-      Keyword.get(opts, :api_key_env, Keyword.get(app_config, :api_key_env, "TET_OPENAI_API_KEY"))
-
-    api_key = Keyword.get(opts, :api_key) || env(api_key_env)
-
-    if blank?(api_key) do
-      {:error, {:missing_provider_env, api_key_env}}
+    if blank?(settings.api_key) do
+      {:error, {:missing_provider_env, settings.api_key_env}}
     else
       {:ok,
        {Tet.Runtime.Provider.OpenAICompatible,
         [
           provider: :openai_compatible,
-          api_key: api_key,
-          base_url:
-            value(opts, app_config, :base_url, "TET_OPENAI_BASE_URL", @default_openai_base_url),
-          model: value(opts, app_config, :model, "TET_OPENAI_MODEL", @default_openai_model),
-          timeout: Keyword.get(opts, :timeout, Keyword.get(app_config, :timeout, 60_000))
+          api_key: settings.api_key,
+          base_url: settings.base_url,
+          model: settings.model,
+          timeout: settings.timeout
         ]}}
     end
+  end
+
+  defp openai_settings(opts) do
+    app_config = Application.get_env(:tet_runtime, :openai_compatible, [])
+
+    api_key_env =
+      opts
+      |> Keyword.get(:api_key_env)
+      |> blank_fallback(Keyword.get(app_config, :api_key_env))
+      |> blank_fallback("TET_OPENAI_API_KEY")
+
+    %{
+      api_key_env: api_key_env,
+      api_key: Keyword.get(opts, :api_key) || env(api_key_env),
+      base_url:
+        value(opts, app_config, :base_url, "TET_OPENAI_BASE_URL", @default_openai_base_url),
+      model: value(opts, app_config, :model, "TET_OPENAI_MODEL", @default_openai_model),
+      timeout: Keyword.get(opts, :timeout, Keyword.get(app_config, :timeout, 60_000))
+    }
   end
 
   defp value(opts, app_config, key, env_name, default) do
@@ -91,5 +159,6 @@ defmodule Tet.Runtime.ProviderConfig do
     if blank?(value), do: fallback, else: value
   end
 
-  defp blank?(value), do: is_nil(value) or value == ""
+  defp blank?(value) when is_binary(value), do: String.trim(value) == ""
+  defp blank?(value), do: is_nil(value)
 end
