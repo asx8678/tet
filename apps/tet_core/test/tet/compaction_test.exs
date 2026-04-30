@@ -120,6 +120,41 @@ defmodule Tet.CompactionTest do
     assert result.metadata["protected"]["adjusted_recent_start_index"] == 2
   end
 
+  test "does not sever a tool pair split between the protected system head and compacted range" do
+    messages = [
+      tool_call_message("sys-call", :system, "call-head"),
+      message("sys-policy", :system),
+      tool_result_message("head-result", "call-head"),
+      message("u1", :user),
+      message("a1", :assistant),
+      message("u2", :user),
+      message("a2", :assistant)
+    ]
+
+    assert {:ok, result} = Tet.Compaction.compact(messages, force: true, recent_count: 2)
+
+    refute result.changed?
+    assert result.compacted_messages == []
+    assert Enum.map(result.retained_messages, & &1.id) == Enum.map(messages, & &1.id)
+
+    [protected_pair] = result.metadata["protected_tool_pairs"]
+
+    assert protected_pair == %{
+             "call_indexes" => [0],
+             "call_message_ids" => ["sys-call"],
+             "location" => "retained",
+             "reason" => "split_boundary",
+             "result_indexes" => [2],
+             "result_message_ids" => ["head-result"],
+             "tool_call_id" => "call-head"
+           }
+
+    assert result.metadata["noop_reason"] == "nothing_to_compact"
+    assert result.metadata["protected"]["leading_system_count"] == 2
+    assert result.metadata["protected"]["requested_recent_start_index"] == 5
+    assert result.metadata["protected"]["adjusted_recent_start_index"] == 2
+  end
+
   test "keeps older tool call/result pairs atomic inside the compacted side" do
     messages = [
       message("sys", :system),
@@ -181,7 +216,11 @@ defmodule Tet.CompactionTest do
   end
 
   defp tool_call_message(id, tool_call_id) do
-    message(id, :assistant, "calling #{tool_call_id}", %{
+    tool_call_message(id, :assistant, tool_call_id)
+  end
+
+  defp tool_call_message(id, role, tool_call_id) do
+    message(id, role, "calling #{tool_call_id}", %{
       tool_calls: [%{id: tool_call_id, name: "read_file"}]
     })
   end

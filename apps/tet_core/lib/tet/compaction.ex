@@ -344,8 +344,8 @@ defmodule Tet.Compaction do
 
   defp pair_crosses_split?(pair, split, head_count) do
     has_compacted_side? = Enum.any?(pair.indexes, &(&1 >= head_count and &1 < split))
-    has_retained_tail? = Enum.any?(pair.indexes, &(&1 >= split))
-    has_compacted_side? and has_retained_tail?
+    has_retained_side? = Enum.any?(pair.indexes, &(&1 < head_count or &1 >= split))
+    has_compacted_side? and has_retained_side?
   end
 
   defp metadata(messages, compacted, retained, pair_index, plan, opts) do

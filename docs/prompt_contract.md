@@ -56,7 +56,7 @@ Accepted fields:
 `Tet.Compaction.to_prompt_compactions/1` emits this shape for BD-0012 compacted
 context. Its metadata includes the deterministic split contract used by runtime:
 original count/range, retained count/ranges, compacted count/range, strategy,
-sanized options, tool-pair locations, protected tool-pair records, and orphaned
+sanitized options, tool-pair locations, protected tool-pair records, and orphaned
 tool-call/result diagnostics. Prompt debug redacts metadata through the central
 redactor and still does not print raw summary content.
 
