@@ -1,0 +1,145 @@
+defmodule Tet.Runtime.Tools.ReadTest do
+  use ExUnit.Case, async: true
+
+  alias Tet.Runtime.Tools.Read
+
+  @workspace "/tmp/tet_test_read_#{System.unique_integer([:positive])}"
+
+  setup do
+    File.mkdir_p!(@workspace)
+    File.write!(Path.join(@workspace, "hello.txt"), "hello world")
+    File.write!(Path.join(@workspace, "multiline.txt"), "line1\nline2\nline3\nline4\nline5")
+
+    long_content = Enum.map(1..100, &"line #{&1}") |> Enum.join("\n")
+    File.write!(Path.join(@workspace, "long.txt"), long_content)
+
+    # Binary file
+    File.write!(Path.join(@workspace, "binary.bin"), <<0, 1, 2, 3, 4, 5, 0, 255>>)
+
+    on_exit(fn -> File.rm_rf!(@workspace) end)
+    %{workspace: @workspace}
+  end
+
+  describe "run/2 — basic reading" do
+    test "reads an entire small file", %{workspace: ws} do
+      result = Read.run(%{"path" => "hello.txt"}, workspace_root: ws)
+
+      assert result.ok == true
+      assert result.data.path == "hello.txt"
+      assert result.data.content == "hello world"
+      assert result.data.total_lines == 1
+      assert result.data.binary == false
+      assert result.truncated == false
+    end
+
+    test "reads a multiline file", %{workspace: ws} do
+      result = Read.run(%{"path" => "multiline.txt"}, workspace_root: ws)
+
+      assert result.ok == true
+      assert result.data.line_count == 5
+      assert result.data.total_lines == 5
+      assert result.data.content == "line1\nline2\nline3\nline4\nline5"
+    end
+
+    test "reads with start_line offset", %{workspace: ws} do
+      result = Read.run(%{"path" => "multiline.txt", "start_line" => 3}, workspace_root: ws)
+
+      assert result.ok == true
+      assert result.data.start_line == 3
+      assert result.data.content == "line3\nline4\nline5"
+    end
+
+    test "reads a range with both start_line and line_count", %{workspace: ws} do
+      result =
+        Read.run(%{"path" => "multiline.txt", "start_line" => 2, "line_count" => 2},
+          workspace_root: ws
+        )
+
+      assert result.ok == true
+      assert result.data.content == "line2\nline3"
+      assert result.data.line_count == 2
+    end
+  end
+
+  describe "run/2 — error cases" do
+    test "rejects workspace escape paths", %{workspace: ws} do
+      result = Read.run(%{"path" => "../etc/passwd"}, workspace_root: ws)
+
+      assert result.ok == false
+      assert result.error.code == "workspace_escape"
+    end
+
+    test "rejects absolute paths" do
+      result = Read.run(%{"path" => "/etc/passwd"}, workspace_root: "/tmp")
+
+      assert result.ok == false
+      assert result.error.code == "workspace_escape"
+    end
+
+    test "rejects non-existent file", %{workspace: ws} do
+      result = Read.run(%{"path" => "nope.txt"}, workspace_root: ws)
+
+      assert result.ok == false
+      assert result.error.code == "not_found"
+    end
+
+    test "rejects directory path", %{workspace: ws} do
+      result = Read.run(%{"path" => "."}, workspace_root: ws)
+
+      assert result.ok == false
+      assert result.error.code == "not_file"
+    end
+
+    test "rejects invalid start_line", %{workspace: ws} do
+      result = Read.run(%{"path" => "hello.txt", "start_line" => 0}, workspace_root: ws)
+
+      assert result.ok == false
+      assert result.error.code == "invalid_arguments"
+    end
+
+    test "rejects excessive line_count", %{workspace: ws} do
+      result =
+        Read.run(%{"path" => "hello.txt", "line_count" => 10_000}, workspace_root: ws)
+
+      assert result.ok == false
+      assert result.error.code == "invalid_arguments"
+    end
+  end
+
+  describe "run/2 — truncation and limits" do
+    test "truncates long output at byte limit", %{workspace: ws} do
+      # Use a tiny max_bytes
+      result =
+        Read.run(%{"path" => "long.txt"}, workspace_root: ws, max_bytes: 50)
+
+      assert result.ok == true
+      assert byte_size(result.data.content) <= 50
+    end
+
+    test "returns start_line beyond total_lines as empty", %{workspace: ws} do
+      result = Read.run(%{"path" => "hello.txt", "start_line" => 100}, workspace_root: ws)
+
+      assert result.ok == true
+      assert result.data.content == ""
+      assert result.data.line_count == 0
+    end
+  end
+
+  describe "run/2 — binary detection" do
+    test "detects binary files", %{workspace: ws} do
+      result = Read.run(%{"path" => "binary.bin"}, workspace_root: ws)
+
+      assert result.ok == true
+      assert result.data.binary == true
+    end
+  end
+
+  describe "run/2 — path with null bytes" do
+    test "rejects null bytes in path", %{workspace: ws} do
+      result = Read.run(%{"path" => "hello.txt\0evil"}, workspace_root: ws)
+
+      assert result.ok == false
+      assert result.error.code == "invalid_arguments"
+    end
+  end
+end
