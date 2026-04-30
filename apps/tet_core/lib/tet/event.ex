@@ -7,12 +7,38 @@ defmodule Tet.Event do
   reach into runtime internals or invent their own event maps like tiny gremlins.
   """
 
-  @known_types [:assistant_chunk, :message_persisted, :session_started, :session_resumed]
+  @provider_types [
+    :provider_start,
+    :provider_text_delta,
+    :provider_tool_call_delta,
+    :provider_tool_call_done,
+    :provider_usage,
+    :provider_done,
+    :provider_error
+  ]
+
+  @known_types [
+                 :assistant_chunk,
+                 :message_persisted,
+                 :session_started,
+                 :session_resumed
+               ] ++ @provider_types
 
   @enforce_keys [:type]
   defstruct [:type, :session_id, :sequence, payload: %{}, metadata: %{}]
 
-  @type type :: :assistant_chunk | :message_persisted | :session_started | :session_resumed
+  @type type ::
+          :assistant_chunk
+          | :message_persisted
+          | :session_started
+          | :session_resumed
+          | :provider_start
+          | :provider_text_delta
+          | :provider_tool_call_delta
+          | :provider_tool_call_done
+          | :provider_usage
+          | :provider_done
+          | :provider_error
   @type t :: %__MODULE__{
           type: type(),
           session_id: binary() | nil,
@@ -23,6 +49,69 @@ defmodule Tet.Event do
 
   @doc "Returns the core event types currently emitted by the runtime shell."
   def known_types, do: @known_types
+
+  @doc "Returns the normalized provider lifecycle event types."
+  def provider_types, do: @provider_types
+
+  @doc "Builds a normalized provider-start event."
+  def provider_start(payload \\ %{}, opts \\ []) when is_map(payload) and is_list(opts) do
+    provider_event(:provider_start, payload, opts)
+  end
+
+  @doc "Builds a normalized provider text-delta event."
+  def provider_text_delta(text, payload \\ %{}, opts \\ [])
+      when is_binary(text) and is_map(payload) and is_list(opts) do
+    provider_event(:provider_text_delta, Map.put(payload, :text, text), opts)
+  end
+
+  @doc "Builds a normalized provider tool-call delta event."
+  def provider_tool_call_delta(index, arguments_delta, payload \\ %{}, opts \\ [])
+      when is_integer(index) and index >= 0 and is_binary(arguments_delta) and is_map(payload) and
+             is_list(opts) do
+    payload =
+      payload
+      |> Map.put(:index, index)
+      |> Map.put(:arguments_delta, arguments_delta)
+
+    provider_event(:provider_tool_call_delta, payload, opts)
+  end
+
+  @doc "Builds a normalized provider completed tool-call event."
+  def provider_tool_call_done(index, id, name, arguments, payload \\ %{}, opts \\ [])
+      when is_integer(index) and index >= 0 and is_binary(id) and is_binary(name) and
+             is_map(arguments) and is_map(payload) and is_list(opts) do
+    payload =
+      payload
+      |> Map.put(:index, index)
+      |> Map.put(:id, id)
+      |> Map.put(:name, name)
+      |> Map.put(:arguments, arguments)
+
+    provider_event(:provider_tool_call_done, payload, opts)
+  end
+
+  @doc "Builds a normalized provider usage event."
+  def provider_usage(usage, payload \\ %{}, opts \\ [])
+      when is_map(usage) and is_map(payload) and is_list(opts) do
+    provider_event(:provider_usage, Map.merge(payload, usage), opts)
+  end
+
+  @doc "Builds a normalized provider-done event."
+  def provider_done(stop_reason, payload \\ %{}, opts \\ [])
+      when is_atom(stop_reason) and is_map(payload) and is_list(opts) do
+    provider_event(:provider_done, Map.put(payload, :stop_reason, stop_reason), opts)
+  end
+
+  @doc "Builds a normalized provider-error event."
+  def provider_error(kind, detail, payload \\ %{}, opts \\ [])
+      when is_atom(kind) and is_map(payload) and is_list(opts) do
+    payload =
+      payload
+      |> Map.put(:kind, kind)
+      |> Map.put(:detail, detail)
+
+    provider_event(:provider_error, payload, opts)
+  end
 
   @doc "Builds a validated event from atom or string keyed attrs."
   def new(attrs) when is_map(attrs) do
@@ -55,6 +144,16 @@ defmodule Tet.Event do
 
   @doc "Converts a decoded map back to a validated event struct."
   def from_map(attrs) when is_map(attrs), do: new(attrs)
+
+  defp provider_event(type, payload, opts) do
+    %__MODULE__{
+      type: type,
+      session_id: Keyword.get(opts, :session_id),
+      sequence: Keyword.get(opts, :sequence),
+      payload: payload,
+      metadata: Keyword.get(opts, :metadata, %{})
+    }
+  end
 
   defp fetch_type(attrs) do
     case fetch_value(attrs, :type) do
@@ -105,6 +204,7 @@ defmodule Tet.Event do
   end
 
   defp json_safe(value) when is_list(value), do: Enum.map(value, &json_safe/1)
+  defp json_safe(value) when is_tuple(value), do: value |> Tuple.to_list() |> json_safe()
   defp json_safe(value) when value in [nil, true, false], do: value
   defp json_safe(value) when is_atom(value), do: Atom.to_string(value)
   defp json_safe(value), do: value

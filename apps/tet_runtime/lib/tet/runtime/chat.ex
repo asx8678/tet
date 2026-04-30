@@ -25,7 +25,10 @@ defmodule Tet.Runtime.Chat do
              save_message(store_adapter, user_message, store_opts, emit_event),
            {:ok, history} <- list_messages(store_adapter, session_id, store_opts),
            {:ok, history, compaction} <- maybe_compact_history(history, opts),
-           provider_opts <- Keyword.put(provider_opts, :session_id, session_id),
+           provider_opts <-
+             provider_opts
+             |> Keyword.put(:session_id, session_id)
+             |> Keyword.put_new(:request_id, Ids.request_id()),
            {:ok, response} <- provider.stream_chat(history, provider_opts, emit_event),
            {:ok, assistant_message} <- build_message(:assistant, response.content, session_id),
            {:ok, assistant_message} <-
