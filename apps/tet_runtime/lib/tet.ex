@@ -7,7 +7,7 @@ defmodule Tet do
   CLI and optional adapters pointed at the same public API.
   """
 
-  alias Tet.Runtime.{Boundary, Doctor, Sessions}
+  alias Tet.Runtime.{Autosave, Boundary, Doctor, Sessions}
 
   @doc "Returns the standalone boundary declared for this release profile."
   def boundary do
@@ -53,6 +53,21 @@ defmodule Tet do
   @doc "Resumes a persisted session by sending another prompt under the same id."
   def resume_session(session_id, prompt, opts \\ []) when is_binary(session_id) do
     send_prompt(session_id, prompt, opts)
+  end
+
+  @doc "Autosaves a persisted session with prompt metadata and debug artifacts."
+  def autosave_session(session_id, prompt_attrs, opts \\ []) do
+    Autosave.save(session_id, prompt_attrs, opts)
+  end
+
+  @doc "Restores the latest autosave checkpoint for a session."
+  def restore_autosave(session_id, opts \\ []) do
+    Autosave.restore(session_id, opts)
+  end
+
+  @doc "Lists autosave checkpoints, newest first."
+  def list_autosaves(opts \\ []) do
+    Autosave.list(opts)
   end
 
   @doc "Reserved event-list facade for future durable Event Log work."

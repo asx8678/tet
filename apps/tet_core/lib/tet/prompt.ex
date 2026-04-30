@@ -159,6 +159,19 @@ defmodule Tet.Prompt do
   @spec debug_text(t()) :: binary()
   def debug_text(%__MODULE__{} = prompt), do: Debug.text(prompt)
 
+  @doc """
+  Returns normalized attachment metadata carried by the prompt, without payload bytes.
+  """
+  @spec attachment_metadata(t()) :: [map()]
+  def attachment_metadata(%__MODULE__{layers: layers}) do
+    layers
+    |> Enum.find(&(&1.kind == :attachment_metadata))
+    |> case do
+      nil -> []
+      layer -> Map.get(layer.metadata, "attachments", [])
+    end
+  end
+
   defp normalize_top_level_attrs(attrs) when is_map(attrs) do
     attrs
     |> Map.to_list()
