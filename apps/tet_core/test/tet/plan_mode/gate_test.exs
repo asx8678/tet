@@ -2,171 +2,9 @@ defmodule Tet.PlanMode.GateTest do
   use ExUnit.Case, async: true
 
   alias Tet.PlanMode.{Gate, Policy}
-  alias Tet.Tool.Contract
   alias Tet.Tool.ReadOnlyContracts
 
-  # -- Helpers --
-
-  defp read_contract do
-    {:ok, c} = ReadOnlyContracts.fetch("read")
-    c
-  end
-
-  defp list_contract do
-    {:ok, c} = ReadOnlyContracts.fetch("list")
-    c
-  end
-
-  defp search_contract do
-    {:ok, c} = ReadOnlyContracts.fetch("search")
-    c
-  end
-
-  defp ask_user_contract do
-    {:ok, c} = ReadOnlyContracts.fetch("ask-user")
-    c
-  end
-
-  defp plan_research_ctx do
-    %{mode: :plan, task_category: :researching, task_id: "t1"}
-  end
-
-  defp plan_planning_ctx do
-    %{mode: :plan, task_category: :planning, task_id: "t2"}
-  end
-
-  defp execute_acting_ctx do
-    %{mode: :execute, task_category: :acting, task_id: "t3"}
-  end
-
-  defp explore_research_ctx do
-    %{mode: :explore, task_category: :researching, task_id: "t4"}
-  end
-
-  # Build a simulated mutating write contract for testing block paths.
-  # We reuse the struct shape from a read-only contract and override the
-  # fields that make it mutating. The gate only reads these fields, so
-  # this is safe for pure-function testing.
-  defp write_contract do
-    %Contract{} = base = read_contract()
-
-    %{
-      base
-      | name: "write-file",
-        read_only: false,
-        mutation: :write,
-        modes: [:execute, :repair],
-        task_categories: [:acting, :verifying, :debugging],
-        execution: %{
-          base.execution
-          | mutates_workspace: true,
-            executes_code: false,
-            status: :contract_only,
-            effects: [:writes_file]
-        }
-    }
-  end
-
-  defp shell_contract do
-    %Contract{} = base = read_contract()
-
-    %{
-      base
-      | name: "shell",
-        read_only: false,
-        mutation: :execute,
-        modes: [:execute],
-        task_categories: [:acting, :debugging],
-        execution: %{
-          base.execution
-          | executes_code: true,
-            mutates_workspace: true,
-            status: :contract_only,
-            effects: [:executes_shell_command]
-        }
-    }
-  end
-
-  # A mutating contract that incorrectly declares :plan in its modes.
-  # The gate must still block it at check_plan_mode_gate.
-  defp rogue_plan_write_contract do
-    %Contract{} = base = read_contract()
-
-    %{
-      base
-      | name: "rogue-plan-write",
-        read_only: false,
-        mutation: :write,
-        modes: [:plan, :explore, :execute],
-        task_categories: [:acting, :verifying, :debugging],
-        execution: %{
-          base.execution
-          | mutates_workspace: true,
-            executes_code: false,
-            status: :contract_only,
-            effects: [:writes_file]
-        }
-    }
-  end
-
-  # A shell/executing contract that incorrectly declares :plan in its modes.
-  defp rogue_plan_shell_contract do
-    %Contract{} = base = read_contract()
-
-    %{
-      base
-      | name: "rogue-plan-shell",
-        read_only: false,
-        mutation: :execute,
-        modes: [:plan, :execute],
-        task_categories: [:acting, :debugging],
-        execution: %{
-          base.execution
-          | executes_code: true,
-            mutates_workspace: true,
-            status: :contract_only,
-            effects: [:executes_shell_command]
-        }
-    }
-  end
-
-  # A mutating contract that only declares :verifying in task_categories
-  # (no :acting), so it should be blocked in execute/acting context
-  # when contract_allows_category? is enforced.
-  defp verifying_only_write_contract do
-    %Contract{} = base = read_contract()
-
-    %{
-      base
-      | name: "verifying-only-write",
-        read_only: false,
-        mutation: :write,
-        modes: [:execute, :repair],
-        task_categories: [:verifying, :debugging],
-        execution: %{
-          base.execution
-          | mutates_workspace: true,
-            executes_code: false,
-            status: :contract_only,
-            effects: [:writes_file]
-        }
-    }
-  end
-
-  # Build a read-only contract via Contract.new/1 with string-valued modes
-  # and task_categories, to verify the builder normalizes strings to atoms
-  # and the gate then works correctly.
-  defp string_metadata_contract do
-    base_attrs = read_contract() |> Map.from_struct()
-
-    attrs =
-      base_attrs
-      |> Map.put(:modes, ["plan", "explore", "execute", "repair"])
-      |> Map.put(:task_categories, ["researching", "planning", "acting"])
-
-    {:ok, contract} = Contract.new(attrs)
-    contract
-  end
+  import Tet.PlanMode.GateTestHelpers
 
   # -- Gate decisions for read-only tools in plan mode --
 
@@ -278,7 +116,6 @@ defmodule Tet.PlanMode.GateTest do
     end
 
     test "mutating contract without plan mode declaration is blocked" do
-      # write_contract declares [:execute, :repair], not :plan
       decision = Gate.evaluate(write_contract(), Policy.default(), plan_research_ctx())
       assert Gate.blocked?(decision)
       assert match?({:block, _}, decision)
@@ -317,12 +154,12 @@ defmodule Tet.PlanMode.GateTest do
 
     test "allows when require_active_task is false" do
       policy = Policy.new!(%{require_active_task: false})
-      ctx = %{mode: :plan, task_category: nil, task_id: nil}
+      ctx = %{mode: :plan, task_category: :researching, task_id: "t1"}
       decision = Gate.evaluate(read_contract(), policy, ctx)
       assert Gate.allowed?(decision)
     end
 
-    # -- MUST-1: fail-closed regressions --
+    # -- fail-closed regressions --
 
     test "blocks when task_id is omitted from context" do
       ctx = %{mode: :plan, task_category: :researching}
@@ -407,10 +244,9 @@ defmodule Tet.PlanMode.GateTest do
       assert Gate.allowed?(decision)
     end
 
-    # -- MUST-2: contract-declared task_categories enforced --
+    # -- contract-declared task_categories enforced --
 
     test "contract with mismatched task_categories blocked in execute/acting" do
-      # verifying_only_write_contract declares [:verifying, :debugging], not :acting
       ctx = %{mode: :execute, task_category: :acting, task_id: "t8"}
       decision = Gate.evaluate(verifying_only_write_contract(), Policy.default(), ctx)
       assert Gate.blocked?(decision)
@@ -418,31 +254,139 @@ defmodule Tet.PlanMode.GateTest do
     end
 
     test "contract with matching task_categories allowed in execute/acting" do
-      # write_contract declares [:acting, :verifying, :debugging] — includes :acting
       ctx = %{mode: :execute, task_category: :acting, task_id: "t3"}
       decision = Gate.evaluate(write_contract(), Policy.default(), ctx)
       assert Gate.allowed?(decision)
     end
 
     test "contract with matching task_categories allowed in execute/verifying" do
-      # verifying_only_write_contract declares [:verifying, :debugging]
       ctx = %{mode: :execute, task_category: :verifying, task_id: "t9"}
       decision = Gate.evaluate(verifying_only_write_contract(), Policy.default(), ctx)
       assert Gate.allowed?(decision)
     end
 
     test "runtime category mismatched with declared categories blocks even if policy allows" do
-      # Policy allows :acting, but verifying_only_write_contract doesn't declare :acting
       ctx = %{mode: :execute, task_category: :acting, task_id: "t10"}
       decision = Gate.evaluate(verifying_only_write_contract(), Policy.default(), ctx)
       assert Gate.blocked?(decision)
     end
 
     test "read-only contract with any category passes contract_allows_category check" do
-      # Read-only contracts declare all categories, so they always pass
       ctx = %{mode: :execute, task_category: :acting, task_id: "t11"}
       decision = Gate.evaluate(read_contract(), Policy.default(), ctx)
       assert Gate.allowed?(decision)
+    end
+  end
+
+  # -- QA-1: read-only contract must declare runtime category (contract_allows_category? prerequisite) --
+
+  describe "QA-1: contract_allows_category? prerequisite for read-only contracts" do
+    test "read-only contract that omits runtime category is blocked in plan/researching" do
+      # read_only_planning_only_contract declares only [:planning], omits :researching
+      ctx = %{mode: :plan, task_category: :researching, task_id: "t_qa1a"}
+      decision = Gate.evaluate(read_only_planning_only_contract(), Policy.default(), ctx)
+      assert {:block, :category_blocks_tool} = decision
+    end
+
+    test "read-only contract that omits runtime category is blocked in execute/acting" do
+      # read_only_planning_only_contract declares only [:planning], omits :acting
+      ctx = %{mode: :execute, task_category: :acting, task_id: "t_qa1b"}
+      decision = Gate.evaluate(read_only_planning_only_contract(), Policy.default(), ctx)
+      assert {:block, :category_blocks_tool} = decision
+    end
+
+    test "read-only contract that declares runtime category is allowed in plan/planning" do
+      # read_only_planning_only_contract declares [:planning] — matching
+      ctx = %{mode: :plan, task_category: :planning, task_id: "t_qa1c"}
+      decision = Gate.evaluate(read_only_planning_only_contract(), Policy.default(), ctx)
+      assert Gate.allowed?(decision)
+    end
+
+    test "read-only contract that omits runtime category is blocked in execute/researching" do
+      ctx = %{mode: :execute, task_category: :researching, task_id: "t_qa1d"}
+      decision = Gate.evaluate(read_only_planning_only_contract(), Policy.default(), ctx)
+      assert {:block, :category_blocks_tool} = decision
+    end
+
+    test "mutating contract that omits runtime category is blocked even in execute/verifying" do
+      # write_verifying_only_contract declares only [:verifying], but context is :acting
+      ctx = %{mode: :execute, task_category: :acting, task_id: "t_qa1e"}
+      decision = Gate.evaluate(write_verifying_only_contract(), Policy.default(), ctx)
+      assert {:block, :category_blocks_tool} = decision
+    end
+  end
+
+  # -- QA-2: malformed context never crashes, returns deterministic block --
+
+  describe "QA-2: malformed context returns deterministic block, never crashes" do
+    test "missing :mode key returns {:block, :invalid_context}" do
+      ctx = %{task_category: :researching, task_id: "t_qa2a"}
+      decision = Gate.evaluate(read_contract(), Policy.default(), ctx)
+      assert {:block, :invalid_context} = decision
+    end
+
+    test "nil :mode returns {:block, :invalid_context}" do
+      ctx = %{mode: nil, task_category: :researching, task_id: "t_qa2b"}
+      decision = Gate.evaluate(read_contract(), Policy.default(), ctx)
+      assert {:block, :invalid_context} = decision
+    end
+
+    test "non-atom :mode returns {:block, :invalid_context}" do
+      ctx = %{mode: "plan", task_category: :researching, task_id: "t_qa2c"}
+      decision = Gate.evaluate(read_contract(), Policy.default(), ctx)
+      assert {:block, :invalid_context} = decision
+    end
+
+    test "non-atom :mode (integer) returns {:block, :invalid_context}" do
+      ctx = %{mode: 42, task_category: :researching, task_id: "t_qa2d"}
+      decision = Gate.evaluate(read_contract(), Policy.default(), ctx)
+      assert {:block, :invalid_context} = decision
+    end
+
+    test "missing :task_category with require_active_task false returns {:block, :invalid_context}" do
+      policy = Policy.new!(%{require_active_task: false})
+      ctx = %{mode: :plan, task_id: "t_qa2e"}
+      decision = Gate.evaluate(read_contract(), policy, ctx)
+      assert {:block, :invalid_context} = decision
+    end
+
+    test "nil :task_category with require_active_task false returns {:block, :invalid_context}" do
+      policy = Policy.new!(%{require_active_task: false})
+      ctx = %{mode: :plan, task_category: nil, task_id: "t_qa2f"}
+      decision = Gate.evaluate(read_contract(), policy, ctx)
+      assert {:block, :invalid_context} = decision
+    end
+
+    test "missing :task_category with require_active_task false for mutating contract" do
+      policy = Policy.new!(%{require_active_task: false})
+      ctx = %{mode: :execute, task_id: "t_qa2g"}
+      decision = Gate.evaluate(write_contract(), policy, ctx)
+      assert {:block, :invalid_context} = decision
+    end
+
+    test "nil :task_category with require_active_task false for mutating contract" do
+      policy = Policy.new!(%{require_active_task: false})
+      ctx = %{mode: :execute, task_category: nil, task_id: "t_qa2h"}
+      decision = Gate.evaluate(write_contract(), policy, ctx)
+      assert {:block, :invalid_context} = decision
+    end
+
+    test "empty context returns {:block, :invalid_context}" do
+      decision = Gate.evaluate(read_contract(), Policy.new!(%{require_active_task: false}), %{})
+      assert {:block, :invalid_context} = decision
+    end
+
+    test "valid mode but invalid :mode for mutating contract" do
+      ctx = %{mode: "execute", task_category: :acting, task_id: "t_qa2i"}
+      decision = Gate.evaluate(write_contract(), Policy.default(), ctx)
+      assert {:block, :invalid_context} = decision
+    end
+
+    test "valid mode, missing category key for read-only contract with require_active_task false" do
+      policy = Policy.new!(%{require_active_task: false})
+      ctx = %{mode: :explore, task_id: "t_qa2j"}
+      decision = Gate.evaluate(read_contract(), policy, ctx)
+      assert {:block, :invalid_context} = decision
     end
   end
 
@@ -468,7 +412,7 @@ defmodule Tet.PlanMode.GateTest do
     end
   end
 
-  # -- SHOULD-4: atom-vs-string normalization via Contract builder --
+  # -- Contract builder normalizes atom-vs-string metadata --
 
   describe "Contract builder normalizes atom-vs-string metadata" do
     test "contract built with string modes via builder is normalized to atoms" do
@@ -493,9 +437,7 @@ defmodule Tet.PlanMode.GateTest do
 
     test "string-normalized contract passes contract mode check" do
       contract = string_metadata_contract()
-      # The contract declares :plan in modes, so plan mode should pass check_contract_mode
       decision = Gate.evaluate(contract, Policy.default(), plan_research_ctx())
-      # It's read-only, plan-safe mode, plan-safe category → should be allowed with guidance
       assert Gate.guided?(decision) or decision == :allow
     end
   end
@@ -529,7 +471,7 @@ defmodule Tet.PlanMode.GateTest do
     end
   end
 
-  # -- Mutating tool invariant: planning cannot mutate --
+  # -- BD-0025 acceptance: planning cannot mutate --
 
   describe "BD-0025 acceptance: planning cannot mutate or execute non-read tools" do
     test "write tool is blocked in all plan-safe modes with all plan-safe categories" do
@@ -563,7 +505,7 @@ defmodule Tet.PlanMode.GateTest do
       assert {:block, :no_active_task} = decision
     end
 
-    # -- MUST-3: plan mode blocks rogue mutating contracts --
+    # -- plan mode blocks rogue mutating contracts --
 
     test "mutating contract that incorrectly declares :plan mode is blocked" do
       decision =
@@ -601,6 +543,23 @@ defmodule Tet.PlanMode.GateTest do
         assert {:block, :plan_mode_blocks_mutation} = decision,
                "rogue-plan-write should be blocked in #{mode}/#{category}"
       end
+    end
+  end
+
+  # -- Facade coverage for invalid context --
+
+  describe "facade delegates for invalid context" do
+    test "PlanMode.evaluate returns {:block, :invalid_context} for missing :mode" do
+      ctx = %{task_category: :researching, task_id: "t_fac1"}
+      decision = Tet.PlanMode.evaluate(read_contract(), ctx)
+      assert {:block, :invalid_context} = decision
+    end
+
+    test "PlanMode.evaluate returns {:block, :invalid_context} for nil :task_category with relaxed policy" do
+      policy = Policy.new!(%{require_active_task: false})
+      ctx = %{mode: :plan, task_category: nil}
+      decision = Tet.PlanMode.evaluate(read_contract(), policy, ctx)
+      assert {:block, :invalid_context} = decision
     end
   end
 end

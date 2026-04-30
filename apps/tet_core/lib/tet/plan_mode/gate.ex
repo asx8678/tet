@@ -104,73 +104,110 @@ defmodule Tet.PlanMode.Gate do
 
   # The contract must declare the current mode.
   # Unknown tools that don't declare the mode are blocked.
-  defp check_contract_mode(%Contract{modes: modes}, %{mode: mode}) do
-    if mode in modes do
-      :ok
-    else
-      {:block, :mode_not_allowed}
+  # Malformed contexts (missing/non-atom :mode) are rejected
+  # deterministically rather than crashing on pattern match.
+  defp check_contract_mode(%Contract{modes: modes}, context) do
+    mode = Map.get(context, :mode)
+
+    cond do
+      is_nil(mode) -> {:block, :invalid_context}
+      not is_atom(mode) -> {:block, :invalid_context}
+      mode in modes -> :ok
+      true -> {:block, :mode_not_allowed}
     end
   end
 
   # Plan-mode gate: plan/explore modes only permit read-only contracts.
-  defp check_plan_mode_gate(contract, policy, %{mode: mode}) do
-    if Policy.plan_safe_mode?(policy, mode) do
-      if Policy.read_only_contract?(contract) do
+  # Uses Map.get for crash-safe context access.
+  defp check_plan_mode_gate(contract, policy, context) do
+    mode = Map.get(context, :mode)
+
+    cond do
+      is_nil(mode) ->
+        {:block, :invalid_context}
+
+      not is_atom(mode) ->
+        {:block, :invalid_context}
+
+      Policy.plan_safe_mode?(policy, mode) ->
+        if Policy.read_only_contract?(contract) do
+          :ok
+        else
+          {:block, :plan_mode_blocks_mutation}
+        end
+
+      true ->
+        # Non-plan modes (execute, repair) pass this check;
+        # category gate handles the rest.
         :ok
-      else
-        {:block, :plan_mode_blocks_mutation}
-      end
-    else
-      # Non-plan modes (execute, repair) pass this check;
-      # category gate handles the rest.
-      :ok
     end
   end
 
   # Category gate: the runtime task category must be both policy-allowed
   # and contract-declared. Policy.plan_safe_category?/acting_category? checks
   # policy rules; Policy.contract_allows_category?/2 enforces the contract's
-  # own task_categories declaration.
-  defp check_category_gate(contract, policy, %{mode: mode, task_category: category}) do
-    if Policy.plan_safe_mode?(policy, mode) do
-      # Plan-safe modes already passed check_plan_mode_gate;
-      # category must be plan-safe AND declared on the contract.
-      if Policy.plan_safe_category?(policy, category) and
-           Policy.contract_allows_category?(contract, category) do
-        :ok
-      else
-        # e.g., :plan mode with :acting category — the task has committed
-        # but the mode hasn't transitioned yet. Block mutating intent.
-        # Read-only contracts already passed the plan-mode gate above.
-        if Policy.read_only_contract?(contract) do
+  # own task_categories declaration as an *independent* prerequisite — even
+  # read-only contracts must declare the runtime category before the
+  # read-only allow/guidance shortcut applies.
+  defp check_category_gate(contract, policy, context) do
+    mode = Map.get(context, :mode)
+    category = Map.get(context, :task_category)
+
+    cond do
+      is_nil(mode) or not is_atom(mode) ->
+        {:block, :invalid_context}
+
+      is_nil(category) or not is_atom(category) ->
+        {:block, :invalid_context}
+
+      not Policy.contract_allows_category?(contract, category) ->
+        # Contract does not declare this category — block regardless
+        # of read-only status. This is the independent prerequisite.
+        {:block, :category_blocks_tool}
+
+      Policy.plan_safe_mode?(policy, mode) ->
+        # Plan-safe modes already passed check_plan_mode_gate.
+        if Policy.plan_safe_category?(policy, category) do
           :ok
         else
-          {:block, :category_blocks_tool}
+          # e.g., :plan mode with :acting category — the task has committed
+          # but the mode hasn't transitioned yet. Block mutating intent.
+          # Read-only contracts that already declared the category may
+          # still proceed (they passed the plan-mode gate above).
+          if Policy.read_only_contract?(contract) do
+            :ok
+          else
+            {:block, :category_blocks_tool}
+          end
         end
-      end
-    else
-      # Non-plan modes: acting categories AND contract-declared categories
-      # unlock mutating tools.
-      if Policy.acting_category?(policy, category) and
-           Policy.contract_allows_category?(contract, category) do
-        :ok
-      else
-        if Policy.read_only_contract?(contract) do
+
+      true ->
+        # Non-plan modes: acting categories unlock mutating tools
+        # (contract already declared the category per prerequisite above).
+        if Policy.acting_category?(policy, category) do
           :ok
         else
-          {:block, :category_blocks_tool}
+          # Read-only shortcut applies only when contract declared the category.
+          if Policy.read_only_contract?(contract) do
+            :ok
+          else
+            {:block, :category_blocks_tool}
+          end
         end
-      end
     end
   end
 
   # After allow, optionally attach guidance for plan-mode read-only calls.
+  # Defensive: guard against nil mode/category even though upstream checks
+  # should reject them — never crash in a decision path.
   defp maybe_guide(%Contract{} = contract, %Policy{} = policy, %{} = context) do
     mode = Map.get(context, :mode)
     category = Map.get(context, :task_category)
 
     cond do
-      Policy.plan_safe_mode?(policy, mode) and
+      is_atom(mode) and not is_nil(mode) and
+        is_atom(category) and not is_nil(category) and
+        Policy.plan_safe_mode?(policy, mode) and
         Policy.plan_safe_category?(policy, category) and
           Policy.read_only_contract?(contract) ->
         {:guide, "Plan-mode research allowed. Commit to acting to unlock write/edit/shell tools."}
