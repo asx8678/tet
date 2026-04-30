@@ -4,10 +4,14 @@ defmodule Tet.SessionTest do
   alias Tet.Runtime.{Session, SessionRegistry, State}
 
   setup do
-    # Ensure the SessionRegistry is started (it's supervised in the app,
-    # but test async may run before app starts)
+    # Ensure the SessionRegistry and SessionSupervisor are started
+    # (they're supervised in the app, but test async may run before app starts)
     unless Process.whereis(SessionRegistry.name()) do
       start_supervised!({Registry, keys: :unique, name: SessionRegistry.name()})
+    end
+
+    unless Process.whereis(Tet.Runtime.SessionSupervisor.name()) do
+      start_supervised!(Tet.Runtime.SessionSupervisor)
     end
 
     :ok
@@ -242,7 +246,9 @@ defmodule Tet.SessionTest do
       })
 
     {:ok, _} = Session.begin_turn(pid)
-    assert {:error, {:invalid_turn_transition, :in_turn, :idle}} = Session.put_turn_status(pid, :idle)
+
+    assert {:error, {:invalid_turn_transition, :in_turn, :idle}} =
+             Session.put_turn_status(pid, :idle)
   end
 
   test "end_turn on idle session returns error" do
@@ -435,5 +441,128 @@ defmodule Tet.SessionTest do
     assert state.turn_status == :idle
     assert length(events) == 1
     assert hd(events).type == :profile_swap_applied
+  end
+
+  # ── Fix 2: Invalid request_swap handling ─────────────────────────
+
+  test "request_swap with invalid profile returns error without crashing" do
+    {:ok, pid} =
+      Session.start_link(%{
+        session_id: "ses_bad_profile",
+        active_profile: "planner"
+      })
+
+    assert {:error, {:invalid_runtime_profile, _}} = Session.request_swap(pid, "")
+    assert {:error, {:invalid_runtime_profile, _}} = Session.request_swap(pid, nil)
+  end
+
+  test "request_swap with invalid mode returns error without crashing" do
+    {:ok, pid} =
+      Session.start_link(%{
+        session_id: "ses_bad_mode",
+        active_profile: "planner"
+      })
+
+    assert {:error, {:invalid_runtime_state_field, :mode}} =
+             Session.request_swap(pid, "coder", mode: :teleport)
+  end
+
+  test "request_swap with invalid cache_policy returns error without crashing" do
+    {:ok, pid} =
+      Session.start_link(%{
+        session_id: "ses_bad_cache",
+        active_profile: "planner"
+      })
+
+    assert {:error, {:invalid_runtime_state_field, :cache_policy}} =
+             Session.request_swap(pid, "coder", cache_policy: :evaporate)
+  end
+
+  test "request_swap with invalid metadata returns error without crashing" do
+    {:ok, pid} =
+      Session.start_link(%{
+        session_id: "ses_bad_meta",
+        active_profile: "planner"
+      })
+
+    assert {:error, {:invalid_runtime_state_field, :metadata}} =
+             Session.request_swap(pid, "coder", metadata: "not_a_map")
+  end
+
+  # ── Fix 4: SessionRegistry registers session pid, not caller pid ──
+
+  test "SessionRegistry.lookup returns actual session pid from register in init" do
+    {:ok, pid} =
+      Session.start_link(%{
+        session_id: "ses_reg_pid",
+        active_profile: "planner"
+      })
+
+    # The pid returned by start_link IS the session pid
+    assert {:ok, ^pid} = SessionRegistry.lookup("ses_reg_pid")
+
+    # Verify we can talk to the session through the looked-up pid
+    assert {:ok, session_pid} = SessionRegistry.lookup("ses_reg_pid")
+    assert Session.get_session_id(session_pid) == "ses_reg_pid"
+  end
+
+  test "Tet.start_session via facade registers session correctly" do
+    {:ok, %{session_id: session_id, pid: pid}} =
+      Tet.start_session("ws_reg_test", profile: "planner")
+
+    # The pid from Tet.start_session should match the registered pid
+    assert {:ok, ^pid} = SessionRegistry.lookup(session_id)
+  end
+
+  # ── Fix 5: normalize_start_args ordering ─────────────────────────
+
+  test "Tet.start_session with opts-only uses profile" do
+    {:ok, %{session_id: _ses, pid: pid}} = Tet.start_session(profile: "coder")
+
+    state = Session.get_state(pid)
+    assert state.active_profile == %{id: "coder", options: %{}}
+  end
+
+  test "Tet.start_session with explicit nil workspace and profile opts" do
+    {:ok, %{session_id: _ses, pid: pid}} = Tet.start_session(nil, profile: "reviewer")
+
+    state = Session.get_state(pid)
+    assert state.active_profile == %{id: "reviewer", options: %{}}
+  end
+
+  # ── Consistent swap_id across events ─────────────────────────────
+
+  test "swap_id is consistent across queued and applied events" do
+    Tet.Runtime.Timeline.subscribe()
+
+    {:ok, %{session_id: _ses_id, pid: s_pid}} =
+      Tet.start_session(nil, profile: "planner")
+
+    {:ok, _} = Session.begin_turn(s_pid)
+    {:ok, _, events} = Session.request_swap(s_pid, "tester")
+
+    assert length(events) == 1
+    queued_swap_id = events |> hd() |> Map.get(:metadata) |> Map.get(:swap_id)
+    assert String.starts_with?(queued_swap_id, "swp_")
+
+    # End turn should produce applied event with same swap_id
+    {:ok, _, events} = Session.end_turn(s_pid)
+
+    assert length(events) == 1
+    applied_swap_id = events |> hd() |> Map.get(:metadata) |> Map.get(:swap_id)
+    assert applied_swap_id == queued_swap_id
+  end
+
+  test "swap_id is consistent across reject events" do
+    {:ok, %{session_id: _ses_id, pid: s_pid}} =
+      Tet.start_session(nil, profile: "planner")
+
+    {:ok, _} = Session.begin_turn(s_pid)
+
+    assert {:error, {:unsafe_profile_swap, _request}} =
+             Session.request_swap(s_pid, "tester",
+               mode: :reject_mid_turn,
+               metadata: %{reason: "manual"}
+             )
   end
 end

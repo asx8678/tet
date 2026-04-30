@@ -55,6 +55,10 @@ defmodule Tet do
   @doc """
   Starts a runtime session process with the given profile and returns its
   session id and pid.
+
+  Sessions are started under a DynamicSupervisor so they are supervised and
+  can be restarted if necessary. The session process registers itself with
+  `SessionRegistry` on init — no external registration needed.
   """
   def start_session(workspace_ref_or_opts, opts \\ []) do
     {workspace_ref, session_opts} = normalize_start_args(workspace_ref_or_opts, opts)
@@ -69,10 +73,8 @@ defmodule Tet do
 
     name = session_opts[:name] || {:via, Registry, {SessionRegistry.name(), session_id}}
 
-    case Session.start_link(state_opts, name: name) do
+    case Session.start_session(state_opts, name: name) do
       {:ok, pid} ->
-        SessionRegistry.register(session_id, pid)
-
         event =
           Tet.Event.new(%{
             type: :session_started,
@@ -124,11 +126,13 @@ defmodule Tet do
     {:ok, SessionRegistry.list_sessions()}
   end
 
+  # Order matters: opts-only clause must be first so that
+  # Tet.start_session(profile: "coder") matches opts as the sole keyword arg.
+  defp normalize_start_args(opts, [] = _empty_opts) when is_list(opts),
+    do: {nil, opts}
+
   defp normalize_start_args(workspace_ref, opts) when is_list(opts),
     do: {workspace_ref, opts}
-
-  defp normalize_start_args(opts, []) when is_list(opts),
-    do: {nil, opts}
 
   defp normalize_start_args(workspace_ref, opts) when is_binary(workspace_ref) and is_list(opts),
     do: {workspace_ref, opts}
@@ -141,10 +145,32 @@ defmodule Tet do
 
   defp resolve_session(_other), do: {:error, :invalid_session}
 
-  @doc "Runs a single prompt turn in an existing session."
+  @doc """
+  Runs a single prompt turn in an existing session with turn-boundary
+  lifecycle enforcement.
+
+  The session state machine enters `begin_turn` before the provider call and
+  exits via `end_turn` after (including on error), so queued profile swaps
+  are applied at the true turn boundary.
+  """
   def send_prompt(session_id, prompt, opts \\ []) when is_binary(session_id) do
-    opts = Keyword.put(opts, :session_id, session_id)
-    Tet.Runtime.Chat.ask(prompt, opts)
+    with {:ok, session} <- resolve_session(session_id) do
+      opts = Keyword.put(opts, :session_id, session_id)
+
+      # Start turn boundary
+      case Session.begin_turn(session) do
+        {:ok, _state} ->
+          try do
+            Tet.Runtime.Chat.ask(prompt, opts)
+          after
+            # Always end the turn, applying any queued swaps at boundary
+            Session.end_turn(session)
+          end
+
+        {:error, reason} ->
+          {:error, reason}
+      end
+    end
   end
 
   @doc "Runs a one-shot prompt turn, streaming events through `:on_event` if supplied."
@@ -167,9 +193,15 @@ defmodule Tet do
     Sessions.show(session_id, opts)
   end
 
-  @doc "Resumes a persisted session by sending another prompt under the same id."
+  @doc """
+  Resumes a persisted session by sending another prompt under the same id.
+
+  This is a one-shot operation — it does not create or require a running session
+  process. Use `send_prompt/3` for sessions managed by the state machine.
+  """
   def resume_session(session_id, prompt, opts \\ []) when is_binary(session_id) do
-    send_prompt(session_id, prompt, opts)
+    opts = Keyword.put(opts, :session_id, session_id)
+    Tet.Runtime.Chat.ask(prompt, opts)
   end
 
   @doc "Compacts persisted session context without mutating the durable message log."

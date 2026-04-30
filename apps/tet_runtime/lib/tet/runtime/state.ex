@@ -263,11 +263,14 @@ defmodule Tet.Runtime.State do
   end
 
   def request_profile_swap(%__MODULE__{} = state, profile, opts) when is_list(opts) do
+    swap_id = Keyword.get(opts, :swap_id)
+
     with {:ok, to_profile} <- Input.normalize_profile(profile),
          {:ok, mode} <- Input.fetch_swap_mode(opts, @profile_swap_modes),
          {:ok, cache_policy} <- Input.fetch_cache_policy(opts),
          {:ok, metadata} <- Input.fetch_option_map(opts, :metadata, %{}) do
-      request = build_profile_swap_request(state, to_profile, mode, cache_policy, metadata)
+      request =
+        build_profile_swap_request(state, to_profile, mode, cache_policy, metadata, swap_id)
 
       cond do
         safe_to_swap?(state) ->
@@ -316,7 +319,7 @@ defmodule Tet.Runtime.State do
   defp apply_cache_policy(_cache_hints, :drop), do: %{}
   defp apply_cache_policy(_cache_hints, {:replace, cache_hints}), do: cache_hints
 
-  defp build_profile_swap_request(state, to_profile, mode, cache_policy, metadata) do
+  defp build_profile_swap_request(state, to_profile, mode, cache_policy, metadata, swap_id) do
     request = %{
       from_profile: state.active_profile,
       to_profile: to_profile,
@@ -326,10 +329,17 @@ defmodule Tet.Runtime.State do
       cache_policy: cache_policy
     }
 
-    if metadata == %{} do
-      request
+    request =
+      if metadata == %{} do
+        request
+      else
+        Map.put(request, :metadata, metadata)
+      end
+
+    if swap_id do
+      Map.put(request, :swap_id, swap_id)
     else
-      Map.put(request, :metadata, metadata)
+      request
     end
   end
 

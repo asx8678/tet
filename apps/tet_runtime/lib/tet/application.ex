@@ -7,7 +7,8 @@ defmodule Tet.Application do
   def start(_type, _args) do
     children = [
       {Registry, keys: :duplicate, name: Tet.EventBus.Registry},
-      {Registry, keys: :unique, name: Tet.Runtime.SessionRegistry.name()}
+      {Registry, keys: :unique, name: Tet.Runtime.SessionRegistry.name()},
+      Tet.Runtime.SessionSupervisor
     ]
 
     Supervisor.start_link(children,

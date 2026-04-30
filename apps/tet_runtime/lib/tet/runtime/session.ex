@@ -7,6 +7,11 @@ defmodule Tet.Runtime.Session do
   audit events through the runtime EventBus, and preserves durable session
   references across profile transitions.
 
+  Sessions are started under `Tet.Runtime.SessionSupervisor` (a
+  DynamicSupervisor) so they are properly supervised without coupling start/stop
+  to arbitrary callers. On init, each session registers itself with
+  `SessionRegistry` so the runtime can look up sessions by id.
+
   ## Profile hot-swap lifecycle
 
   1. `request_swap/2` is called with a target profile.
@@ -19,16 +24,33 @@ defmodule Tet.Runtime.Session do
      `:profile_swap_rejected` event is emitted and the call returns an error.
   5. When `end_turn/1` is called, any queued pending swap is applied and a
      `:profile_swap_applied` event is emitted.
+
+  ## Audit event correlation
+
+  All swap-related events (`profile_swap_queued`, `profile_swap_applied`,
+  `profile_swap_rejected`) carry a consistent `swap_id` in their metadata so
+  callers can correlate the complete lifecycle of a single swap request.
   """
 
   use GenServer, restart: :temporary
 
-  alias Tet.Runtime.State
+  alias Tet.Runtime.{SessionRegistry, State}
 
   # ── Client API ──────────────────────────────────────────────────────
 
   @doc """
-  Starts a session GenServer with the given state.
+  Starts a session GenServer via the DynamicSupervisor.
+
+  The `state_attrs` argument should be a validated `Tet.Runtime.State` struct
+  or a map of attrs that `State.new/1` can accept.
+  """
+  @spec start_session(State.t() | map(), keyword()) :: DynamicSupervisor.on_start_child()
+  def start_session(state_attrs, opts \\ []) when is_map(state_attrs) and is_list(opts) do
+    Tet.Runtime.SessionSupervisor.start_session(state_attrs, opts)
+  end
+
+  @doc """
+  Starts a session GenServer directly (used by DynamicSupervisor).
 
   The `state` argument should be a validated `Tet.Runtime.State` struct or a
   map of attrs that `State.new/1` can accept.
@@ -39,7 +61,9 @@ defmodule Tet.Runtime.Session do
 
     state =
       case state_attrs do
-        %State{} = s -> s
+        %State{} = s ->
+          s
+
         attrs when is_map(attrs) ->
           case State.new(attrs) do
             {:ok, s} -> s
@@ -48,6 +72,19 @@ defmodule Tet.Runtime.Session do
       end
 
     GenServer.start_link(__MODULE__, {state, runtime_opts}, gen_opts)
+  end
+
+  @doc """
+  Used by DynamicSupervisor as a child spec.
+  """
+  @spec child_spec({map(), keyword()}) :: Supervisor.child_spec()
+  def child_spec({state_attrs, opts}) when is_map(state_attrs) and is_list(opts) do
+    %{
+      id: {__MODULE__, state_attrs},
+      start: {__MODULE__, :start_link, [state_attrs, opts]},
+      restart: :temporary,
+      type: :worker
+    }
   end
 
   @doc """
@@ -112,11 +149,24 @@ defmodule Tet.Runtime.Session do
 
   @impl true
   def init({state, _runtime_opts}) do
+    SessionRegistry.register(state.session_id)
     {:ok, state}
   end
 
   @impl true
+  def terminate(_reason, %State{} = _state) do
+    SessionRegistry.unregister()
+    :ok
+  end
+
+  def terminate(_reason, _state), do: :ok
+
+  @impl true
   def handle_call({:request_swap, profile, opts}, _from, %State{} = state) do
+    # Generate a single swap_id for correlation across queued/applied/rejected events
+    swap_id = Tet.Runtime.Ids.swap_id()
+    opts = Keyword.put(opts, :swap_id, swap_id)
+
     case State.request_profile_swap(state, profile, opts) do
       {:ok, new_state} ->
         events = build_swap_applied_events(new_state, state, opts)
@@ -129,6 +179,9 @@ defmodule Tet.Runtime.Session do
 
       {:error, {:profile_swap_already_pending, pending}} ->
         {:reply, {:error, {:profile_swap_already_pending, pending}}, state}
+
+      {:error, reason} ->
+        {:reply, {:error, reason}, state}
     end
   end
 
@@ -196,6 +249,10 @@ defmodule Tet.Runtime.Session do
     if old_state.pending_profile_swap != nil and
          new_state.pending_profile_swap == nil and
          new_state.active_profile != old_state.active_profile do
+      # Carry forward the swap_id from the pending request for correlation
+      swap_id = Map.get(old_state.pending_profile_swap, :swap_id)
+      opts = if swap_id, do: Keyword.put(opts, :swap_id, swap_id), else: opts
+
       event = build_applied_event(new_state, old_state, opts)
       publish_event(event)
       [event]
@@ -206,6 +263,7 @@ defmodule Tet.Runtime.Session do
 
   defp build_queued_event(new_state, _old_state, opts) do
     swap = new_state.pending_profile_swap
+    swap_id = Keyword.get(opts, :swap_id, Tet.Runtime.Ids.swap_id())
 
     Tet.Event.profile_swap_queued(
       %{
@@ -218,11 +276,15 @@ defmodule Tet.Runtime.Session do
       },
       session_id: new_state.session_id,
       sequence: new_state.event_sequence,
-      metadata: Keyword.get(opts, :metadata, %{}) |> Map.put(:swap_id, Tet.Runtime.Ids.swap_id())
+      metadata:
+        Keyword.get(opts, :metadata, %{})
+        |> Map.put(:swap_id, swap_id)
     )
   end
 
   defp build_applied_event(new_state, _old_state, opts) do
+    swap_id = Keyword.get(opts, :swap_id, Tet.Runtime.Ids.swap_id())
+
     Tet.Event.profile_swap_applied(
       %{
         active_profile: new_state.active_profile,
@@ -230,11 +292,15 @@ defmodule Tet.Runtime.Session do
       },
       session_id: new_state.session_id,
       sequence: new_state.event_sequence,
-      metadata: Keyword.get(opts, :metadata, %{}) |> Map.put(:swap_id, Tet.Runtime.Ids.swap_id())
+      metadata:
+        Keyword.get(opts, :metadata, %{})
+        |> Map.put(:swap_id, swap_id)
     )
   end
 
   defp build_rejected_event(state, request, opts) do
+    swap_id = Keyword.get(opts, :swap_id, Tet.Runtime.Ids.swap_id())
+
     Tet.Event.profile_swap_rejected(
       %{
         from_profile: request.from_profile,
@@ -246,7 +312,9 @@ defmodule Tet.Runtime.Session do
       },
       session_id: state.session_id,
       sequence: state.event_sequence,
-      metadata: Keyword.get(opts, :metadata, %{}) |> Map.put(:swap_id, Tet.Runtime.Ids.swap_id())
+      metadata:
+        Keyword.get(opts, :metadata, %{})
+        |> Map.put(:swap_id, swap_id)
     )
   end
 
