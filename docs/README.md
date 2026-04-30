@@ -2,14 +2,15 @@
 
 This repository contains the minimal Elixir umbrella/release scaffold plus the
 standalone streaming chat, session resume, event timeline shell,
-autosave/restore checkpoints, compacted context, Prompt Lab model/history
-storage, and doctor diagnostics path through `tet-db6.6` / `BD-0006`. It
+autosave/restore checkpoints, compacted context, editable model registry
+schema, Prompt Lab model/history storage, and doctor diagnostics path. It
 includes the optional web facade contract from `tet-db6.7` / `BD-0007`, the
 event timeline shell from `tet-db6.8` / `BD-0008`, the web removability gate from
 `tet-db6.9` / `BD-0009`, the prompt-layer contract from `tet-db6.10` /
 `BD-0010`, autosave/restore checkpoints from `tet-db6.11` / `BD-0011`, compacted
-context from `tet-db6.12` / `BD-0012`, and the Prompt Lab preset/refiner model
-from `tet-db6.47` / `BD-0047`.
+context from `tet-db6.12` / `BD-0012`, the editable model registry schema from
+`tet-db6.13` / `BD-0013`, and the Prompt Lab preset/refiner model from
+`tet-db6.47` / `BD-0047`.
 
 The implementation stays CLI-first and OTP-first. The CLI parses arguments and
 renders streamed chunks; runtime owns session orchestration, provider selection,
@@ -26,9 +27,9 @@ The `tet_standalone` release contains these conceptual applications:
 
 | App | Boundary role | Current implementation scope |
 |---|---|---|
-| `tet_core` | Pure domain/contracts boundary | Metadata, `%Tet.Event{}`, `%Tet.Message{}`, `%Tet.Session{}`, `%Tet.Autosave{}`, `Tet.Prompt` prompt-layer contract, `Tet.Compaction` compacted-context contract, `Tet.PromptLab`, `Tet.Provider` behaviour, and `Tet.Store` behaviour |
+| `tet_core` | Pure domain/contracts boundary | Metadata, `%Tet.Event{}`, `%Tet.Message{}`, `%Tet.Session{}`, `%Tet.Autosave{}`, `Tet.Prompt` prompt-layer contract, `Tet.Compaction` compacted-context contract, model registry schema/validation, `Tet.PromptLab`, `Tet.Provider` behaviour, and `Tet.Store` behaviour |
 | `tet_store_sqlite` | Default standalone store adapter boundary | Dependency-free durable JSON Lines message, derived-session, autosave checkpoint, event timeline, and Prompt Lab history store for this phase; true SQLite can replace the file format later behind the same behaviour |
-| `tet_runtime` | OTP runtime and public `Tet.*` facade owner | Supervised runtime shell, Registry-backed event bus, `Tet.doctor/1`, `Tet.ask/2`, session query/resume/autosave orchestration, compacted-context orchestration, Prompt Lab facade/history orchestration, `Tet.list_events/1/2`, `Tet.subscribe_events/0/1`, provider config, mock provider, and OpenAI-compatible streaming adapter |
+| `tet_runtime` | OTP runtime and public `Tet.*` facade owner | Supervised runtime shell, Registry-backed event bus, `Tet.doctor/1`, `Tet.ask/2`, `Tet.model_registry/1`, session query/resume/autosave orchestration, compacted-context orchestration, Prompt Lab facade/history orchestration, `Tet.list_events/1/2`, `Tet.subscribe_events/0/1`, provider config, editable model registry loader, mock provider, and OpenAI-compatible streaming adapter |
 | `tet_cli` | Thin terminal adapter | `tet ask`, `tet events`, `tet timeline`, `tet sessions`, `tet session show`, `tet doctor`, and help output through the public facade |
 
 The standalone release explicitly excludes:
@@ -370,6 +371,44 @@ TET_STORE_PATH="$PWD/.tet/messages.jsonl" \
 No secrets are stored in config files. Tests use the mock provider and a local
 TCP fake OpenAI-compatible stream server; they do not call real provider APIs.
 
+## Model registry
+
+BD-0013 adds an editable, offline model registry contract. Core owns pure schema
+validation in `Tet.ModelRegistry`; runtime owns JSON loading in
+`Tet.Runtime.ModelRegistry`; the public facade exposes `Tet.model_registry/1`.
+
+The bundled default registry lives at:
+
+```text
+apps/tet_runtime/priv/model_registry.json
+```
+
+Runtime resolves registry data in this order:
+
+1. `model_registry_path: "/path/to/models.json"` runtime option;
+2. `TET_MODEL_REGISTRY_PATH` environment variable;
+3. `:tet_runtime, :model_registry_path` application config;
+4. bundled `priv/model_registry.json`.
+
+Each registry declares:
+
+- `providers` — provider ids, provider family/type, and non-secret config such as
+  base URLs or env-var names;
+- `models` — provider references, provider-side model names, context windows,
+  cache support, and tool-call support;
+- `profile_pins` — default and fallback model ids per profile.
+
+Validation returns structured `%Tet.ModelRegistry.Error{}` values with `path`,
+`code`, `message`, and `details`, so CLI/router/doctor code can show useful
+fixes instead of dumping a mystery blob. The registry loader does not make
+network calls, does not enable tool calls or caching by itself, and does not
+change existing `TET_PROVIDER` behavior. Future provider-router work should use
+it to choose profile-pinned models, enforce context windows before provider
+calls, and only request cache/tool-call features when the selected model declares
+support.
+
+See [`model_registry.md`](model_registry.md) for the full schema and examples.
+
 ## Prompt Lab
 
 `Tet.PromptLab` defines Prompt Lab presets, quality dimensions, request/result
@@ -609,7 +648,7 @@ The scaffold and chat path follow the accepted ADR rules:
 
 ## What this issue deliberately does not do
 
-- No broad provider framework or model registry.
+- No broad provider framework/router beyond the model registry schema/loader.
 - No Prompt Lab tool execution, provider-backed refinement, or automatic prompt dispatch.
 - No tool calls, patch application, approval workflow, or verifier execution.
 - No Ecto schemas, migrations, or true SQLite dependency yet.
