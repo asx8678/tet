@@ -76,6 +76,17 @@ defmodule Tet.CLI.Render do
     "provider HTTP #{status} #{reason_phrase}: #{body}"
   end
 
+  def error(%Tet.ProfileRegistry.Error{} = error), do: Tet.ProfileRegistry.format_error(error)
+  def error(%Tet.ModelRegistry.Error{} = error), do: Tet.ModelRegistry.format_error(error)
+
+  def error(errors) when is_list(errors) do
+    if errors != [] and Enum.all?(errors, &registry_error?/1) do
+      Enum.map_join(errors, "; ", &format_registry_error/1)
+    else
+      inspect(errors)
+    end
+  end
+
   def error(:provider_timeout), do: "provider timed out"
   def error(reason), do: inspect(reason)
 
@@ -144,6 +155,16 @@ defmodule Tet.CLI.Render do
     ]
     |> Enum.join("\n")
   end
+
+  defp registry_error?(%Tet.ProfileRegistry.Error{}), do: true
+  defp registry_error?(%Tet.ModelRegistry.Error{}), do: true
+  defp registry_error?(_error), do: false
+
+  defp format_registry_error(%Tet.ProfileRegistry.Error{} = error),
+    do: Tet.ProfileRegistry.format_error(error)
+
+  defp format_registry_error(%Tet.ModelRegistry.Error{} = error),
+    do: Tet.ModelRegistry.format_error(error)
 
   defp event_line(%Tet.Event{} = event) do
     [

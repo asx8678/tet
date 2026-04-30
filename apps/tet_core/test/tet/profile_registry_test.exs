@@ -75,6 +75,20 @@ defmodule Tet.ProfileRegistryTest do
     assert error.details.allowed == ["prompt", "tool", "model", "task", "schema", "cache"]
   end
 
+  test "rejects overlay aliases and normalized variants instead of silently ignoring them" do
+    invalid_keys = ["tools", " Tool ", "Tool", "MODEL", "prompt "]
+
+    Enum.each(invalid_keys, fn key ->
+      raw = put_path(valid_raw(), ["profiles", "chat", "overlays", key], %{"extra" => true})
+
+      error =
+        assert_error(raw, ["profiles", "chat", "overlays", inspect(key)], :unknown_overlay)
+
+      assert error.message == "unknown overlay kind #{inspect(key)}"
+      assert error.details.allowed == ["prompt", "tool", "model", "task", "schema", "cache"]
+    end)
+  end
+
   test "rejects invalid prompt layer fields before runtime prompt composition" do
     raw =
       put_path(

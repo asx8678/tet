@@ -365,18 +365,13 @@ defmodule Tet.ProfileRegistry.Validator do
   defp overlay_kind_from_key(key) when is_atom(key) and key in @overlay_kinds, do: {:ok, key}
 
   defp overlay_kind_from_key(key) when is_binary(key) do
-    normalized = key |> String.trim() |> String.downcase() |> String.replace("-", "_")
-
-    cond do
-      normalized == "tools" -> {:ok, :tool}
-      true -> Enum.find_value(@overlay_kinds, :error, &overlay_kind_match?(&1, normalized))
-    end
+    Enum.find_value(@overlay_kinds, :error, &overlay_kind_exact_match?(&1, key))
   end
 
   defp overlay_kind_from_key(_key), do: :error
 
-  defp overlay_kind_match?(kind, normalized) do
-    if Atom.to_string(kind) == normalized, do: {:ok, kind}, else: false
+  defp overlay_kind_exact_match?(kind, key) do
+    if Atom.to_string(kind) == key, do: {:ok, kind}, else: false
   end
 
   defp validate_disjoint_lists(left, right, path, errors) do

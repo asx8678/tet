@@ -85,6 +85,16 @@ defmodule Tet.CLITest do
     assert output =~ "profile not found"
   end
 
+  test "renderer formats profile and model registry validation error lists" do
+    errors = [
+      Tet.ProfileRegistry.error(["profiles"], :invalid_value, "profiles must declare entries"),
+      Tet.ModelRegistry.error(["models"], :invalid_value, "models must declare entries")
+    ]
+
+    assert Render.error(errors) ==
+             "profiles: profiles must declare entries; models: models must declare entries"
+  end
+
   test "ask streams mock output and persists the chat turn", %{tmp_root: tmp_root} do
     path = tmp_path(tmp_root, "cli")
 
