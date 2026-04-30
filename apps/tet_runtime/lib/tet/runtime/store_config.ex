@@ -12,6 +12,9 @@ defmodule Tet.Runtime.StoreConfig do
     :list_messages,
     :list_sessions,
     :fetch_session,
+    :save_autosave,
+    :load_autosave,
+    :list_autosaves,
     :save_event,
     :list_events
   ]
@@ -50,8 +53,9 @@ defmodule Tet.Runtime.StoreConfig do
   @doc "Returns normalized store adapter options."
   def store_opts(opts \\ []) when is_list(opts) do
     []
-    |> maybe_put(:path, path(opts))
-    |> maybe_put(:events_path, events_path(opts))
+    |> put_present(:path, path(opts))
+    |> put_present(:autosave_path, autosave_path(opts))
+    |> put_present(:events_path, events_path(opts))
   end
 
   @doc "Returns the effective store path from opts, environment, or app config."
@@ -62,7 +66,14 @@ defmodule Tet.Runtime.StoreConfig do
       Application.get_env(:tet_runtime, :store_path)
   end
 
-  @doc "Returns the effective event-log path override, if one is configured."
+  @doc "Returns an explicit autosave path, if one was configured."
+  def autosave_path(opts \\ []) when is_list(opts) do
+    Keyword.get(opts, :autosave_path) ||
+      System.get_env("TET_AUTOSAVE_PATH") ||
+      Application.get_env(:tet_runtime, :autosave_path)
+  end
+
+  @doc "Returns an explicit event-log path, if one was configured."
   def events_path(opts \\ []) when is_list(opts) do
     Keyword.get(opts, :events_path) ||
       Keyword.get(opts, :event_path) ||
@@ -71,11 +82,8 @@ defmodule Tet.Runtime.StoreConfig do
   end
 
   defp missing_callbacks(adapter, callbacks) do
-    missing =
-      callbacks
-      |> Enum.reject(&callback_exported?(adapter, &1))
-
-    missing
+    callbacks
+    |> Enum.reject(&callback_exported?(adapter, &1))
   end
 
   defp callback_exported?(adapter, :health), do: function_exported?(adapter, :health, 1)
@@ -92,10 +100,19 @@ defmodule Tet.Runtime.StoreConfig do
   defp callback_exported?(adapter, :fetch_session),
     do: function_exported?(adapter, :fetch_session, 2)
 
+  defp callback_exported?(adapter, :save_autosave),
+    do: function_exported?(adapter, :save_autosave, 2)
+
+  defp callback_exported?(adapter, :load_autosave),
+    do: function_exported?(adapter, :load_autosave, 2)
+
+  defp callback_exported?(adapter, :list_autosaves),
+    do: function_exported?(adapter, :list_autosaves, 1)
+
   defp callback_exported?(adapter, :save_event), do: function_exported?(adapter, :save_event, 2)
 
   defp callback_exported?(adapter, :list_events), do: function_exported?(adapter, :list_events, 2)
 
-  defp maybe_put(opts, _key, nil), do: opts
-  defp maybe_put(opts, key, value), do: Keyword.put(opts, key, value)
+  defp put_present(opts, _key, nil), do: opts
+  defp put_present(opts, key, value), do: Keyword.put(opts, key, value)
 end

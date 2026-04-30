@@ -2,15 +2,17 @@ defmodule Tet.Store.SQLite do
   @moduledoc """
   Default standalone store boundary.
 
-  This phase keeps the adapter dependency-free and persists chat messages as
-  JSON Lines. The app/module name remains the default store boundary reserved by
-  the scaffold; a later storage ticket can replace the file format with true
-  SQLite without changing callers of `Tet.Store`.
+  This phase keeps the adapter dependency-free and persists chat messages,
+  autosave checkpoints, and runtime timeline events as JSON Lines. The
+  app/module name remains the default store boundary reserved by the scaffold; a
+  later storage ticket can replace the file format with true SQLite without
+  changing callers of `Tet.Store`.
   """
 
   @behaviour Tet.Store
 
   @default_path ".tet/messages.jsonl"
+  @default_autosave_filename "autosaves.jsonl"
   @default_events_path ".tet/events.jsonl"
 
   @impl true
@@ -20,6 +22,8 @@ defmodule Tet.Store.SQLite do
       adapter: __MODULE__,
       status: :local_jsonl,
       path: @default_path,
+      autosave_path: default_autosave_path(@default_path),
+      events_path: derive_events_path(@default_path),
       format: :jsonl
     }
   end
@@ -27,6 +31,8 @@ defmodule Tet.Store.SQLite do
   @impl true
   def health(opts) when is_list(opts) do
     path = path(opts)
+    autosave_path = autosave_path(opts)
+    events_path = events_path(opts)
     directory = Path.dirname(path)
     directory_existed? = File.dir?(directory)
 
@@ -38,6 +44,8 @@ defmodule Tet.Store.SQLite do
          boundary()
          |> Map.merge(%{
            path: path,
+           autosave_path: autosave_path,
+           events_path: events_path,
            directory: directory,
            status: :ok,
            readable?: true,
@@ -94,6 +102,37 @@ defmodule Tet.Store.SQLite do
   end
 
   @impl true
+  def save_autosave(%Tet.Autosave{} = autosave, opts) when is_list(opts) do
+    path = autosave_path(opts)
+    line = autosave |> Tet.Autosave.to_map() |> encode_json!()
+
+    with :ok <- File.mkdir_p(Path.dirname(path)),
+         :ok <- File.write(path, [line, "\n"], [:append]) do
+      {:ok, autosave}
+    end
+  end
+
+  @impl true
+  def load_autosave(session_id, opts) when is_binary(session_id) and is_list(opts) do
+    with {:ok, autosaves} <- read_autosaves(autosave_path(opts)) do
+      autosaves
+      |> Enum.filter(&(&1.session_id == session_id))
+      |> Enum.sort(&checkpoint_newer_or_equal?/2)
+      |> case do
+        [] -> {:error, :autosave_not_found}
+        [latest | _rest] -> {:ok, latest}
+      end
+    end
+  end
+
+  @impl true
+  def list_autosaves(opts) when is_list(opts) do
+    with {:ok, autosaves} <- read_autosaves(autosave_path(opts)) do
+      {:ok, Enum.sort(autosaves, &checkpoint_newer_or_equal?/2)}
+    end
+  end
+
+  @impl true
   def save_event(%Tet.Event{} = event, opts) when is_list(opts) do
     path = events_path(opts)
 
@@ -117,15 +156,31 @@ defmodule Tet.Store.SQLite do
     read_json_lines(path, &Tet.Message.from_map/1)
   end
 
+  defp read_autosaves(path) do
+    read_json_lines(
+      path,
+      &Tet.Autosave.from_map/1,
+      :autosave_read_failed,
+      {:invalid_autosave_record, :not_a_map}
+    )
+  end
+
   defp read_events(path) do
     read_json_lines(path, &Tet.Event.from_map/1)
   end
 
-  defp read_json_lines(path, decoder) do
+  defp read_json_lines(
+         path,
+         decoder,
+         read_error_tag \\ :store_read_failed,
+         invalid_map_error \\ {:invalid_store_record, :not_a_map}
+       ) do
     if File.exists?(path) do
       path
       |> File.stream!([], :line)
-      |> Enum.reduce_while({:ok, []}, fn line, acc -> decode_line(line, acc, decoder) end)
+      |> Enum.reduce_while({:ok, []}, fn line, acc ->
+        decode_line(line, acc, decoder, invalid_map_error)
+      end)
       |> case do
         {:ok, records} -> {:ok, Enum.reverse(records)}
         {:error, reason} -> {:error, reason}
@@ -134,12 +189,13 @@ defmodule Tet.Store.SQLite do
       {:ok, []}
     end
   rescue
-    exception in File.Error -> {:error, {:store_read_failed, exception.reason}}
+    exception in File.Error -> {:error, {read_error_tag, exception.reason}}
   end
 
-  defp decode_line(_line, {:error, reason}, _decoder), do: {:halt, {:error, reason}}
+  defp decode_line(_line, {:error, reason}, _decoder, _invalid_map_error),
+    do: {:halt, {:error, reason}}
 
-  defp decode_line(line, {:ok, records}, decoder) do
+  defp decode_line(line, {:ok, records}, decoder, invalid_map_error) do
     line = String.trim(line)
 
     cond do
@@ -148,7 +204,7 @@ defmodule Tet.Store.SQLite do
 
       true ->
         with {:ok, decoded} <- decode_json(line),
-             :ok <- ensure_record_map(decoded),
+             :ok <- ensure_record_map(decoded, invalid_map_error),
              {:ok, record} <- decoder.(decoded) do
           {:cont, {:ok, [record | records]}}
         else
@@ -179,6 +235,10 @@ defmodule Tet.Store.SQLite do
 
   defp session_newer_or_equal?(left, right) do
     {left.updated_at || "", left.id} >= {right.updated_at || "", right.id}
+  end
+
+  defp checkpoint_newer_or_equal?(left, right) do
+    {left.saved_at || "", left.checkpoint_id} >= {right.saved_at || "", right.checkpoint_id}
   end
 
   defp cleanup_created_directory(_directory, true), do: :ok
@@ -223,12 +283,25 @@ defmodule Tet.Store.SQLite do
       Application.get_env(:tet_runtime, :store_path, @default_path)
   end
 
+  defp autosave_path(opts) do
+    Keyword.get(opts, :autosave_path) ||
+      System.get_env("TET_AUTOSAVE_PATH") ||
+      Application.get_env(:tet_runtime, :autosave_path) ||
+      default_autosave_path(path(opts))
+  end
+
   defp events_path(opts) do
     Keyword.get(opts, :events_path) ||
       Keyword.get(opts, :event_path) ||
       System.get_env("TET_EVENTS_PATH") ||
       Application.get_env(:tet_runtime, :events_path) ||
       derive_events_path(path(opts))
+  end
+
+  defp default_autosave_path(message_path) do
+    message_path
+    |> Path.dirname()
+    |> Path.join(@default_autosave_filename)
   end
 
   defp derive_events_path(@default_path), do: @default_events_path
@@ -255,8 +328,8 @@ defmodule Tet.Store.SQLite do
     exception -> {:error, {:invalid_store_record, Exception.message(exception)}}
   end
 
-  defp ensure_record_map(record) when is_map(record), do: :ok
-  defp ensure_record_map(_record), do: {:error, {:invalid_store_record, :not_a_map}}
+  defp ensure_record_map(record, _invalid_map_error) when is_map(record), do: :ok
+  defp ensure_record_map(_record, invalid_map_error), do: {:error, invalid_map_error}
 
   defp started? do
     Enum.any?(Application.started_applications(), fn {application, _description, _version} ->
