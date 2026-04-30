@@ -2,6 +2,8 @@ defmodule Tet.Runtime.State.Input do
   @moduledoc false
 
   @cache_policies [:preserve, :drop]
+  @cache_results [:preserved, :summarized, :reset]
+  @cache_capabilities [:full, :summary, :none]
 
   def fetch_pending_profile_swap(attrs, profile_swap_modes, turn_statuses) do
     case fetch_value(attrs, :pending_profile_swap) do
@@ -23,6 +25,14 @@ defmodule Tet.Runtime.State.Input do
     |> Map.update!(:mode, &Atom.to_string/1)
     |> Map.update!(:blocked_by, &Atom.to_string/1)
     |> Map.update!(:cache_policy, &cache_policy_to_map/1)
+    |> put_cache_capability_string()
+  end
+
+  defp put_cache_capability_string(request) do
+    case Map.fetch(request, :cache_capability) do
+      {:ok, cap} -> Map.put(request, :cache_capability, Atom.to_string(cap))
+      :error -> Map.put(request, :cache_capability, "full")
+    end
   end
 
   def fetch_profile(attrs, key, aliases \\ []) do
@@ -178,6 +188,7 @@ defmodule Tet.Runtime.State.Input do
          {:ok, sequence} <- fetch_non_negative_integer(request, :requested_at_sequence, 0),
          {:ok, blocked_by} <- fetch_status(request, :blocked_by, :idle, turn_statuses),
          {:ok, cache_policy} <- fetch_cache_policy(request),
+         {:ok, cache_capability} <- fetch_cache_capability(request),
          {:ok, metadata} <- fetch_map(request, :metadata, %{}) do
       normalized = %{
         from_profile: from_profile,
@@ -185,7 +196,8 @@ defmodule Tet.Runtime.State.Input do
         mode: mode,
         requested_at_sequence: sequence,
         blocked_by: blocked_by,
-        cache_policy: cache_policy
+        cache_policy: cache_policy,
+        cache_capability: cache_capability
       }
 
       {:ok, put_optional(normalized, :metadata, metadata, %{})}
@@ -258,6 +270,53 @@ defmodule Tet.Runtime.State.Input do
 
   defp cache_policy_to_map({:replace, cache_hints}),
     do: %{mode: "replace", cache_hints: cache_hints}
+
+  def fetch_cache_capability(opts) when is_list(opts) do
+    opts
+    |> Keyword.get(:cache_capability, :full)
+    |> normalize_cache_capability()
+  end
+
+  def fetch_cache_capability(attrs) when is_map(attrs) do
+    attrs
+    |> fetch_value(:cache_capability, :full)
+    |> normalize_cache_capability()
+  end
+
+  defp normalize_cache_capability(cap) when cap in @cache_capabilities, do: {:ok, cap}
+
+  defp normalize_cache_capability(cap) when is_binary(cap) do
+    case String.trim(cap) do
+      "full" -> {:ok, :full}
+      "summary" -> {:ok, :summary}
+      "none" -> {:ok, :none}
+      _other -> {:error, {:invalid_runtime_state_field, :cache_capability}}
+    end
+  end
+
+  defp normalize_cache_capability(_cap),
+    do: {:error, {:invalid_runtime_state_field, :cache_capability}}
+
+  def fetch_cache_result(attrs) do
+    case fetch_value(attrs, :cache_result) do
+      nil -> {:ok, nil}
+      result when result in @cache_results -> {:ok, result}
+      result when is_binary(result) -> normalize_cache_result_string(result)
+      _other -> {:error, {:invalid_runtime_state_field, :cache_result}}
+    end
+  end
+
+  defp normalize_cache_result_string(result) do
+    case String.trim(result) do
+      "preserved" -> {:ok, :preserved}
+      "summarized" -> {:ok, :summarized}
+      "reset" -> {:ok, :reset}
+      _other -> {:error, {:invalid_runtime_state_field, :cache_result}}
+    end
+  end
+
+  def cache_result_to_string(nil), do: nil
+  def cache_result_to_string(result) when is_atom(result), do: Atom.to_string(result)
 
   defp normalize_optional_ref(nil, _key), do: {:ok, nil}
   defp normalize_optional_ref("", _key), do: {:ok, nil}

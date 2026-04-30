@@ -8,6 +8,9 @@ defmodule Tet.Runtime.Provider.Mock do
   alias Tet.Runtime.Provider.StreamEvents
 
   @impl true
+  def cache_capability, do: :none
+
+  @impl true
   def stream_chat(messages, opts, emit) when is_list(messages) and is_function(emit, 1) do
     opts = Keyword.put_new(opts, :session_id, last_session_id(messages))
 

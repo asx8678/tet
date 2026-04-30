@@ -19,6 +19,9 @@ defmodule Tet.Runtime.Provider.OpenAICompatible do
   @provider :openai_compatible
 
   @impl true
+  def cache_capability, do: :summary
+
+  @impl true
   def stream_chat(messages, opts, emit) when is_list(messages) and is_function(emit, 1) do
     do_stream_chat(messages, opts, emit)
   rescue

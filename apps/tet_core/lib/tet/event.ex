@@ -26,12 +26,14 @@ defmodule Tet.Event do
     :provider_route_error
   ]
 
+  @swap_types [:profile_swap_cache_result]
+
   @known_types [
                  :assistant_chunk,
                  :message_persisted,
                  :session_started,
                  :session_resumed
-               ] ++ @provider_types ++ @provider_route_types
+               ] ++ @provider_types ++ @provider_route_types ++ @swap_types
 
   @enforce_keys [:type]
   defstruct [:type, :session_id, :sequence, payload: %{}, metadata: %{}]
@@ -54,6 +56,7 @@ defmodule Tet.Event do
           | :provider_route_fallback
           | :provider_route_done
           | :provider_route_error
+          | :profile_swap_cache_result
   @type t :: %__MODULE__{
           type: type(),
           session_id: binary() | nil,
@@ -70,6 +73,9 @@ defmodule Tet.Event do
 
   @doc "Returns auditable provider router decision event types."
   def provider_route_types, do: @provider_route_types
+
+  @doc "Returns profile swap lifecycle event types."
+  def swap_types, do: @swap_types
 
   @doc "Builds a normalized provider-start event."
   def provider_start(payload \\ %{}, opts \\ []) when is_map(payload) and is_list(opts) do
@@ -211,6 +217,13 @@ defmodule Tet.Event do
       value when is_map(value) -> {:ok, value}
       _ -> {:error, {:invalid_event_field, key}}
     end
+  end
+
+  @doc "Builds a profile-swap cache-result event."
+  def profile_swap_cache_result(result, payload \\ %{}, opts \\ [])
+      when result in [:preserved, :summarized, :reset] and is_map(payload) and is_list(opts) do
+    payload = Map.put(payload, :cache_result, result)
+    provider_event(:profile_swap_cache_result, payload, opts)
   end
 
   defp fetch_value(attrs, key, default \\ nil) do

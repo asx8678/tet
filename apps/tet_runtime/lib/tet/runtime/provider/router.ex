@@ -24,6 +24,9 @@ defmodule Tet.Runtime.Provider.Router do
   @route_error_event [:tet, :provider, :router, :error]
 
   @impl true
+  def cache_capability, do: :none
+
+  @impl true
   def stream_chat(messages, opts, emit)
       when is_list(messages) and is_list(opts) and is_function(emit, 1) do
     order_opts = opts
