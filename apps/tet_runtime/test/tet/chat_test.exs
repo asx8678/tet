@@ -223,6 +223,71 @@ defmodule Tet.ChatTest do
     )
   end
 
+  test "router provider config can build candidates from registry profile" do
+    assert {:ok, {Tet.Runtime.Provider.Router, opts}} =
+             Tet.Runtime.ProviderConfig.resolve(provider: :router, profile: "tet_standalone")
+
+    assert [candidate] = opts[:candidates]
+    assert candidate.provider == :mock
+    assert candidate.adapter == Tet.Runtime.Provider.Mock
+    assert candidate.model == "mock-default"
+    assert candidate.opts[:provider] == :mock
+    assert candidate.opts[:model] == "mock-default"
+  end
+
+  test "router ask persists route audit events and assistant message", %{tmp_root: tmp_root} do
+    path = tmp_path(tmp_root, "router")
+    session_id = unique_session("router")
+    parent = self()
+
+    assert {:ok, result} =
+             Tet.ask("routed ping",
+               provider: :router,
+               routing_key: router_key_for(2, 0),
+               max_retries: 0,
+               candidates: [
+                 [
+                   provider: :mock,
+                   model: "mock-bad",
+                   error: {:provider_http_status, 503, "Service Unavailable", "nope"}
+                 ],
+                 [provider: :mock, model: "mock-good", chunks: ["routed answer"]]
+               ],
+               store_path: path,
+               session_id: session_id,
+               on_event: &send(parent, {:event, &1})
+             )
+
+    assert result.provider == :mock
+    assert result.model == "mock-good"
+    assert result.assistant_message.content == "routed answer"
+    assert assistant_chunks() == ["routed answer"]
+
+    assert {:ok, [user_message, assistant_message]} =
+             Tet.list_messages(session_id, store_path: path)
+
+    assert user_message.role == :user
+    assert user_message.content == "routed ping"
+    assert assistant_message.role == :assistant
+    assert assistant_message.content == "routed answer"
+
+    assert {:ok, events} = Tet.list_events(session_id, store_path: path)
+    event_types = Enum.map(events, & &1.type)
+
+    assert :provider_route_decision in event_types
+    assert :provider_route_attempt in event_types
+    assert :provider_route_error in event_types
+    assert :provider_route_fallback in event_types
+    assert :provider_route_done in event_types
+    assert :message_persisted == List.first(event_types)
+    assert :message_persisted == List.last(event_types)
+
+    fallback = Enum.find(events, &(&1.type == :provider_route_fallback))
+    assert event_value(fallback, :candidate_index) == 0
+    assert event_value(fallback, :next_candidate_index) == 1
+    assert event_value(fallback, :kind) == "provider_unavailable"
+  end
+
   test "configured openai-compatible provider streams SSE chunks and persists messages", %{
     tmp_root: tmp_root
   } do
@@ -405,6 +470,16 @@ defmodule Tet.ChatTest do
   defp unique_tmp_root(prefix) do
     suffix = "#{System.pid()}-#{System.system_time(:nanosecond)}-#{unique_integer()}"
     Path.join(System.tmp_dir!(), "#{prefix}-#{suffix}")
+  end
+
+  defp router_key_for(candidate_count, expected_index) do
+    Enum.find_value(1..1_000, fn index ->
+      key = "chat-router-key-#{index}"
+
+      if Tet.Runtime.Provider.Router.start_index(candidate_count, routing_key: key) ==
+           expected_index,
+         do: key
+    end)
   end
 
   defp unique_session(name), do: "session-#{name}-#{System.pid()}-#{unique_integer()}"

@@ -8,6 +8,7 @@ defmodule Tet.Runtime.ProviderConfig do
 
   @default_openai_base_url "https://api.openai.com/v1"
   @default_openai_model "gpt-4o-mini"
+  @default_router_profile "chat"
 
   @doc "Resolves the configured provider adapter and its validated options."
   def resolve(opts \\ []) when is_list(opts) do
@@ -25,6 +26,9 @@ defmodule Tet.Runtime.ProviderConfig do
 
       :openai_compatible ->
         resolve_openai_compatible(opts)
+
+      :router ->
+        resolve_router(opts)
 
       unknown ->
         {:error, {:unknown_provider, unknown}}
@@ -74,6 +78,9 @@ defmodule Tet.Runtime.ProviderConfig do
            }}
         end
 
+      :router ->
+        diagnose_router(opts)
+
       unknown ->
         {:error,
          %{
@@ -88,11 +95,33 @@ defmodule Tet.Runtime.ProviderConfig do
 
   @doc "Returns the selected provider name after env/config/opts normalization."
   def provider_name(opts \\ []) when is_list(opts) do
-    opts
-    |> Keyword.get(:provider)
-    |> blank_fallback(System.get_env("TET_PROVIDER"))
-    |> blank_fallback(Application.get_env(:tet_runtime, :provider, :mock))
-    |> normalize_provider()
+    provider = Keyword.get(opts, :provider)
+
+    if blank?(provider) and truthy?(Keyword.get(opts, :router)) do
+      :router
+    else
+      provider
+      |> blank_fallback(System.get_env("TET_PROVIDER"))
+      |> blank_fallback(Application.get_env(:tet_runtime, :provider, :mock))
+      |> normalize_provider()
+    end
+  end
+
+  defp resolve_router(opts) do
+    with {:ok, candidates} <- router_candidates(opts) do
+      {:ok,
+       {Tet.Runtime.Provider.Router,
+        opts
+        |> Keyword.take([
+          :max_retries,
+          :profile,
+          :retries,
+          :retry_delay_ms,
+          :routing_key,
+          :telemetry_emit
+        ])
+        |> Keyword.put(:candidates, candidates)}}
+    end
   end
 
   defp resolve_openai_compatible(opts) do
@@ -112,6 +141,205 @@ defmodule Tet.Runtime.ProviderConfig do
         ]}}
     end
   end
+
+  defp router_candidates(opts) do
+    case Keyword.fetch(opts, :candidates) do
+      {:ok, candidates} when is_list(candidates) -> {:ok, candidates}
+      {:ok, _candidates} -> {:error, {:invalid_router_candidates, :not_a_list}}
+      :error -> registry_router_candidates(opts)
+    end
+  end
+
+  defp registry_router_candidates(opts) do
+    profile = router_profile(opts)
+
+    with {:ok, registry} <- Tet.Runtime.ModelRegistry.load(opts),
+         {:ok, pin} <- fetch_profile_pin(registry, profile) do
+      candidates =
+        [pin.default_model | pin.fallback_models]
+        |> Enum.map(&registry_candidate(registry, &1, opts))
+
+      {:ok, candidates}
+    else
+      :error -> {:error, {:unknown_profile, profile}}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp fetch_profile_pin(registry, profile) do
+    case Tet.ModelRegistry.profile_pin(registry, profile) do
+      {:ok, pin} -> {:ok, pin}
+      :error -> :error
+    end
+  end
+
+  defp registry_candidate(registry, model_id, opts) do
+    with {:ok, model} <- Tet.ModelRegistry.model(registry, model_id),
+         {:ok, provider} <- Tet.ModelRegistry.provider(registry, model.provider) do
+      candidate_for_provider(model, provider, opts)
+    else
+      :error ->
+        %{
+          id: model_id,
+          provider: nil,
+          adapter: nil,
+          config_error: {:unknown_model, model_id},
+          opts: []
+        }
+    end
+  end
+
+  defp candidate_for_provider(model, provider, opts) do
+    case normalize_provider(provider.type) do
+      :mock -> mock_candidate(model, opts)
+      :openai_compatible -> openai_candidate(model, provider.config, opts)
+      unknown -> unknown_provider_candidate(model, provider, unknown)
+    end
+  end
+
+  defp mock_candidate(model, opts) do
+    provider_opts =
+      [provider: :mock, model: model.model]
+      |> put_optional(:response, Keyword.get(opts, :mock_response))
+      |> put_optional(:chunks, Keyword.get(opts, :mock_chunks))
+      |> put_optional(:usage, Keyword.get(opts, :usage))
+
+    %{
+      id: model.id,
+      provider: :mock,
+      adapter: Tet.Runtime.Provider.Mock,
+      model: model.model,
+      opts: provider_opts
+    }
+  end
+
+  defp openai_candidate(model, provider_config, opts) do
+    settings = openai_candidate_settings(model, provider_config, opts)
+
+    provider_opts =
+      [
+        provider: :openai_compatible,
+        base_url: settings.base_url,
+        model: settings.model,
+        timeout: settings.timeout
+      ]
+      |> put_optional(:api_key, settings.api_key)
+
+    %{
+      id: model.id,
+      provider: :openai_compatible,
+      adapter: Tet.Runtime.Provider.OpenAICompatible,
+      model: settings.model,
+      opts: provider_opts,
+      config_error: missing_api_key_error(settings)
+    }
+  end
+
+  defp unknown_provider_candidate(model, provider, unknown) do
+    %{
+      id: model.id,
+      provider: provider.type,
+      adapter: nil,
+      model: model.model,
+      opts: [],
+      config_error: {:unknown_provider, unknown}
+    }
+  end
+
+  defp openai_candidate_settings(model, provider_config, opts) do
+    app_config = Application.get_env(:tet_runtime, :openai_compatible, [])
+
+    api_key_env =
+      opts
+      |> Keyword.get(:api_key_env)
+      |> blank_fallback(config_value(provider_config, :api_key_env))
+      |> blank_fallback(Keyword.get(app_config, :api_key_env))
+      |> blank_fallback("TET_OPENAI_API_KEY")
+
+    model_env = config_value(provider_config, :model_env) || "TET_OPENAI_MODEL"
+
+    %{
+      api_key_env: api_key_env,
+      api_key: Keyword.get(opts, :api_key) || env(api_key_env),
+      base_url:
+        Keyword.get(opts, :base_url) || env("TET_OPENAI_BASE_URL") ||
+          config_value(provider_config, :base_url) || Keyword.get(app_config, :base_url) ||
+          @default_openai_base_url,
+      model: env(model_env) || model.model,
+      timeout: Keyword.get(opts, :timeout, Keyword.get(app_config, :timeout, 60_000))
+    }
+  end
+
+  defp missing_api_key_error(%{api_key: api_key, api_key_env: api_key_env}) do
+    if blank?(api_key), do: {:missing_provider_env, api_key_env}, else: nil
+  end
+
+  defp diagnose_router(opts) do
+    case router_candidates(opts) do
+      {:ok, candidates} ->
+        {:ok,
+         %{
+           provider: :router,
+           adapter: Tet.Runtime.Provider.Router,
+           status: :ok,
+           profile: router_profile(opts),
+           candidates: candidates |> Enum.with_index() |> Enum.map(&sanitize_router_candidate/1),
+           message: "provider router configured"
+         }}
+
+      {:error, reason} ->
+        {:error,
+         %{
+           provider: :router,
+           adapter: Tet.Runtime.Provider.Router,
+           status: :error,
+           profile: router_profile(opts),
+           reason: reason,
+           message: "provider router configuration failed"
+         }}
+    end
+  end
+
+  defp sanitize_router_candidate({candidate, index}) do
+    candidate = if is_list(candidate), do: Map.new(candidate), else: candidate
+    opts = if is_map(candidate), do: candidate_value(candidate, :opts) || [], else: []
+    opts = if is_list(opts), do: opts, else: []
+
+    %{
+      candidate_index: index,
+      id: candidate_value(candidate, :id),
+      provider: candidate_value(candidate, :provider) || Keyword.get(opts, :provider),
+      model: candidate_value(candidate, :model) || Keyword.get(opts, :model),
+      config_error?: not is_nil(candidate_value(candidate, :config_error))
+    }
+    |> Enum.reject(fn {_key, value} -> is_nil(value) end)
+    |> Map.new()
+  end
+
+  defp candidate_value(candidate, key) when is_map(candidate) do
+    Map.get(candidate, key, Map.get(candidate, Atom.to_string(key)))
+  end
+
+  defp candidate_value(_candidate, _key), do: nil
+
+  defp router_profile(opts) do
+    opts
+    |> Keyword.get(:profile)
+    |> blank_fallback(Keyword.get(opts, :router_profile))
+    |> blank_fallback(System.get_env("TET_PROFILE"))
+    |> blank_fallback(Application.get_env(:tet_runtime, :profile))
+    |> blank_fallback(@default_router_profile)
+    |> to_string()
+  end
+
+  defp config_value(config, key) when is_map(config) do
+    Map.get(config, key, Map.get(config, Atom.to_string(key)))
+  end
+
+  defp config_value(_config, _key), do: nil
+
+  defp put_optional(opts, _key, nil), do: opts
+  defp put_optional(opts, key, value), do: Keyword.put(opts, key, value)
 
   defp openai_settings(opts) do
     app_config = Application.get_env(:tet_runtime, :openai_compatible, [])
@@ -149,6 +377,7 @@ defmodule Tet.Runtime.ProviderConfig do
       "mock" -> :mock
       "openai" -> :openai_compatible
       "openai_compatible" -> :openai_compatible
+      "router" -> :router
       other -> {:unknown, other}
     end
   end
@@ -158,6 +387,9 @@ defmodule Tet.Runtime.ProviderConfig do
   defp blank_fallback(value, fallback) do
     if blank?(value), do: fallback, else: value
   end
+
+  defp truthy?(value) when value in [true, "true", "1", "yes", "on"], do: true
+  defp truthy?(_value), do: false
 
   defp blank?(value) when is_binary(value), do: String.trim(value) == ""
   defp blank?(value), do: is_nil(value)

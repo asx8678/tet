@@ -17,12 +17,21 @@ defmodule Tet.Event do
     :provider_error
   ]
 
+  @provider_route_types [
+    :provider_route_decision,
+    :provider_route_attempt,
+    :provider_route_retry,
+    :provider_route_fallback,
+    :provider_route_done,
+    :provider_route_error
+  ]
+
   @known_types [
                  :assistant_chunk,
                  :message_persisted,
                  :session_started,
                  :session_resumed
-               ] ++ @provider_types
+               ] ++ @provider_types ++ @provider_route_types
 
   @enforce_keys [:type]
   defstruct [:type, :session_id, :sequence, payload: %{}, metadata: %{}]
@@ -39,6 +48,12 @@ defmodule Tet.Event do
           | :provider_usage
           | :provider_done
           | :provider_error
+          | :provider_route_decision
+          | :provider_route_attempt
+          | :provider_route_retry
+          | :provider_route_fallback
+          | :provider_route_done
+          | :provider_route_error
   @type t :: %__MODULE__{
           type: type(),
           session_id: binary() | nil,
@@ -52,6 +67,9 @@ defmodule Tet.Event do
 
   @doc "Returns the normalized provider lifecycle event types."
   def provider_types, do: @provider_types
+
+  @doc "Returns auditable provider router decision event types."
+  def provider_route_types, do: @provider_route_types
 
   @doc "Builds a normalized provider-start event."
   def provider_start(payload \\ %{}, opts \\ []) when is_map(payload) and is_list(opts) do
