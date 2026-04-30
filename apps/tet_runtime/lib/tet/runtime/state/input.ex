@@ -31,7 +31,7 @@ defmodule Tet.Runtime.State.Input do
   defp put_cache_capability_string(request) do
     case Map.fetch(request, :cache_capability) do
       {:ok, cap} -> Map.put(request, :cache_capability, Atom.to_string(cap))
-      :error -> Map.put(request, :cache_capability, "full")
+      :error -> Map.put(request, :cache_capability, "none")
     end
   end
 
@@ -273,13 +273,13 @@ defmodule Tet.Runtime.State.Input do
 
   def fetch_cache_capability(opts) when is_list(opts) do
     opts
-    |> Keyword.get(:cache_capability, :full)
+    |> Keyword.get(:cache_capability, :none)
     |> normalize_cache_capability()
   end
 
   def fetch_cache_capability(attrs) when is_map(attrs) do
     attrs
-    |> fetch_value(:cache_capability, :full)
+    |> fetch_value(:cache_capability, :none)
     |> normalize_cache_capability()
   end
 

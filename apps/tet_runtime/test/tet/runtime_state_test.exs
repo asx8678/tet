@@ -141,7 +141,9 @@ defmodule Tet.RuntimeStateTest do
     preserved = preserved_fields(state)
 
     assert {:ok, swapped} =
-             State.request_profile_swap(state, %{id: :coder, options: %{"mode" => "act"}})
+             State.request_profile_swap(state, %{id: :coder, options: %{"mode" => "act"}},
+               cache_capability: :full
+             )
 
     assert swapped.active_profile == %{id: "coder", options: %{"mode" => "act"}}
     assert swapped.pending_profile_swap == nil
@@ -181,9 +183,11 @@ defmodule Tet.RuntimeStateTest do
     assert swapped.active_task_refs == ["task_1"]
     assert swapped.artifact_refs == ["art_1"]
     assert swapped.approval_refs == ["approval_1"]
-    assert swapped.cache_hints == %{"cache_key" => "cache_1"}
+    # Default cache_capability is :none; :preserve + :none => :reset, so hints are cleared
+    assert swapped.cache_hints == %{}
     assert swapped.context == %{"summary_ref" => "ctx_1"}
     assert swapped.turn_status == :idle
+    assert swapped.cache_result == :reset
   end
 
   test "mid-turn profile swap can be rejected as structured data" do
@@ -318,7 +322,7 @@ defmodule Tet.RuntimeStateTest do
     assert {:error, {:invalid_runtime_state_field, :mode}} = State.from_map(attrs)
   end
 
-  test "cache hints are preserved by default and can be dropped or replaced while context metadata survives" do
+  test "cache hints are preserved with explicit :full capability, reset by default, and context metadata survives" do
     state =
       State.new!(%{
         session_id: "ses_cache",
@@ -327,7 +331,16 @@ defmodule Tet.RuntimeStateTest do
         context: %{"compacted_ref" => "ctx_1", "prompt_fingerprint" => "fp_1"}
       })
 
-    assert {:ok, preserved} = State.request_profile_swap(state, "reviewer")
+    # Without explicit cache_capability, defaults to :none => :preserve + :none = :reset
+    assert {:ok, defaulted} = State.request_profile_swap(state, "reviewer")
+    assert defaulted.cache_hints == %{}
+    assert defaulted.context == state.context
+    assert defaulted.cache_result == :reset
+
+    # With explicit :full capability, hints are preserved
+    assert {:ok, preserved} =
+             State.request_profile_swap(state, "reviewer", cache_capability: :full)
+
     assert preserved.cache_hints == state.cache_hints
     assert preserved.context == state.context
     assert preserved.cache_result == :preserved
@@ -340,7 +353,10 @@ defmodule Tet.RuntimeStateTest do
     replacement = %{"provider" => "anthropic", "cache_key" => "prefix_2"}
 
     assert {:ok, replaced} =
-             State.request_profile_swap(state, "repair", cache_policy: {:replace, replacement})
+             State.request_profile_swap(state, "repair",
+               cache_policy: {:replace, replacement},
+               cache_capability: :full
+             )
 
     assert replaced.cache_hints == replacement
     assert replaced.context == state.context
@@ -361,7 +377,10 @@ defmodule Tet.RuntimeStateTest do
     assert swapped.cache_result == :reset
 
     {:ok, swapped_again} =
-      State.request_profile_swap(swapped, "reviewer", cache_policy: :preserve)
+      State.request_profile_swap(swapped, "reviewer",
+        cache_policy: :preserve,
+        cache_capability: :full
+      )
 
     assert swapped_again.cache_result == :preserved
   end
@@ -385,10 +404,18 @@ defmodule Tet.RuntimeStateTest do
 
   test "cache_result rejects invalid values" do
     assert {:error, {:invalid_runtime_state_field, :cache_result}} =
-             State.new(%{session_id: "ses_bad_result", active_profile: "planner", cache_result: :kaboom})
+             State.new(%{
+               session_id: "ses_bad_result",
+               active_profile: "planner",
+               cache_result: :kaboom
+             })
 
     assert {:error, {:invalid_runtime_state_field, :cache_result}} =
-             State.new(%{session_id: "ses_bad_result2", active_profile: "planner", cache_result: "nope"})
+             State.new(%{
+               session_id: "ses_bad_result2",
+               active_profile: "planner",
+               cache_result: "nope"
+             })
   end
 
   test "cache_capability produces :summarized when adapter supports :summary only" do
@@ -400,10 +427,15 @@ defmodule Tet.RuntimeStateTest do
       })
 
     {:ok, swapped} =
-      State.request_profile_swap(state, "coder", cache_policy: :preserve, cache_capability: :summary)
+      State.request_profile_swap(state, "coder",
+        cache_policy: :preserve,
+        cache_capability: :summary
+      )
 
     assert swapped.cache_result == :summarized
-    assert swapped.cache_hints == %{"cache_key" => "cache_1"}
+    # When cache_result is :summarized, raw provider cache hints must not
+    # remain active; the summary/context handoff is recorded separately.
+    assert swapped.cache_hints == %{}
 
     {:ok, replaced} =
       State.request_profile_swap(
@@ -414,6 +446,8 @@ defmodule Tet.RuntimeStateTest do
       )
 
     assert replaced.cache_result == :summarized
+    # :summarized clears raw hints even with :replace policy
+    assert replaced.cache_hints == %{}
   end
 
   test "cache_capability :none resets even with :preserve policy" do
@@ -428,7 +462,8 @@ defmodule Tet.RuntimeStateTest do
       State.request_profile_swap(state, "coder", cache_policy: :preserve, cache_capability: :none)
 
     assert swapped.cache_result == :reset
-    assert swapped.cache_hints == %{"cache_key" => "cache_1"}
+    # When cache_result is :reset, active cache_hints must be cleared
+    assert swapped.cache_hints == %{}
   end
 
   test "cache_capability :drop always resets regardless of adapter capability" do
@@ -448,7 +483,7 @@ defmodule Tet.RuntimeStateTest do
     end
   end
 
-  test "cache_capability defaults to :full preserving backward compatibility" do
+  test "cache_capability defaults to :none avoiding false :preserved claims" do
     state =
       State.new!(%{
         session_id: "ses_default_cap",
@@ -456,8 +491,11 @@ defmodule Tet.RuntimeStateTest do
         cache_hints: %{"cache_key" => "cache_1"}
       })
 
+    # Without explicit cache_capability, the conservative :none default
+    # prevents claiming :preserved when capability is undeclared.
     {:ok, swapped} = State.request_profile_swap(state, "coder")
-    assert swapped.cache_result == :preserved
+    assert swapped.cache_result == :reset
+    assert swapped.cache_hints == %{}
   end
 
   test "cache_capability rejects invalid values" do
@@ -472,6 +510,29 @@ defmodule Tet.RuntimeStateTest do
 
     assert {:error, {:invalid_runtime_state_field, :cache_capability}} =
              State.request_profile_swap(state, "coder", cache_capability: "nope")
+  end
+
+  test "regression: omitted cache_capability never claims :preserved" do
+    state =
+      State.new!(%{
+        session_id: "ses_omit_cap_regression",
+        active_profile: "planner",
+        cache_hints: %{"cache_key" => "old_hint"}
+      })
+
+    # Every swap without explicit cache_capability must produce :reset,
+    # never silently claim :preserved.
+    for policy <- [:preserve, :drop] do
+      {:ok, swapped} =
+        State.request_profile_swap(
+          %{state | cache_hints: %{"cache_key" => "old_hint"}},
+          "coder",
+          cache_policy: policy
+        )
+
+      assert swapped.cache_result == :reset
+      assert swapped.cache_hints == %{}
+    end
   end
 
   test "cache_capability round-trips through pending profile swap serialization" do

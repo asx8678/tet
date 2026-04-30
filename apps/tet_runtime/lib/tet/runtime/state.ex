@@ -275,7 +275,15 @@ defmodule Tet.Runtime.State do
          {:ok, cache_policy} <- Input.fetch_cache_policy(opts),
          {:ok, cache_capability} <- Input.fetch_cache_capability(opts),
          {:ok, metadata} <- Input.fetch_option_map(opts, :metadata, %{}) do
-      request = build_profile_swap_request(state, to_profile, mode, cache_policy, cache_capability, metadata)
+      request =
+        build_profile_swap_request(
+          state,
+          to_profile,
+          mode,
+          cache_policy,
+          cache_capability,
+          metadata
+        )
 
       cond do
         safe_to_swap?(state) ->
@@ -312,9 +320,10 @@ defmodule Tet.Runtime.State do
   end
 
   defp apply_profile_swap(%__MODULE__{} = state, request) do
-    cache_hints = apply_cache_policy(state.cache_hints, request.cache_policy)
-    cache_capability = Map.get(request, :cache_capability, :full)
+    policy_hints = apply_cache_policy(state.cache_hints, request.cache_policy)
+    cache_capability = Map.get(request, :cache_capability, :none)
     cache_result = CacheHandoff.resolve(request.cache_policy, cache_capability)
+    cache_hints = align_cache_hints_with_result(policy_hints, cache_result)
 
     %__MODULE__{
       state
@@ -329,7 +338,22 @@ defmodule Tet.Runtime.State do
   defp apply_cache_policy(_cache_hints, :drop), do: %{}
   defp apply_cache_policy(_cache_hints, {:replace, cache_hints}), do: cache_hints
 
-  defp build_profile_swap_request(state, to_profile, mode, cache_policy, cache_capability, metadata) do
+  # Active cache_hints must align with the resolved cache_result, not just the
+  # requested cache_policy. When the adapter cannot honour the policy, stale raw
+  # provider hints must be cleared so downstream consumers never see preserved
+  # hints that the adapter cannot actually use.
+  defp align_cache_hints_with_result(_cache_hints, :reset), do: %{}
+  defp align_cache_hints_with_result(_cache_hints, :summarized), do: %{}
+  defp align_cache_hints_with_result(cache_hints, :preserved), do: cache_hints
+
+  defp build_profile_swap_request(
+         state,
+         to_profile,
+         mode,
+         cache_policy,
+         cache_capability,
+         metadata
+       ) do
     request = %{
       from_profile: state.active_profile,
       to_profile: to_profile,

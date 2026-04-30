@@ -55,6 +55,8 @@ defmodule Tet.Provider do
   """
   @callback cache_capability() :: cache_capability()
 
+  @optional_callbacks cache_capability: 0
+
   @doc "Returns the adapter's cache capability, defaulting to `:none`."
   @spec cache_capability(module()) :: cache_capability()
   def cache_capability(adapter) when is_atom(adapter) do
