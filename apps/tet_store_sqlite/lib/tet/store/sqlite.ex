@@ -2,16 +2,18 @@ defmodule Tet.Store.SQLite do
   @moduledoc """
   Default standalone store boundary.
 
-  This phase keeps the adapter dependency-free and persists chat messages plus
-  autosave checkpoints as JSON Lines. The app/module name remains the default
-  store boundary reserved by the scaffold; a later storage ticket can replace
-  the file format with true SQLite without changing callers of `Tet.Store`.
+  This phase keeps the adapter dependency-free and persists chat messages,
+  autosave checkpoints, and runtime timeline events as JSON Lines. The
+  app/module name remains the default store boundary reserved by the scaffold; a
+  later storage ticket can replace the file format with true SQLite without
+  changing callers of `Tet.Store`.
   """
 
   @behaviour Tet.Store
 
   @default_path ".tet/messages.jsonl"
   @default_autosave_filename "autosaves.jsonl"
+  @default_events_path ".tet/events.jsonl"
 
   @impl true
   def boundary do
@@ -21,6 +23,7 @@ defmodule Tet.Store.SQLite do
       status: :local_jsonl,
       path: @default_path,
       autosave_path: default_autosave_path(@default_path),
+      events_path: derive_events_path(@default_path),
       format: :jsonl
     }
   end
@@ -29,6 +32,7 @@ defmodule Tet.Store.SQLite do
   def health(opts) when is_list(opts) do
     path = path(opts)
     autosave_path = autosave_path(opts)
+    events_path = events_path(opts)
     directory = Path.dirname(path)
     directory_existed? = File.dir?(directory)
 
@@ -41,6 +45,7 @@ defmodule Tet.Store.SQLite do
          |> Map.merge(%{
            path: path,
            autosave_path: autosave_path,
+           events_path: events_path,
            directory: directory,
            status: :ok,
            readable?: true,
@@ -127,77 +132,106 @@ defmodule Tet.Store.SQLite do
     end
   end
 
-  defp read_messages(path) do
-    if File.exists?(path) do
-      path
-      |> File.stream!([], :line)
-      |> Enum.reduce_while({:ok, []}, &decode_message_line/2)
-      |> case do
-        {:ok, messages} -> {:ok, Enum.reverse(messages)}
-        {:error, reason} -> {:error, reason}
-      end
-    else
-      {:ok, []}
+  @impl true
+  def save_event(%Tet.Event{} = event, opts) when is_list(opts) do
+    path = events_path(opts)
+
+    with {:ok, event} <- assign_event_sequence(event, path),
+         line = event |> Tet.Event.to_map() |> encode_json!(),
+         :ok <- File.mkdir_p(Path.dirname(path)),
+         :ok <- File.write(path, [line, "\n"], [:append]) do
+      {:ok, event}
     end
-  rescue
-    exception in File.Error -> {:error, {:store_read_failed, exception.reason}}
+  end
+
+  @impl true
+  def list_events(session_id, opts)
+      when (is_binary(session_id) or is_nil(session_id)) and is_list(opts) do
+    with {:ok, events} <- read_events(events_path(opts)) do
+      {:ok, Enum.filter(events, &event_matches_session?(&1, session_id))}
+    end
+  end
+
+  defp read_messages(path) do
+    read_json_lines(path, &Tet.Message.from_map/1)
   end
 
   defp read_autosaves(path) do
+    read_json_lines(
+      path,
+      &Tet.Autosave.from_map/1,
+      :autosave_read_failed,
+      {:invalid_autosave_record, :not_a_map}
+    )
+  end
+
+  defp read_events(path) do
+    read_json_lines(path, &Tet.Event.from_map/1)
+  end
+
+  defp read_json_lines(
+         path,
+         decoder,
+         read_error_tag \\ :store_read_failed,
+         invalid_map_error \\ {:invalid_store_record, :not_a_map}
+       ) do
     if File.exists?(path) do
       path
       |> File.stream!([], :line)
-      |> Enum.reduce_while({:ok, []}, &decode_autosave_line/2)
+      |> Enum.reduce_while({:ok, []}, fn line, acc ->
+        decode_line(line, acc, decoder, invalid_map_error)
+      end)
       |> case do
-        {:ok, autosaves} -> {:ok, Enum.reverse(autosaves)}
+        {:ok, records} -> {:ok, Enum.reverse(records)}
         {:error, reason} -> {:error, reason}
       end
     else
       {:ok, []}
     end
   rescue
-    exception in File.Error -> {:error, {:autosave_read_failed, exception.reason}}
+    exception in File.Error -> {:error, {read_error_tag, exception.reason}}
   end
 
-  defp decode_message_line(_line, {:error, reason}), do: {:halt, {:error, reason}}
+  defp decode_line(_line, {:error, reason}, _decoder, _invalid_map_error),
+    do: {:halt, {:error, reason}}
 
-  defp decode_message_line(line, {:ok, messages}) do
+  defp decode_line(line, {:ok, records}, decoder, invalid_map_error) do
     line = String.trim(line)
 
     cond do
       line == "" ->
-        {:cont, {:ok, messages}}
+        {:cont, {:ok, records}}
 
       true ->
         with {:ok, decoded} <- decode_json(line),
-             :ok <- ensure_record_map(decoded),
-             {:ok, message} <- Tet.Message.from_map(decoded) do
-          {:cont, {:ok, [message | messages]}}
+             :ok <- ensure_record_map(decoded, invalid_map_error),
+             {:ok, record} <- decoder.(decoded) do
+          {:cont, {:ok, [record | records]}}
         else
           {:error, reason} -> {:halt, {:error, reason}}
         end
     end
   end
 
-  defp decode_autosave_line(_line, {:error, reason}), do: {:halt, {:error, reason}}
+  defp assign_event_sequence(%Tet.Event{sequence: sequence} = event, _path)
+       when is_integer(sequence) and sequence >= 0 do
+    {:ok, event}
+  end
 
-  defp decode_autosave_line(line, {:ok, autosaves}) do
-    line = String.trim(line)
+  defp assign_event_sequence(%Tet.Event{} = event, path) do
+    with {:ok, events} <- read_events(path) do
+      max_sequence =
+        events
+        |> Enum.map(&(&1.sequence || 0))
+        |> Enum.max(fn -> 0 end)
 
-    cond do
-      line == "" ->
-        {:cont, {:ok, autosaves}}
-
-      true ->
-        with {:ok, decoded} <- decode_json(line),
-             :ok <- ensure_autosave_record_map(decoded),
-             {:ok, autosave} <- Tet.Autosave.from_map(decoded) do
-          {:cont, {:ok, [autosave | autosaves]}}
-        else
-          {:error, reason} -> {:halt, {:error, reason}}
-        end
+      {:ok, %Tet.Event{event | sequence: max_sequence + 1}}
     end
   end
+
+  defp event_matches_session?(_event, nil), do: true
+  defp event_matches_session?(%Tet.Event{session_id: session_id}, session_id), do: true
+  defp event_matches_session?(_event, _session_id), do: false
 
   defp session_newer_or_equal?(left, right) do
     {left.updated_at || "", left.id} >= {right.updated_at || "", right.id}
@@ -256,10 +290,30 @@ defmodule Tet.Store.SQLite do
       default_autosave_path(path(opts))
   end
 
+  defp events_path(opts) do
+    Keyword.get(opts, :events_path) ||
+      Keyword.get(opts, :event_path) ||
+      System.get_env("TET_EVENTS_PATH") ||
+      Application.get_env(:tet_runtime, :events_path) ||
+      derive_events_path(path(opts))
+  end
+
   defp default_autosave_path(message_path) do
     message_path
     |> Path.dirname()
     |> Path.join(@default_autosave_filename)
+  end
+
+  defp derive_events_path(@default_path), do: @default_events_path
+
+  defp derive_events_path(message_path) do
+    extension = Path.extname(message_path)
+
+    if extension == "" do
+      message_path <> ".events.jsonl"
+    else
+      Path.rootname(message_path) <> ".events" <> extension
+    end
   end
 
   defp encode_json!(term) do
@@ -274,13 +328,8 @@ defmodule Tet.Store.SQLite do
     exception -> {:error, {:invalid_store_record, Exception.message(exception)}}
   end
 
-  defp ensure_record_map(record) when is_map(record), do: :ok
-  defp ensure_record_map(_record), do: {:error, {:invalid_store_record, :not_a_map}}
-
-  defp ensure_autosave_record_map(record) when is_map(record), do: :ok
-
-  defp ensure_autosave_record_map(_record),
-    do: {:error, {:invalid_autosave_record, :not_a_map}}
+  defp ensure_record_map(record, _invalid_map_error) when is_map(record), do: :ok
+  defp ensure_record_map(_record, invalid_map_error), do: {:error, invalid_map_error}
 
   defp started? do
     Enum.any?(Application.started_applications(), fn {application, _description, _version} ->

@@ -7,7 +7,7 @@ defmodule Tet do
   CLI and optional adapters pointed at the same public API.
   """
 
-  alias Tet.Runtime.{Autosave, Boundary, Doctor, Sessions}
+  alias Tet.Runtime.{Autosave, Boundary, Doctor, Sessions, Timeline}
 
   @doc "Returns the standalone boundary declared for this release profile."
   def boundary do
@@ -70,8 +70,24 @@ defmodule Tet do
     Autosave.list(opts)
   end
 
-  @doc "Reserved event-list facade for future durable Event Log work."
-  def list_events(_session_id, _opts \\ []) do
-    {:ok, []}
+  @doc "Lists read-only runtime timeline events, optionally filtered by session id."
+  def list_events(session_id_or_opts \\ nil, opts \\ [])
+
+  def list_events(opts, []) when is_list(opts) do
+    Timeline.list_events(nil, opts)
+  end
+
+  def list_events(session_id, opts) when is_binary(session_id) or is_nil(session_id) do
+    Timeline.list_events(session_id, opts)
+  end
+
+  @doc "Subscribes the caller to all future runtime timeline events."
+  def subscribe_events do
+    Timeline.subscribe()
+  end
+
+  @doc "Subscribes the caller to future runtime timeline events for one session."
+  def subscribe_events(session_id) when is_binary(session_id) do
+    Timeline.subscribe(session_id)
   end
 end
