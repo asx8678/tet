@@ -81,15 +81,26 @@ defmodule Tet.PlanMode.Gate do
   # -- Gate checks (ordered) --
 
   # Invariant 1: No mutating/executing tool without an active task.
-  defp check_active_task(%Policy{require_active_task: true}, %{task_id: nil}) do
-    {:block, :no_active_task}
-  end
+  # Fail closed: omitted, nil, empty, or non-binary task_id and omitted, nil,
+  # or non-atom task_category all block deterministically — never crash.
+  defp check_active_task(%Policy{require_active_task: true}, context) do
+    task_id = Map.get(context, :task_id)
+    task_category = Map.get(context, :task_category)
 
-  defp check_active_task(%Policy{require_active_task: true}, %{task_category: nil}) do
-    {:block, :no_active_task}
+    cond do
+      not valid_active_task_id?(task_id) -> {:block, :no_active_task}
+      not valid_active_task_category?(task_category) -> {:block, :no_active_task}
+      true -> :ok
+    end
   end
 
   defp check_active_task(_policy, _context), do: :ok
+
+  defp valid_active_task_id?(id) when is_binary(id) and byte_size(id) > 0, do: true
+  defp valid_active_task_id?(_), do: false
+
+  defp valid_active_task_category?(cat) when is_atom(cat) and not is_nil(cat), do: true
+  defp valid_active_task_category?(_), do: false
 
   # The contract must declare the current mode.
   # Unknown tools that don't declare the mode are blocked.
@@ -116,13 +127,16 @@ defmodule Tet.PlanMode.Gate do
     end
   end
 
-  # Category gate: if the mode is not plan-safe, the task category
-  # must allow the contract's declared categories.
+  # Category gate: the runtime task category must be both policy-allowed
+  # and contract-declared. Policy.plan_safe_category?/acting_category? checks
+  # policy rules; Policy.contract_allows_category?/2 enforces the contract's
+  # own task_categories declaration.
   defp check_category_gate(contract, policy, %{mode: mode, task_category: category}) do
     if Policy.plan_safe_mode?(policy, mode) do
       # Plan-safe modes already passed check_plan_mode_gate;
-      # category must be plan-safe for the mode to hold.
-      if Policy.plan_safe_category?(policy, category) do
+      # category must be plan-safe AND declared on the contract.
+      if Policy.plan_safe_category?(policy, category) and
+           Policy.contract_allows_category?(contract, category) do
         :ok
       else
         # e.g., :plan mode with :acting category — the task has committed
@@ -135,8 +149,10 @@ defmodule Tet.PlanMode.Gate do
         end
       end
     else
-      # Non-plan modes: acting categories unlock mutating tools.
-      if Policy.acting_category?(policy, category) do
+      # Non-plan modes: acting categories AND contract-declared categories
+      # unlock mutating tools.
+      if Policy.acting_category?(policy, category) and
+           Policy.contract_allows_category?(contract, category) do
         :ok
       else
         if Policy.read_only_contract?(contract) do

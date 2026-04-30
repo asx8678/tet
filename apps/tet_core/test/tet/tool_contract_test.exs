@@ -135,6 +135,59 @@ defmodule Tet.ToolContractTest do
              |> Contract.new()
   end
 
+  # -- SHOULD-4: atom-vs-string normalization via builder --
+
+  test "contract builder normalizes string modes to atoms" do
+    assert {:ok, list} = ReadOnlyContracts.fetch("list")
+    attrs = Map.from_struct(list)
+
+    {:ok, contract} =
+      attrs
+      |> Map.put(:modes, ["plan", "explore", "execute", "repair"])
+      |> Contract.new()
+
+    assert contract.modes == [:plan, :explore, :execute, :repair]
+    assert Enum.all?(contract.modes, &is_atom/1)
+  end
+
+  test "contract builder normalizes string task_categories to atoms" do
+    assert {:ok, list} = ReadOnlyContracts.fetch("list")
+    attrs = Map.from_struct(list)
+
+    {:ok, contract} =
+      attrs
+      |> Map.put(:task_categories, ["researching", "planning", "acting"])
+      |> Contract.new()
+
+    assert contract.task_categories == [:researching, :planning, :acting]
+    assert Enum.all?(contract.task_categories, &is_atom/1)
+  end
+
+  test "contract builder rejects unknown string values in modes" do
+    assert {:ok, list} = ReadOnlyContracts.fetch("list")
+    attrs = Map.from_struct(list)
+
+    assert {:error, {:invalid_contract_field, :modes}} =
+             attrs
+             |> Map.put(:modes, ["plan", "totally_unknown_mode"])
+             |> Contract.new()
+  end
+
+  test "contract builder validates modes contain only atoms after normalization" do
+    assert {:ok, list} = ReadOnlyContracts.fetch("list")
+    attrs = Map.from_struct(list)
+
+    # Mixed atom + string should normalize correctly
+    {:ok, contract} =
+      attrs
+      |> Map.put(:modes, [:plan, "execute"])
+      |> Contract.new()
+
+    assert :plan in contract.modes
+    assert :execute in contract.modes
+    assert Enum.all?(contract.modes, &is_atom/1)
+  end
+
   test "contracts convert to JSON-friendly maps with stable string keys" do
     assert {:ok, read} = ReadOnlyContracts.fetch(:read)
     map = Contract.to_map(read)

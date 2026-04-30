@@ -87,6 +87,87 @@ defmodule Tet.PlanMode.GateTest do
     }
   end
 
+  # A mutating contract that incorrectly declares :plan in its modes.
+  # The gate must still block it at check_plan_mode_gate.
+  defp rogue_plan_write_contract do
+    %Contract{} = base = read_contract()
+
+    %{
+      base
+      | name: "rogue-plan-write",
+        read_only: false,
+        mutation: :write,
+        modes: [:plan, :explore, :execute],
+        task_categories: [:acting, :verifying, :debugging],
+        execution: %{
+          base.execution
+          | mutates_workspace: true,
+            executes_code: false,
+            status: :contract_only,
+            effects: [:writes_file]
+        }
+    }
+  end
+
+  # A shell/executing contract that incorrectly declares :plan in its modes.
+  defp rogue_plan_shell_contract do
+    %Contract{} = base = read_contract()
+
+    %{
+      base
+      | name: "rogue-plan-shell",
+        read_only: false,
+        mutation: :execute,
+        modes: [:plan, :execute],
+        task_categories: [:acting, :debugging],
+        execution: %{
+          base.execution
+          | executes_code: true,
+            mutates_workspace: true,
+            status: :contract_only,
+            effects: [:executes_shell_command]
+        }
+    }
+  end
+
+  # A mutating contract that only declares :verifying in task_categories
+  # (no :acting), so it should be blocked in execute/acting context
+  # when contract_allows_category? is enforced.
+  defp verifying_only_write_contract do
+    %Contract{} = base = read_contract()
+
+    %{
+      base
+      | name: "verifying-only-write",
+        read_only: false,
+        mutation: :write,
+        modes: [:execute, :repair],
+        task_categories: [:verifying, :debugging],
+        execution: %{
+          base.execution
+          | mutates_workspace: true,
+            executes_code: false,
+            status: :contract_only,
+            effects: [:writes_file]
+        }
+    }
+  end
+
+  # Build a read-only contract via Contract.new/1 with string-valued modes
+  # and task_categories, to verify the builder normalizes strings to atoms
+  # and the gate then works correctly.
+  defp string_metadata_contract do
+    base_attrs = read_contract() |> Map.from_struct()
+
+    attrs =
+      base_attrs
+      |> Map.put(:modes, ["plan", "explore", "execute", "repair"])
+      |> Map.put(:task_categories, ["researching", "planning", "acting"])
+
+    {:ok, contract} = Contract.new(attrs)
+    contract
+  end
+
   # -- Gate decisions for read-only tools in plan mode --
 
   describe "read-only tools in plan mode" do
@@ -240,6 +321,56 @@ defmodule Tet.PlanMode.GateTest do
       decision = Gate.evaluate(read_contract(), policy, ctx)
       assert Gate.allowed?(decision)
     end
+
+    # -- MUST-1: fail-closed regressions --
+
+    test "blocks when task_id is omitted from context" do
+      ctx = %{mode: :plan, task_category: :researching}
+      decision = Gate.evaluate(read_contract(), Policy.default(), ctx)
+      assert {:block, :no_active_task} = decision
+    end
+
+    test "blocks when task_category is omitted from context" do
+      ctx = %{mode: :plan, task_id: "t1"}
+      decision = Gate.evaluate(read_contract(), Policy.default(), ctx)
+      assert {:block, :no_active_task} = decision
+    end
+
+    test "blocks when task_id is empty string" do
+      ctx = %{mode: :plan, task_category: :researching, task_id: ""}
+      decision = Gate.evaluate(read_contract(), Policy.default(), ctx)
+      assert {:block, :no_active_task} = decision
+    end
+
+    test "blocks when task_id is non-binary (atom)" do
+      ctx = %{mode: :plan, task_category: :researching, task_id: :atom_id}
+      decision = Gate.evaluate(read_contract(), Policy.default(), ctx)
+      assert {:block, :no_active_task} = decision
+    end
+
+    test "blocks mutating contract when task_id is nil" do
+      ctx = %{mode: :execute, task_category: :acting, task_id: nil}
+      decision = Gate.evaluate(write_contract(), Policy.default(), ctx)
+      assert {:block, :no_active_task} = decision
+    end
+
+    test "blocks shell/executing contract when task_id is nil" do
+      ctx = %{mode: :execute, task_category: :acting, task_id: nil}
+      decision = Gate.evaluate(shell_contract(), Policy.default(), ctx)
+      assert {:block, :no_active_task} = decision
+    end
+
+    test "blocks acting-context contract when task_id is nil" do
+      ctx = %{mode: :execute, task_category: :acting, task_id: nil}
+      decision = Gate.evaluate(read_contract(), Policy.default(), ctx)
+      assert {:block, :no_active_task} = decision
+    end
+
+    test "blocks when both task_id and task_category are omitted" do
+      ctx = %{mode: :plan}
+      decision = Gate.evaluate(read_contract(), Policy.default(), ctx)
+      assert {:block, :no_active_task} = decision
+    end
   end
 
   # -- Category gating --
@@ -275,6 +406,44 @@ defmodule Tet.PlanMode.GateTest do
       decision = Gate.evaluate(read_contract(), Policy.default(), ctx)
       assert Gate.allowed?(decision)
     end
+
+    # -- MUST-2: contract-declared task_categories enforced --
+
+    test "contract with mismatched task_categories blocked in execute/acting" do
+      # verifying_only_write_contract declares [:verifying, :debugging], not :acting
+      ctx = %{mode: :execute, task_category: :acting, task_id: "t8"}
+      decision = Gate.evaluate(verifying_only_write_contract(), Policy.default(), ctx)
+      assert Gate.blocked?(decision)
+      assert {:block, :category_blocks_tool} = decision
+    end
+
+    test "contract with matching task_categories allowed in execute/acting" do
+      # write_contract declares [:acting, :verifying, :debugging] — includes :acting
+      ctx = %{mode: :execute, task_category: :acting, task_id: "t3"}
+      decision = Gate.evaluate(write_contract(), Policy.default(), ctx)
+      assert Gate.allowed?(decision)
+    end
+
+    test "contract with matching task_categories allowed in execute/verifying" do
+      # verifying_only_write_contract declares [:verifying, :debugging]
+      ctx = %{mode: :execute, task_category: :verifying, task_id: "t9"}
+      decision = Gate.evaluate(verifying_only_write_contract(), Policy.default(), ctx)
+      assert Gate.allowed?(decision)
+    end
+
+    test "runtime category mismatched with declared categories blocks even if policy allows" do
+      # Policy allows :acting, but verifying_only_write_contract doesn't declare :acting
+      ctx = %{mode: :execute, task_category: :acting, task_id: "t10"}
+      decision = Gate.evaluate(verifying_only_write_contract(), Policy.default(), ctx)
+      assert Gate.blocked?(decision)
+    end
+
+    test "read-only contract with any category passes contract_allows_category check" do
+      # Read-only contracts declare all categories, so they always pass
+      ctx = %{mode: :execute, task_category: :acting, task_id: "t11"}
+      decision = Gate.evaluate(read_contract(), Policy.default(), ctx)
+      assert Gate.allowed?(decision)
+    end
   end
 
   # -- Decision helpers --
@@ -296,6 +465,38 @@ defmodule Tet.PlanMode.GateTest do
       assert Gate.guided?({:guide, "hint"}) == true
       assert Gate.guided?(:allow) == false
       assert Gate.guided?({:block, :reason}) == false
+    end
+  end
+
+  # -- SHOULD-4: atom-vs-string normalization via Contract builder --
+
+  describe "Contract builder normalizes atom-vs-string metadata" do
+    test "contract built with string modes via builder is normalized to atoms" do
+      contract = string_metadata_contract()
+      assert :plan in contract.modes
+      assert :explore in contract.modes
+      assert :execute in contract.modes
+    end
+
+    test "contract built with string task_categories via builder is normalized to atoms" do
+      contract = string_metadata_contract()
+      assert :researching in contract.task_categories
+      assert :planning in contract.task_categories
+      assert :acting in contract.task_categories
+    end
+
+    test "string-normalized contract works correctly in gate evaluation" do
+      contract = string_metadata_contract()
+      decision = Gate.evaluate(contract, Policy.default(), plan_research_ctx())
+      assert Gate.allowed?(decision)
+    end
+
+    test "string-normalized contract passes contract mode check" do
+      contract = string_metadata_contract()
+      # The contract declares :plan in modes, so plan mode should pass check_contract_mode
+      decision = Gate.evaluate(contract, Policy.default(), plan_research_ctx())
+      # It's read-only, plan-safe mode, plan-safe category → should be allowed with guidance
+      assert Gate.guided?(decision) or decision == :allow
     end
   end
 
@@ -360,6 +561,46 @@ defmodule Tet.PlanMode.GateTest do
       ctx = %{mode: :plan, task_category: nil, task_id: nil}
       decision = Gate.evaluate(read_contract(), Policy.default(), ctx)
       assert {:block, :no_active_task} = decision
+    end
+
+    # -- MUST-3: plan mode blocks rogue mutating contracts --
+
+    test "mutating contract that incorrectly declares :plan mode is blocked" do
+      decision =
+        Gate.evaluate(
+          rogue_plan_write_contract(),
+          Policy.default(),
+          plan_research_ctx()
+        )
+
+      assert {:block, :plan_mode_blocks_mutation} = decision
+    end
+
+    test "shell/executing contract that incorrectly declares :plan mode is blocked" do
+      decision =
+        Gate.evaluate(
+          rogue_plan_shell_contract(),
+          Policy.default(),
+          plan_research_ctx()
+        )
+
+      assert {:block, :plan_mode_blocks_mutation} = decision
+    end
+
+    test "rogue mutating contract blocked in all plan-safe modes" do
+      for mode <- [:plan, :explore], category <- [:researching, :planning] do
+        ctx = %{mode: mode, task_category: category, task_id: "t_rogue"}
+
+        decision =
+          Gate.evaluate(
+            rogue_plan_write_contract(),
+            Policy.default(),
+            ctx
+          )
+
+        assert {:block, :plan_mode_blocks_mutation} = decision,
+               "rogue-plan-write should be blocked in #{mode}/#{category}"
+      end
     end
   end
 end
