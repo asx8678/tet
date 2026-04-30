@@ -32,6 +32,28 @@ The standalone release explicitly excludes:
 No Phoenix/web dependency has been added to `mix.exs`, any child app, or
 `mix.lock`.
 
+## Optional web adapter facade contract
+
+BD-0007 defines the future optional `tet_web_phoenix` adapter as a facade-only
+caller of public `Tet.*` runtime APIs. The contract is documented in
+[BD-0007 — Optional `tet_web_phoenix` adapter facade contract](BD-0007_OPTIONAL_WEB_ADAPTER_FACADE_CONTRACT.md).
+
+Short version: Phoenix may own browser/HTTP/LiveView presentation concerns, but
+it must not own Tet policy, state machines, providers, tools, storage, approval
+gates, repair, verifier execution, or runtime supervision. Future web actions
+must call the same public facade used by `tet_cli`.
+
+A standalone-safe source guard is available:
+
+```bash
+tools/check_web_facade_contract.sh
+# or
+mix web.facade_contract
+```
+
+The guard succeeds when `apps/tet_web_phoenix` is absent and checks obvious
+facade-contract violations if that optional app is introduced later.
+
 ## Runtime requirements
 
 The project uses Erlang/OTP's built-in `:json` module for dependency-free JSON
@@ -44,6 +66,7 @@ From the repository root:
 
 ```bash
 mix format --check-formatted
+mix web.facade_contract
 mix test
 MIX_ENV=prod mix release tet_standalone --overwrite
 tools/check_release_closure.sh --no-build
@@ -202,6 +225,9 @@ The scaffold and chat path follow the accepted ADR rules:
 - CLI calls the public `Tet` facade and does not call runtime/store/provider
   internals.
 - Phoenix remains optional/removable and absent from standalone closure.
+- Any future `tet_web_phoenix` app is a facade-only web adapter; it may render
+  runtime/core data and call public `Tet.*`, but it must not own Tet policy,
+  state, providers, tools, storage, approvals, repair, or supervision.
 
 ## What this issue deliberately does not do
 
