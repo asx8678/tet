@@ -12,6 +12,7 @@ defmodule Tet.Core do
     :contracts,
     :events,
     :messages,
+    :model_registry,
     :prompts,
     :provider_behaviour,
     :store_behaviour,

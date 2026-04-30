@@ -17,7 +17,7 @@ Primary sources:
 - `check this plans/plan 3/plan/docs/01_architecture.md`
 - `check this plans/plan 3/plan/docs/02_dependency_rules_and_guards.md`
 - `check this plans/plan 3/plan/docs/09_phoenix_optional_module.md`
-- `/Users/adam2/projects/tet/check this plans/plan claude/plan_v0.3/FINAL_ULTIMATE_PLAN.md`
+- `check this plans/plan claude/plan_v0.3/FINAL_ULTIMATE_PLAN.md`
 - `plans/ELIXIR_CLI_AGENT_GLOBAL_VISION.md`
 
 ## Decision

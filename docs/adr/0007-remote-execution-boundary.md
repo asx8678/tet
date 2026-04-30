@@ -15,7 +15,7 @@ Primary sources:
 - `plans/ELIXIR_CLI_AGENT_GLOBAL_VISION.md`
 - `plans/ELIXIR_CLI_AGENT_PHASED_IMPLEMENTATION.md`
 - `check this plans/plan 3/plan/docs/05_tools_policy_approvals_verification.md`
-- `/Users/adam2/projects/tet/check this plans/plan claude/plan_v0.3/upgrades/13_operations_and_telemetry.md`
+- `check this plans/plan claude/plan_v0.3/upgrades/13_operations_and_telemetry.md`
 - [BD-0001 source inventory and missing-input report](../research/BD-0001_SOURCE_INVENTORY_AND_MISSING_INPUT_REPORT.md)
 
 ## Decision

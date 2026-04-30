@@ -6,12 +6,12 @@ Scope: documentation only; no implementation code, release files, migrations, ge
 
 **Matrix convention.** Each numbered phase section uses the same eleven third-level fields: phase intent, citations, related backlog, ADRs, acceptance gates, verification plan, deliverables, dependencies, risks, CLI/Phoenix implications, and completion evidence. This deliberately boring shape keeps review and grep checks simple. Boring is good. Boring ships.
 
-**Primary source anchors used throughout:** `/Users/adam2/projects/tet/prompt.md`; `plans/ELIXIR_CLI_AGENT_PHASED_IMPLEMENTATION.md`; `plans/ELIXIR_CLI_AGENT_GLOBAL_VISION.md`; `docs/research/BD-0001_SOURCE_INVENTORY_AND_MISSING_INPUT_REPORT.md`; `docs/adr/README.md`; `docs/adr/0001-standalone-cli-boundary.md`; `docs/adr/0002-phoenix-optional-adapter.md`; `docs/adr/0003-custom-otp-first-runtime.md`; `docs/adr/0004-universal-agent-runtime-boundary.md`; `docs/adr/0005-gates-approvals-verification.md`; `docs/adr/0006-storage-names-and-boundaries.md`; `docs/adr/0007-remote-execution-boundary.md`; `docs/adr/0008-repair-and-error-recovery.md`.
+**Primary source anchors used throughout:** `prompt.md`; `plans/ELIXIR_CLI_AGENT_PHASED_IMPLEMENTATION.md`; `plans/ELIXIR_CLI_AGENT_GLOBAL_VISION.md`; `docs/research/BD-0001_SOURCE_INVENTORY_AND_MISSING_INPUT_REPORT.md`; `docs/adr/README.md`; `docs/adr/0001-standalone-cli-boundary.md`; `docs/adr/0002-phoenix-optional-adapter.md`; `docs/adr/0003-custom-otp-first-runtime.md`; `docs/adr/0004-universal-agent-runtime-boundary.md`; `docs/adr/0005-gates-approvals-verification.md`; `docs/adr/0006-storage-names-and-boundaries.md`; `docs/adr/0007-remote-execution-boundary.md`; `docs/adr/0008-repair-and-error-recovery.md`.
 ## Phase 0
 ### Phase intent
 Repository research and architecture decision record: establish verified source inventory, missing-source boundaries, ADR decisions, phase order, and BD traceability before implementation work begins.
 ### Source anchors/citations
-`/Users/adam2/projects/tet/prompt.md`; `plans/ELIXIR_CLI_AGENT_PHASED_IMPLEMENTATION.md`; `docs/research/BD-0001_SOURCE_INVENTORY_AND_MISSING_INPUT_REPORT.md`; `docs/adr/README.md`; `bd show tet-d1c` as cited by the phased plan.
+`prompt.md`; `plans/ELIXIR_CLI_AGENT_PHASED_IMPLEMENTATION.md`; `docs/research/BD-0001_SOURCE_INVENTORY_AND_MISSING_INPUT_REPORT.md`; `docs/adr/README.md`; `bd show tet-d1c` as cited by the phased plan.
 ### Related backlog IDs/issues
 `tet-db6.1` / `BD-0001`; `tet-db6.2` / `BD-0002`; `tet-db6.3` / `BD-0003`.
 ### Architecture decisions/ADRs
@@ -23,7 +23,7 @@ Check source existence with `test -e`; inspect `bd show tet-d1c`; grep this matr
 ### Deliverables/artifacts
 Source inventory, ADR bundle, this traceability matrix, and a research index linking Phase 0 documentation artifacts.
 ### Dependencies
-Base branch `main`; completed `BD-0001`; completed `BD-0002`; external prompt source at `/Users/adam2/projects/tet/prompt.md`.
+Base branch `main`; completed `BD-0001`; completed `BD-0002`; external prompt source at `prompt.md`.
 ### Risks/conflicts
 Missing G-domain/agent-domain and exact LLExpert inputs can tempt invented citations; mitigation is to cite only verified paths and mark unavailable families, as `BD-0001` already does.
 ### CLI-first/Phoenix-optional implications
@@ -34,7 +34,7 @@ Merged `BD-0001` report, accepted ADR set, this committed matrix, verification c
 ### Phase intent
 Standalone Elixir CLI MVP: create the smallest Phoenix-free CLI/runtime path that configures one provider, sends a prompt, streams text, persists history, and resumes a session.
 ### Source anchors/citations
-`/Users/adam2/projects/tet/prompt.md`; `plans/ELIXIR_CLI_AGENT_PHASED_IMPLEMENTATION.md`; `/Users/adam2/projects/tet/source/code_puppy-main/code_puppy/cli_runner.py`; `/Users/adam2/projects/tet/source/code_puppy-main/code_puppy/config.py`; `/Users/adam2/projects/tet/source/code_puppy-main/code_puppy/session_storage.py`; `/Users/adam2/projects/tet/source/code_puppy-main/code_puppy/model_factory.py`; `/Users/adam2/projects/tet/source/code_puppy-main/code_puppy/models.json`.
+`prompt.md`; `plans/ELIXIR_CLI_AGENT_PHASED_IMPLEMENTATION.md`; `source/code_puppy-main/code_puppy/cli_runner.py`; `source/code_puppy-main/code_puppy/config.py`; `source/code_puppy-main/code_puppy/session_storage.py`; `source/code_puppy-main/code_puppy/model_factory.py`; `source/code_puppy-main/code_puppy/models.json`.
 ### Related backlog IDs/issues
 `tet-db6.4` / `BD-0004`; `tet-db6.5` / `BD-0005`; `tet-db6.6` / `BD-0006`.
 ### Architecture decisions/ADRs
@@ -57,7 +57,7 @@ Release artifact, mocked chat transcript, persisted session fixture, `tet doctor
 ### Phase intent
 Optional Phoenix LiveView shell: add a removable web adapter that observes and controls core sessions only through the public runtime facade.
 ### Source anchors/citations
-`/Users/adam2/projects/tet/prompt.md`; `plans/ELIXIR_CLI_AGENT_PHASED_IMPLEMENTATION.md`; `/Users/adam2/projects/tet/source/code_puppy-main/code_puppy/api/app.py`; `/Users/adam2/projects/tet/source/code_puppy-main/code_puppy/api/websocket.py`; `/Users/adam2/projects/tet/source/code_puppy-main/code_puppy/messaging/bus.py`; `/Users/adam2/projects/tet/check this plans/plan 3/plan/docs/01_architecture.md`; `/Users/adam2/projects/tet/check this plans/plan 3/plan/docs/09_phoenix_optional_module.md`.
+`prompt.md`; `plans/ELIXIR_CLI_AGENT_PHASED_IMPLEMENTATION.md`; `source/code_puppy-main/code_puppy/api/app.py`; `source/code_puppy-main/code_puppy/api/websocket.py`; `source/code_puppy-main/code_puppy/messaging/bus.py`; `check this plans/plan 3/plan/docs/01_architecture.md`; `check this plans/plan 3/plan/docs/09_phoenix_optional_module.md`.
 ### Related backlog IDs/issues
 `tet-db6.7` / `BD-0007`; `tet-db6.8` / `BD-0008`; `tet-db6.9` / `BD-0009`.
 ### Architecture decisions/ADRs
@@ -80,7 +80,7 @@ Removability CI result, facade-only test output, event timeline screenshot/snaps
 ### Phase intent
 Code Puppy-style prompt/session system: add prompt composition, prompt review/refinement, attachments, history compaction, autosave, restore, and prompt debug artifacts.
 ### Source anchors/citations
-`/Users/adam2/projects/tet/prompt.md`; `plans/ELIXIR_CLI_AGENT_PHASED_IMPLEMENTATION.md`; `/Users/adam2/projects/tet/source/code_puppy-main/code_puppy/agents/base_agent.py`; `/Users/adam2/projects/tet/source/code_puppy-main/code_puppy/agents/_builder.py`; `/Users/adam2/projects/tet/source/code_puppy-main/code_puppy/agents/_runtime.py`; `/Users/adam2/projects/tet/source/code_puppy-main/code_puppy/agents/_history.py`; `/Users/adam2/projects/tet/source/code_puppy-main/code_puppy/agents/_compaction.py`; `/Users/adam2/projects/tet/source/code_puppy-main/code_puppy/agents/prompt_reviewer.py`; `/Users/adam2/projects/tet/source/code_puppy-main/code_puppy/session_storage.py`.
+`prompt.md`; `plans/ELIXIR_CLI_AGENT_PHASED_IMPLEMENTATION.md`; `source/code_puppy-main/code_puppy/agents/base_agent.py`; `source/code_puppy-main/code_puppy/agents/_builder.py`; `source/code_puppy-main/code_puppy/agents/_runtime.py`; `source/code_puppy-main/code_puppy/agents/_history.py`; `source/code_puppy-main/code_puppy/agents/_compaction.py`; `source/code_puppy-main/code_puppy/agents/prompt_reviewer.py`; `source/code_puppy-main/code_puppy/session_storage.py`.
 ### Related backlog IDs/issues
 `tet-db6.10` / `BD-0010`; `tet-db6.11` / `BD-0011`; `tet-db6.12` / `BD-0012`.
 ### Architecture decisions/ADRs
@@ -103,7 +103,7 @@ Prompt debug snapshots, restored attachment fixture, compaction test output, and
 ### Phase intent
 Model router and provider parity: normalize provider registry, adapters, streaming events, structured outputs, fallback, round-robin, model pins, cost, latency, and telemetry.
 ### Source anchors/citations
-`/Users/adam2/projects/tet/prompt.md`; `plans/ELIXIR_CLI_AGENT_PHASED_IMPLEMENTATION.md`; `/Users/adam2/projects/tet/source/code_puppy-main/code_puppy/model_factory.py`; `/Users/adam2/projects/tet/source/code_puppy-main/code_puppy/models.json`; `/Users/adam2/projects/tet/source/code_puppy-main/code_puppy/round_robin_model.py`; `/Users/adam2/projects/tet/source/code_puppy-main/code_puppy/claude_cache_client.py`; `/Users/adam2/projects/tet/check this plans/plan claude/plan_v0.3/upgrades/11_provider_contract.md`; `/Users/adam2/projects/tet/check this plans/plan claude/plan_v0.3/upgrades/13_operations_and_telemetry.md`.
+`prompt.md`; `plans/ELIXIR_CLI_AGENT_PHASED_IMPLEMENTATION.md`; `source/code_puppy-main/code_puppy/model_factory.py`; `source/code_puppy-main/code_puppy/models.json`; `source/code_puppy-main/code_puppy/round_robin_model.py`; `source/code_puppy-main/code_puppy/claude_cache_client.py`; `check this plans/plan claude/plan_v0.3/upgrades/11_provider_contract.md`; `check this plans/plan claude/plan_v0.3/upgrades/13_operations_and_telemetry.md`.
 ### Related backlog IDs/issues
 `tet-db6.13` / `BD-0013`; `tet-db6.14` / `BD-0014`; `tet-db6.15` / `BD-0015`.
 ### Architecture decisions/ADRs
@@ -126,7 +126,7 @@ Passing fake-provider fixture suite, validated model registry, router decision a
 ### Phase intent
 Universal Agent Runtime and profile switching: run one long-lived session orchestration boundary that hot-swaps profiles while preserving durable session context.
 ### Source anchors/citations
-`/Users/adam2/projects/tet/prompt.md`; `plans/ELIXIR_CLI_AGENT_PHASED_IMPLEMENTATION.md`; `/Users/adam2/projects/tet/source/code_puppy-main/code_puppy/agents/base_agent.py`; `/Users/adam2/projects/tet/source/code_puppy-main/code_puppy/agents/_builder.py`; `/Users/adam2/projects/tet/source/code_puppy-main/code_puppy/agents/_runtime.py`; `/Users/adam2/projects/tet/source/code_puppy-main/code_puppy/agents/agent_manager.py`; `/Users/adam2/projects/tet/source/code_puppy-main/code_puppy/agents/json_agent.py`; `/Users/adam2/projects/tet/source/jido-main/README.md`.
+`prompt.md`; `plans/ELIXIR_CLI_AGENT_PHASED_IMPLEMENTATION.md`; `source/code_puppy-main/code_puppy/agents/base_agent.py`; `source/code_puppy-main/code_puppy/agents/_builder.py`; `source/code_puppy-main/code_puppy/agents/_runtime.py`; `source/code_puppy-main/code_puppy/agents/agent_manager.py`; `source/code_puppy-main/code_puppy/agents/json_agent.py`; `source/jido-main/README.md`.
 ### Related backlog IDs/issues
 `tet-db6.16` / `BD-0016`; `tet-db6.17` / `BD-0017`; `tet-db6.18` / `BD-0018`; `tet-db6.19` / `BD-0019`.
 ### Architecture decisions/ADRs
@@ -149,7 +149,7 @@ Swap fixture transcript, profile registry validation, cache outcome events, and 
 ### Phase intent
 Read-only tool layer: provide safe file/repo inspection and ask-user capabilities with structured contracts, path containment, redaction, bounded output, and event capture.
 ### Source anchors/citations
-`/Users/adam2/projects/tet/prompt.md`; `plans/ELIXIR_CLI_AGENT_PHASED_IMPLEMENTATION.md`; `/Users/adam2/projects/tet/source/code_puppy-main/code_puppy/tools/__init__.py`; `/Users/adam2/projects/tet/source/code_puppy-main/code_puppy/tools/file_operations.py`; `/Users/adam2/projects/tet/source/code_puppy-main/code_puppy/tools/ask_user_question/handler.py`; `/Users/adam2/projects/tet/source/code_puppy-main/code_puppy/tools/browser/browser_screenshot.py`; `/Users/adam2/projects/tet/check this plans/tet agent_platform_minimal_core.md`.
+`prompt.md`; `plans/ELIXIR_CLI_AGENT_PHASED_IMPLEMENTATION.md`; `source/code_puppy-main/code_puppy/tools/__init__.py`; `source/code_puppy-main/code_puppy/tools/file_operations.py`; `source/code_puppy-main/code_puppy/tools/ask_user_question/handler.py`; `source/code_puppy-main/code_puppy/tools/browser/browser_screenshot.py`; `check this plans/tet agent_platform_minimal_core.md`.
 ### Related backlog IDs/issues
 `tet-db6.20` / `BD-0020`; `tet-db6.21` / `BD-0021`; `tet-db6.22` / `BD-0022`.
 ### Architecture decisions/ADRs
@@ -172,7 +172,7 @@ Tool contract tests, path fuzz results, redaction artifacts, and persisted read-
 ### Phase intent
 Hook system, task enforcement, and plan mode: enforce deterministic task gates, priority hooks, plan-mode restrictions, guidance, and the five cross-phase invariants.
 ### Source anchors/citations
-`/Users/adam2/projects/tet/prompt.md`; `plans/ELIXIR_CLI_AGENT_PHASED_IMPLEMENTATION.md`; `/Users/adam2/projects/tet/check this plans/swarm-sdk-architecture.pdf`; `/Users/adam2/projects/tet/source/code_puppy-main/code_puppy/hook_engine/README.md`; `/Users/adam2/projects/tet/source/code_puppy-main/code_puppy/hook_engine/engine.py`; `/Users/adam2/projects/tet/source/code_puppy-main/code_puppy/callbacks.py`; `/Users/adam2/projects/tet/source/codex-main/codex-rs/hooks/src/engine/dispatcher.rs`.
+`prompt.md`; `plans/ELIXIR_CLI_AGENT_PHASED_IMPLEMENTATION.md`; `check this plans/swarm-sdk-architecture.pdf`; `source/code_puppy-main/code_puppy/hook_engine/README.md`; `source/code_puppy-main/code_puppy/hook_engine/engine.py`; `source/code_puppy-main/code_puppy/callbacks.py`; `source/codex-main/codex-rs/hooks/src/engine/dispatcher.rs`.
 ### Related backlog IDs/issues
 `tet-db6.23` / `BD-0023`; `tet-db6.24` / `BD-0024`; `tet-db6.25` / `BD-0025`; `tet-db6.26` / `BD-0026`.
 ### Architecture decisions/ADRs
@@ -195,7 +195,7 @@ Invariant CI output, hook trace events, plan-mode blocked attempt artifact, and 
 ### Phase intent
 Mutating tools behind gates: add write/edit/patch/shell/git/test execution only after task, category, approval, sandbox, diff, rollback, and audit gates.
 ### Source anchors/citations
-`/Users/adam2/projects/tet/prompt.md`; `plans/ELIXIR_CLI_AGENT_PHASED_IMPLEMENTATION.md`; `/Users/adam2/projects/tet/source/code_puppy-main/code_puppy/tools/file_modifications.py`; `/Users/adam2/projects/tet/source/code_puppy-main/code_puppy/tools/command_runner.py`; `/Users/adam2/projects/tet/source/code_puppy-main/code_puppy/plugins/shell_safety/agent_shell_safety.py`; `/Users/adam2/projects/tet/source/codex-main/codex-rs/core/src/exec_policy.rs`; `/Users/adam2/projects/tet/check this plans/plan claude/plan_v0.3/upgrades/12_durable_execution.md`.
+`prompt.md`; `plans/ELIXIR_CLI_AGENT_PHASED_IMPLEMENTATION.md`; `source/code_puppy-main/code_puppy/tools/file_modifications.py`; `source/code_puppy-main/code_puppy/tools/command_runner.py`; `source/code_puppy-main/code_puppy/plugins/shell_safety/agent_shell_safety.py`; `source/codex-main/codex-rs/core/src/exec_policy.rs`; `check this plans/plan claude/plan_v0.3/upgrades/12_durable_execution.md`.
 ### Related backlog IDs/issues
 `tet-db6.27` / `BD-0027`; `tet-db6.28` / `BD-0028`; `tet-db6.29` / `BD-0029`; `tet-db6.30` / `BD-0030`.
 ### Architecture decisions/ADRs
@@ -218,7 +218,7 @@ Patch approval transcript, rollback fixture, verifier artifact, blocked shell ev
 ### Phase intent
 Steering agent and guidance loop: add a Ring-2 relevance evaluator that can continue, focus, guide, or block after deterministic gates pass.
 ### Source anchors/citations
-`/Users/adam2/projects/tet/prompt.md`; `plans/ELIXIR_CLI_AGENT_PHASED_IMPLEMENTATION.md`; `/Users/adam2/projects/tet/check this plans/swarm-sdk-architecture.pdf`; `/Users/adam2/projects/tet/source/code_puppy-main/code_puppy/agents/prompt_reviewer.py`; `/Users/adam2/projects/tet/source/code_puppy-main/code_puppy/hook_engine/README.md`; `/Users/adam2/projects/tet/source/codex-main/codex-rs/hooks/src/engine/dispatcher.rs`.
+`prompt.md`; `plans/ELIXIR_CLI_AGENT_PHASED_IMPLEMENTATION.md`; `check this plans/swarm-sdk-architecture.pdf`; `source/code_puppy-main/code_puppy/agents/prompt_reviewer.py`; `source/code_puppy-main/code_puppy/hook_engine/README.md`; `source/codex-main/codex-rs/hooks/src/engine/dispatcher.rs`.
 ### Related backlog IDs/issues
 `tet-db6.31` / `BD-0031`; `tet-db6.32` / `BD-0032`; `tet-db6.33` / `BD-0033`.
 ### Architecture decisions/ADRs
@@ -241,7 +241,7 @@ Decision fixture output, no-override test results, guidance snapshots, and persi
 ### Phase intent
 State, memory, artifacts, and checkpoints: implement durable Event Log, Session Memory, Task Memory, Finding Store, Persistent Memory, Project Lessons, Artifact Store, Error Log, Repair Queue, checkpoints, replay, and retention.
 ### Source anchors/citations
-`/Users/adam2/projects/tet/prompt.md`; `plans/ELIXIR_CLI_AGENT_PHASED_IMPLEMENTATION.md`; `/Users/adam2/projects/tet/source/code_puppy-main/code_puppy/session_storage.py`; `/Users/adam2/projects/tet/source/code_puppy-main/code_puppy/messaging/bus.py`; `/Users/adam2/projects/tet/source/codex-main/codex-rs/state/migrations/0001_threads.sql`; `/Users/adam2/projects/tet/source/codex-main/codex-rs/state/migrations/0014_agent_jobs.sql`; `/Users/adam2/projects/tet/source/codex-main/codex-rs/thread-store/src/store.rs`; `/Users/adam2/projects/tet/source/codex-main/codex-rs/memories/README.md`; `/Users/adam2/projects/tet/check this plans/plan claude/plan_v0.3/upgrades/12_durable_execution.md`.
+`prompt.md`; `plans/ELIXIR_CLI_AGENT_PHASED_IMPLEMENTATION.md`; `source/code_puppy-main/code_puppy/session_storage.py`; `source/code_puppy-main/code_puppy/messaging/bus.py`; `source/codex-main/codex-rs/state/migrations/0001_threads.sql`; `source/codex-main/codex-rs/state/migrations/0014_agent_jobs.sql`; `source/codex-main/codex-rs/thread-store/src/store.rs`; `source/codex-main/codex-rs/memories/README.md`; `check this plans/plan claude/plan_v0.3/upgrades/12_durable_execution.md`.
 ### Related backlog IDs/issues
 `tet-db6.34` / `BD-0034`; `tet-db6.35` / `BD-0035`; `tet-db6.36` / `BD-0036`; `tet-db6.37` / `BD-0037`.
 ### Architecture decisions/ADRs
@@ -264,7 +264,7 @@ Store contract report, replay fixture, checkpoint restore transcript, artifact i
 ### Phase intent
 Code Puppy specialized profile parity: map Code Puppy planners, reviewers, QA, security, packager/retriever, JSON/data, and repair behavior into Tet profiles or bounded workers.
 ### Source anchors/citations
-`/Users/adam2/projects/tet/prompt.md`; `plans/ELIXIR_CLI_AGENT_PHASED_IMPLEMENTATION.md`; `/Users/adam2/projects/tet/source/code_puppy-main/code_puppy/agents/agent_manager.py`; `/Users/adam2/projects/tet/source/code_puppy-main/code_puppy/agents/agent_planning.py`; `/Users/adam2/projects/tet/source/code_puppy-main/code_puppy/agents/agent_qa_expert.py`; `/Users/adam2/projects/tet/source/code_puppy-main/code_puppy/agents/agent_security_auditor.py`; `/Users/adam2/projects/tet/source/code_puppy-main/code_puppy/agents/pack/shepherd.py`; `/Users/adam2/projects/tet/source/code_puppy-main/code_puppy/agents/pack/watchdog.py`; `/Users/adam2/projects/tet/source/code_puppy-main/code_puppy/agents/pack/retriever.py`; `/Users/adam2/projects/tet/source/code_puppy-main/code_puppy/agents/json_agent.py`.
+`prompt.md`; `plans/ELIXIR_CLI_AGENT_PHASED_IMPLEMENTATION.md`; `source/code_puppy-main/code_puppy/agents/agent_manager.py`; `source/code_puppy-main/code_puppy/agents/agent_planning.py`; `source/code_puppy-main/code_puppy/agents/agent_qa_expert.py`; `source/code_puppy-main/code_puppy/agents/agent_security_auditor.py`; `source/code_puppy-main/code_puppy/agents/pack/shepherd.py`; `source/code_puppy-main/code_puppy/agents/pack/watchdog.py`; `source/code_puppy-main/code_puppy/agents/pack/retriever.py`; `source/code_puppy-main/code_puppy/agents/json_agent.py`.
 ### Related backlog IDs/issues
 `tet-db6.38` / `BD-0038`; `tet-db6.39` / `BD-0039`; `tet-db6.40` / `BD-0040`.
 ### Architecture decisions/ADRs
@@ -287,7 +287,7 @@ Published parity matrix, validated profile registry, structured-output fixture r
 ### Phase intent
 MCP integration: load MCP servers as health-checked, namespaced, policy-gated typed tools with lifecycle, reload, conflict handling, trust, and audit capture.
 ### Source anchors/citations
-`/Users/adam2/projects/tet/prompt.md`; `plans/ELIXIR_CLI_AGENT_PHASED_IMPLEMENTATION.md`; `/Users/adam2/projects/tet/source/code_puppy-main/code_puppy/mcp_/manager.py`; `/Users/adam2/projects/tet/source/code_puppy-main/code_puppy/command_line/mcp/status_command.py`; `/Users/adam2/projects/tet/source/code_puppy-main/code_puppy/agents/_builder.py`; `/Users/adam2/projects/tet/source/code_puppy-main/code_puppy/tools/__init__.py`; `/Users/adam2/projects/tet/source/codex-main/codex-rs/core/src/mcp_tool_call.rs`.
+`prompt.md`; `plans/ELIXIR_CLI_AGENT_PHASED_IMPLEMENTATION.md`; `source/code_puppy-main/code_puppy/mcp_/manager.py`; `source/code_puppy-main/code_puppy/command_line/mcp/status_command.py`; `source/code_puppy-main/code_puppy/agents/_builder.py`; `source/code_puppy-main/code_puppy/tools/__init__.py`; `source/codex-main/codex-rs/core/src/mcp_tool_call.rs`.
 ### Related backlog IDs/issues
 `tet-db6.41` / `BD-0041`; `tet-db6.42` / `BD-0042`; `tet-db6.43` / `BD-0043`.
 ### Architecture decisions/ADRs
@@ -310,7 +310,7 @@ MCP lifecycle fixture output, conflict test logs, policy matrix results, and aud
 ### Phase intent
 Subagents and parallel helper agents: add bounded fan-out for research/review/testing while preserving the Universal Agent Runtime as parent authority.
 ### Source anchors/citations
-`/Users/adam2/projects/tet/prompt.md`; `plans/ELIXIR_CLI_AGENT_PHASED_IMPLEMENTATION.md`; `/Users/adam2/projects/tet/source/code_puppy-main/code_puppy/tools/agent_tools.py`; `/Users/adam2/projects/tet/source/code_puppy-main/code_puppy/agents/subagent_stream_handler.py`; `/Users/adam2/projects/tet/source/code_puppy-main/code_puppy/agents/pack/retriever.py`; `/Users/adam2/projects/tet/source/jido-main/README.md`; `/Users/adam2/projects/tet/source/oh-my-pi-main/README.md`; `docs/research/BD-0001_SOURCE_INVENTORY_AND_MISSING_INPUT_REPORT.md` for missing exact G-domain/agent-domain inputs.
+`prompt.md`; `plans/ELIXIR_CLI_AGENT_PHASED_IMPLEMENTATION.md`; `source/code_puppy-main/code_puppy/tools/agent_tools.py`; `source/code_puppy-main/code_puppy/agents/subagent_stream_handler.py`; `source/code_puppy-main/code_puppy/agents/pack/retriever.py`; `source/jido-main/README.md`; `source/oh-my-pi-main/README.md`; `docs/research/BD-0001_SOURCE_INVENTORY_AND_MISSING_INPUT_REPORT.md` for missing exact G-domain/agent-domain inputs.
 ### Related backlog IDs/issues
 `tet-db6.44` / `BD-0044`; `tet-db6.45` / `BD-0045`; `tet-db6.46` / `BD-0046`.
 ### Architecture decisions/ADRs
@@ -333,7 +333,7 @@ Fan-out fixture output, cancellation trace, merge artifact, budget enforcement l
 ### Phase intent
 Prompt Lab / LLExpert-style command correction: add prompt presets/refinement and safe command suggestions that never auto-run dangerous commands.
 ### Source anchors/citations
-`/Users/adam2/projects/tet/prompt.md`; `plans/ELIXIR_CLI_AGENT_PHASED_IMPLEMENTATION.md`; `/Users/adam2/projects/tet/source/code_puppy-main/code_puppy/agents/prompt_reviewer.py`; `/Users/adam2/projects/tet/source/code_puppy-main/code_puppy/tools/command_runner.py`; `/Users/adam2/projects/tet/source/code_puppy-main/code_puppy/command_line/shell_passthrough.py`; `/Users/adam2/projects/tet/source/code_puppy-main/code_puppy/plugins/shell_safety/agent_shell_safety.py`; `/Users/adam2/projects/tet/source/llxprt-code-main/README.md`.
+`prompt.md`; `plans/ELIXIR_CLI_AGENT_PHASED_IMPLEMENTATION.md`; `source/code_puppy-main/code_puppy/agents/prompt_reviewer.py`; `source/code_puppy-main/code_puppy/tools/command_runner.py`; `source/code_puppy-main/code_puppy/command_line/shell_passthrough.py`; `source/code_puppy-main/code_puppy/plugins/shell_safety/agent_shell_safety.py`; `source/llxprt-code-main/README.md`.
 ### Related backlog IDs/issues
 `tet-db6.47` / `BD-0047`; `tet-db6.48` / `BD-0048`; `tet-db6.49` / `BD-0049`.
 ### Architecture decisions/ADRs
@@ -356,7 +356,7 @@ No-auto-run fixture output, dangerous command risk table, prompt refinement snap
 ### Phase intent
 DX, theming, plugins: improve history, fuzzy completion, themes, plugin loading, and lean packaging while keeping policy and release size under control.
 ### Source anchors/citations
-`/Users/adam2/projects/tet/prompt.md`; `plans/ELIXIR_CLI_AGENT_PHASED_IMPLEMENTATION.md`; `/Users/adam2/projects/tet/source/code_puppy-main/code_puppy/plugins/__init__.py`; `/Users/adam2/projects/tet/source/code_puppy-main/code_puppy/plugins/agent_skills/discovery.py`; `/Users/adam2/projects/tet/source/code_puppy-main/code_puppy/command_line/prompt_toolkit_completion.py`; `/Users/adam2/projects/tet/source/oh-my-pi-main/README.md`; `/Users/adam2/projects/tet/source/oh-my-pi-main/docs/custom-tools.md`; `/Users/adam2/projects/tet/source/pi-mono-main/README.md`; `/Users/adam2/projects/tet/source/pi-mono-main/scripts/build-binaries.sh`.
+`prompt.md`; `plans/ELIXIR_CLI_AGENT_PHASED_IMPLEMENTATION.md`; `source/code_puppy-main/code_puppy/plugins/__init__.py`; `source/code_puppy-main/code_puppy/plugins/agent_skills/discovery.py`; `source/code_puppy-main/code_puppy/command_line/prompt_toolkit_completion.py`; `source/oh-my-pi-main/README.md`; `source/oh-my-pi-main/docs/custom-tools.md`; `source/pi-mono-main/README.md`; `source/pi-mono-main/scripts/build-binaries.sh`.
 ### Related backlog IDs/issues
 `tet-db6.50` / `BD-0050`; `tet-db6.51` / `BD-0051`; `tet-db6.52` / `BD-0052`.
 ### Architecture decisions/ADRs
@@ -379,7 +379,7 @@ Plugin capability test output, completion/theme snapshots, startup/size report, 
 ### Phase intent
 Remote execution and VPS worker agents: add SSH-based remote workers for heavy tasks while local Tet remains the control plane and policy authority.
 ### Source anchors/citations
-`/Users/adam2/projects/tet/prompt.md`; `plans/ELIXIR_CLI_AGENT_PHASED_IMPLEMENTATION.md`; `/Users/adam2/projects/tet/source/codex-main/codex-rs/exec-server/README.md`; `/Users/adam2/projects/tet/source/codex-main/scripts/test-remote-env.sh`; `/Users/adam2/projects/tet/source/codex-main/codex-rs/core/src/exec_policy.rs`; `/Users/adam2/projects/tet/check this plans/plan claude/plan_v0.3/upgrades/13_operations_and_telemetry.md`; `/Users/adam2/projects/tet/check this plans/plan claude/plan_v0.3/upgrades/14_secrets_and_redaction.md`.
+`prompt.md`; `plans/ELIXIR_CLI_AGENT_PHASED_IMPLEMENTATION.md`; `source/codex-main/codex-rs/exec-server/README.md`; `source/codex-main/scripts/test-remote-env.sh`; `source/codex-main/codex-rs/core/src/exec_policy.rs`; `check this plans/plan claude/plan_v0.3/upgrades/13_operations_and_telemetry.md`; `check this plans/plan claude/plan_v0.3/upgrades/14_secrets_and_redaction.md`.
 ### Related backlog IDs/issues
 `tet-db6.53` / `BD-0053`; `tet-db6.54` / `BD-0054`; `tet-db6.55` / `BD-0055`; `tet-db6.56` / `BD-0056`.
 ### Architecture decisions/ADRs
@@ -402,7 +402,7 @@ Remote bootstrap transcript, heartbeat/cancel fixture, checksum-verified artifac
 ### Phase intent
 Self-healing and Nano Repair Mode: capture failures, queue repairs, diagnose under debugging gates, patch only with approvals, validate, hot-reload/restart safely, rollback failures, and persist lessons.
 ### Source anchors/citations
-`/Users/adam2/projects/tet/prompt.md`; `plans/ELIXIR_CLI_AGENT_PHASED_IMPLEMENTATION.md`; `/Users/adam2/projects/tet/source/code_puppy-main/code_puppy/error_logging.py`; `/Users/adam2/projects/tet/source/code_puppy-main/code_puppy/agents/_diagnostics.py`; `/Users/adam2/projects/tet/check this plans/plan claude/plan_v0.3/upgrades/12_durable_execution.md`; `/Users/adam2/projects/tet/source/codex-main/codex-rs/core/src/exec_policy.rs`; `/Users/adam2/projects/tet/check this plans/plan claude/plan_v0.3/upgrades/13_operations_and_telemetry.md`.
+`prompt.md`; `plans/ELIXIR_CLI_AGENT_PHASED_IMPLEMENTATION.md`; `source/code_puppy-main/code_puppy/error_logging.py`; `source/code_puppy-main/code_puppy/agents/_diagnostics.py`; `check this plans/plan claude/plan_v0.3/upgrades/12_durable_execution.md`; `source/codex-main/codex-rs/core/src/exec_policy.rs`; `check this plans/plan claude/plan_v0.3/upgrades/13_operations_and_telemetry.md`.
 ### Related backlog IDs/issues
 `tet-db6.57` / `BD-0057`; `tet-db6.58` / `BD-0058`; `tet-db6.59` / `BD-0059`; `tet-db6.60` / `BD-0060`; `tet-db6.61` / `BD-0061`; `tet-db6.62` / `BD-0062`; `tet-db6.63` / `BD-0063`.
 ### Architecture decisions/ADRs
@@ -425,7 +425,7 @@ Failure injection logs, repair workflow transcript, compile/smoke verifier artif
 ### Phase intent
 Advanced web/remote observability: expand optional screens for sessions, tasks, artifacts, memory, Error Log, Repair Queue, approvals, and remote workers while preserving CLI parity.
 ### Source anchors/citations
-`/Users/adam2/projects/tet/prompt.md`; `plans/ELIXIR_CLI_AGENT_PHASED_IMPLEMENTATION.md`; `/Users/adam2/projects/tet/source/code_puppy-main/code_puppy/api/app.py`; `/Users/adam2/projects/tet/source/code_puppy-main/code_puppy/api/websocket.py`; `/Users/adam2/projects/tet/check this plans/plan 3/plan/docs/01_architecture.md`; `/Users/adam2/projects/tet/check this plans/plan claude/plan_v0.3/upgrades/13_operations_and_telemetry.md`.
+`prompt.md`; `plans/ELIXIR_CLI_AGENT_PHASED_IMPLEMENTATION.md`; `source/code_puppy-main/code_puppy/api/app.py`; `source/code_puppy-main/code_puppy/api/websocket.py`; `check this plans/plan 3/plan/docs/01_architecture.md`; `check this plans/plan claude/plan_v0.3/upgrades/13_operations_and_telemetry.md`.
 ### Related backlog IDs/issues
 `tet-db6.64` / `BD-0064`; `tet-db6.65` / `BD-0065`; `tet-db6.66` / `BD-0066`.
 ### Architecture decisions/ADRs
@@ -448,7 +448,7 @@ Parity matrix, web facade test output, removability CI result, rendered remote/r
 ### Phase intent
 Security, audit, sandbox, and compliance hardening: formalize policy, secrets, redaction, audit export, sandbox boundaries, remote/MCP/repair trust, and compliance docs.
 ### Source anchors/citations
-`/Users/adam2/projects/tet/prompt.md`; `plans/ELIXIR_CLI_AGENT_PHASED_IMPLEMENTATION.md`; `/Users/adam2/projects/tet/source/codex-main/codex-rs/core/src/exec_policy.rs`; `/Users/adam2/projects/tet/check this plans/plan claude/plan_v0.3/upgrades/14_secrets_and_redaction.md`; `/Users/adam2/projects/tet/check this plans/plan claude/plan_v0.3/upgrades/13_operations_and_telemetry.md`; `/Users/adam2/projects/tet/source/llxprt-code-main/CONTRIBUTING.md`; `/Users/adam2/projects/tet/source/code_puppy-main/code_puppy/plugins/shell_safety/agent_shell_safety.py`.
+`prompt.md`; `plans/ELIXIR_CLI_AGENT_PHASED_IMPLEMENTATION.md`; `source/codex-main/codex-rs/core/src/exec_policy.rs`; `check this plans/plan claude/plan_v0.3/upgrades/14_secrets_and_redaction.md`; `check this plans/plan claude/plan_v0.3/upgrades/13_operations_and_telemetry.md`; `source/llxprt-code-main/CONTRIBUTING.md`; `source/code_puppy-main/code_puppy/plugins/shell_safety/agent_shell_safety.py`.
 ### Related backlog IDs/issues
 `tet-db6.67` / `BD-0067`; `tet-db6.68` / `BD-0068`; `tet-db6.69` / `BD-0069`; `tet-db6.70` / `BD-0070`.
 ### Architecture decisions/ADRs
@@ -471,7 +471,7 @@ Policy matrix test output, redaction property report, audit export artifact, san
 ### Phase intent
 Packaging, documentation, migration, and release: ship standalone CLI and optional web packages, migration tooling, docs, CI, release acceptance, and rollback guidance.
 ### Source anchors/citations
-`/Users/adam2/projects/tet/prompt.md`; `plans/ELIXIR_CLI_AGENT_PHASED_IMPLEMENTATION.md`; `/Users/adam2/projects/tet/source/code_puppy-main/code_puppy/config.py`; `/Users/adam2/projects/tet/source/code_puppy-main/code_puppy/models.json`; `/Users/adam2/projects/tet/source/code_puppy-main/code_puppy/session_storage.py`; `/Users/adam2/projects/tet/check this plans/plan claude/plan_v0.3/FINAL_ULTIMATE_PLAN.md`; `/Users/adam2/projects/tet/check this plans/plan claude/plan_v0.3/upgrades/17_phasing_and_scope.md`; `/Users/adam2/projects/tet/check this plans/plan claude/plan_v0.3/upgrades/19_migration_path.md`; `/Users/adam2/projects/tet/source/pi-mono-main/README.md`; `/Users/adam2/projects/tet/source/pi-mono-main/scripts/build-binaries.sh`; `/Users/adam2/projects/tet/check this plans/plan claude/plan_v0.3/upgrades/18_test_strategy.md`.
+`prompt.md`; `plans/ELIXIR_CLI_AGENT_PHASED_IMPLEMENTATION.md`; `source/code_puppy-main/code_puppy/config.py`; `source/code_puppy-main/code_puppy/models.json`; `source/code_puppy-main/code_puppy/session_storage.py`; `check this plans/plan claude/plan_v0.3/FINAL_ULTIMATE_PLAN.md`; `check this plans/plan claude/plan_v0.3/upgrades/17_phasing_and_scope.md`; `check this plans/plan claude/plan_v0.3/upgrades/19_migration_path.md`; `source/pi-mono-main/README.md`; `source/pi-mono-main/scripts/build-binaries.sh`; `check this plans/plan claude/plan_v0.3/upgrades/18_test_strategy.md`.
 ### Related backlog IDs/issues
 `tet-db6.71` / `BD-0071`; `tet-db6.72` / `BD-0072`; `tet-db6.73` / `BD-0073`; `tet-db6.74` / `BD-0074`.
 ### Architecture decisions/ADRs

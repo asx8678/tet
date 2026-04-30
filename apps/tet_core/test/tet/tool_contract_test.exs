@@ -19,7 +19,7 @@ defmodule Tet.ToolContractTest do
   @correlation_ids ["session_id", "task_id", "tool_call_id"]
   @redaction_sinks [:provider_context, :event_log, :artifact_store, :display, :log]
   @forbidden_source_reference_prefixes ["/", "~"]
-  @forbidden_source_reference_fragments ["/Users/", "/home/"]
+  @forbidden_source_reference_fragments ["/" <> "Users/", "/" <> "home/"]
 
   test "catalog exposes the six BD-0020 read-only contracts in stable order" do
     assert ReadOnlyContracts.names() == @expected_names
