@@ -88,8 +88,9 @@ Tet.send_prompt(session_id, prompt, opts)
 Tet.ask(prompt, opts)
 Tet.list_messages(session_id, opts)
 Tet.list_events(session_id, opts)
+Tet.subscribe_events()
+Tet.subscribe_events(session_id)
 # Future examples:
-# Tet.subscribe(session_id, opts)
 # Tet.approve_patch(approval_id, opts)
 # Tet.reject_patch(approval_id, opts)
 # Tet.run_verifier(session_id, verifier_name, opts)
@@ -187,10 +188,10 @@ Runtime events originate from `tet_runtime` and durable records, not from
 Phoenix PubSub.
 
 A future web adapter may subscribe through facade functions such as
-`Tet.subscribe/2` once implemented, then bridge those events to connected
-browsers. Phoenix PubSub may be a browser delivery mechanism inside the optional
-web app; it must not replace `Tet.EventBus` or become the authoritative runtime
-bus.
+`Tet.subscribe_events/0` or `Tet.subscribe_events/1`, then bridge those events to
+connected browsers. Phoenix PubSub may be a browser delivery mechanism inside
+the optional web app; it must not replace `Tet.EventBus` or become the
+authoritative runtime bus.
 
 CLI-created sessions and web-rendered sessions must observe the same durable
 messages, approvals, artifacts, and event sequence.

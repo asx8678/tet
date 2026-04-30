@@ -6,7 +6,14 @@ defmodule Tet.ChatTest do
 
     File.rm_rf!(tmp_root)
     File.mkdir_p!(tmp_root)
-    on_exit(fn -> File.rm_rf!(tmp_root) end)
+
+    old_events_path = System.get_env("TET_EVENTS_PATH")
+    System.delete_env("TET_EVENTS_PATH")
+
+    on_exit(fn ->
+      restore_env(%{"TET_EVENTS_PATH" => old_events_path})
+      File.rm_rf!(tmp_root)
+    end)
 
     {:ok, tmp_root: tmp_root}
   end
@@ -46,6 +53,50 @@ defmodule Tet.ChatTest do
     assert assistant_message.session_id == session_id
     assert is_binary(assistant_message.id)
     assert is_binary(assistant_message.timestamp)
+  end
+
+  test "timeline persists chat events and facade subscription receives runtime fanout", %{
+    tmp_root: tmp_root
+  } do
+    path = tmp_path(tmp_root, "timeline")
+    session_id = unique_session("timeline")
+
+    assert {:ok, _subscription} = Tet.subscribe_events(session_id)
+
+    assert {:ok, _result} =
+             Tet.ask("timeline please", provider: :mock, store_path: path, session_id: session_id)
+
+    live_events = collect_tet_events(session_id)
+
+    assert Enum.map(live_events, & &1.type) == [
+             :message_persisted,
+             :assistant_chunk,
+             :assistant_chunk,
+             :assistant_chunk,
+             :message_persisted
+           ]
+
+    assert {:ok, events} = Tet.list_events(session_id, store_path: path)
+
+    assert Enum.map(events, & &1.sequence) == [1, 2, 3, 4, 5]
+
+    assert Enum.map(events, & &1.type) == [
+             :message_persisted,
+             :assistant_chunk,
+             :assistant_chunk,
+             :assistant_chunk,
+             :message_persisted
+           ]
+
+    assert Enum.all?(events, &(&1.session_id == session_id))
+    assert event_value(List.first(events), :role) == "user"
+    assert event_value(List.last(events), :role) == "assistant"
+
+    assert Enum.map(Enum.slice(events, 1, 3), &event_value(&1, :content)) == [
+             "mock",
+             ": ",
+             "timeline please"
+           ]
   end
 
   test "session resume appends turns under the same session id", %{tmp_root: tmp_root} do
@@ -271,6 +322,19 @@ defmodule Tet.ChatTest do
              Tet.list_messages(unique_session("non-map"), store_path: path)
   end
 
+  defp collect_tet_events(session_id, acc \\ []) do
+    receive do
+      {:tet_event, {:session, ^session_id}, %Tet.Event{} = event} ->
+        collect_tet_events(session_id, [event | acc])
+    after
+      50 -> Enum.reverse(acc)
+    end
+  end
+
+  defp event_value(%Tet.Event{payload: payload}, key) do
+    Map.get(payload, key, Map.get(payload, Atom.to_string(key)))
+  end
+
   defp assistant_chunks(acc \\ []) do
     receive do
       {:event, %Tet.Event{type: :assistant_chunk, payload: %{content: content}}} ->
@@ -353,11 +417,15 @@ defmodule Tet.ChatTest do
     try do
       fun.()
     after
-      Enum.each(old_values, fn
-        {name, nil} -> System.delete_env(name)
-        {name, value} -> System.put_env(name, value)
-      end)
+      restore_env(old_values)
     end
+  end
+
+  defp restore_env(vars) do
+    Enum.each(vars, fn
+      {name, nil} -> System.delete_env(name)
+      {name, value} -> System.put_env(name, value)
+    end)
   end
 
   defp start_openai_stream_server(chunks, opts \\ []) do

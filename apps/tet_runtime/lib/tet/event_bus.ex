@@ -8,16 +8,27 @@ defmodule Tet.EventBus do
 
   @registry Tet.EventBus.Registry
 
+  @doc "Returns true when the runtime event bus Registry is supervised."
+  def started? do
+    is_pid(Process.whereis(@registry))
+  end
+
   @doc "Subscribe the caller to a runtime topic."
   def subscribe(topic) do
-    Registry.register(@registry, topic, [])
+    if started?() do
+      Registry.register(@registry, topic, [])
+    else
+      {:error, :event_bus_not_started}
+    end
   end
 
   @doc "Publish an event term to subscribers of a runtime topic."
   def publish(topic, event) do
-    Registry.dispatch(@registry, topic, fn entries ->
-      for {pid, _value} <- entries, do: send(pid, {:tet_event, topic, event})
-    end)
+    if started?() do
+      Registry.dispatch(@registry, topic, fn entries ->
+        for {pid, _value} <- entries, do: send(pid, {:tet_event, topic, event})
+      end)
+    end
 
     :ok
   end

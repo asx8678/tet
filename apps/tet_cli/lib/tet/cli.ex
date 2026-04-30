@@ -39,6 +39,12 @@ defmodule Tet.CLI do
       ["session" | rest] ->
         session(rest)
 
+      ["events" | rest] ->
+        events(rest)
+
+      ["timeline" | rest] ->
+        events(rest)
+
       ["ask" | args] ->
         ask(args)
 
@@ -95,6 +101,26 @@ defmodule Tet.CLI do
     64
   end
 
+  defp events(args) do
+    case parse_session_filter(args) do
+      {:ok, session_id} ->
+        case Tet.list_events(session_id) do
+          {:ok, events} ->
+            IO.puts(Render.events(events))
+            0
+
+          {:error, reason} ->
+            IO.puts(:stderr, "tet events failed: #{Render.error(reason)}")
+            1
+        end
+
+      {:error, message} ->
+        IO.puts(:stderr, message)
+        IO.puts(:stderr, "usage: tet events [--session SESSION_ID]")
+        64
+    end
+  end
+
   defp ask(args) do
     case parse_ask(args, []) do
       {:ok, opts, prompt_parts} ->
@@ -141,6 +167,32 @@ defmodule Tet.CLI do
   end
 
   defp parse_ask(prompt_parts, opts), do: {:ok, Enum.reverse(opts), prompt_parts}
+
+  defp parse_session_filter([]), do: {:ok, nil}
+
+  defp parse_session_filter(["--session", session_id]) do
+    session_id = String.trim(session_id)
+
+    if session_id == "" do
+      {:error, "--session requires a non-empty session id"}
+    else
+      {:ok, session_id}
+    end
+  end
+
+  defp parse_session_filter(["--session"]), do: {:error, "--session requires a session id"}
+
+  defp parse_session_filter(["--session=" <> session_id]) do
+    session_id = String.trim(session_id)
+
+    if session_id == "" do
+      {:error, "--session requires a non-empty session id"}
+    else
+      {:ok, session_id}
+    end
+  end
+
+  defp parse_session_filter(_args), do: {:error, "unknown tet events option"}
 
   defp run_ask(prompt, opts) do
     on_event = fn event ->
