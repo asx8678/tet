@@ -90,10 +90,18 @@ defmodule Tet.Runtime.Tools.PolicyRunner do
     workspace_root = Keyword.get(opts, :workspace_root)
 
     cond do
-      is_nil(cwd) -> {:error, sandbox_denial("No working directory specified")}
-      is_nil(workspace_root) -> {:error, sandbox_denial("No workspace root specified")}
-      not is_binary(cwd) -> {:error, sandbox_denial("Invalid working directory")}
-      not is_binary(workspace_root) -> {:error, sandbox_denial("Invalid workspace root")}
+      is_nil(cwd) ->
+        {:error, sandbox_denial("No working directory specified")}
+
+      is_nil(workspace_root) ->
+        {:error, sandbox_denial("No workspace root specified")}
+
+      not is_binary(cwd) ->
+        {:error, sandbox_denial("Invalid working directory")}
+
+      not is_binary(workspace_root) ->
+        {:error, sandbox_denial("Invalid workspace root")}
+
       not PathResolver.contained?(cwd, workspace_root) ->
         {:error, sandbox_denial("Working directory escapes workspace")}
 
@@ -125,24 +133,46 @@ defmodule Tet.Runtime.Tools.PolicyRunner do
     timeout = Keyword.get(opts, :timeout, 30_000)
     start = System.monotonic_time(:millisecond)
 
-    task = Task.async(fn ->
-      System.cmd(hd(command_vector), tl(command_vector),
-        cd: cwd,
-        stderr_to_stdout: true,
-        parallelism: false
-      )
-    end)
+    task =
+      Task.async(fn ->
+        System.cmd(hd(command_vector), tl(command_vector),
+          cd: cwd,
+          stderr_to_stdout: true,
+          parallelism: false
+        )
+      end)
 
     case Task.yield(task, timeout) || Task.shutdown(task) do
       {:ok, {output, exit_code}} when is_binary(output) and is_integer(exit_code) ->
         duration = System.monotonic_time(:millisecond) - start
         # stderr is merged into stdout when stderr_to_stdout: true
-        build_artifact(command_vector, cwd, risk, output, "", exit_code, duration, tool_call_id, task_id)
+        build_artifact(
+          command_vector,
+          cwd,
+          risk,
+          output,
+          "",
+          exit_code,
+          duration,
+          tool_call_id,
+          task_id
+        )
 
       {:ok, {output, exit_code}} when is_list(output) and is_integer(exit_code) ->
         duration = System.monotonic_time(:millisecond) - start
         output_str = IO.iodata_to_binary(output)
-        build_artifact(command_vector, cwd, risk, output_str, "", exit_code, duration, tool_call_id, task_id)
+
+        build_artifact(
+          command_vector,
+          cwd,
+          risk,
+          output_str,
+          "",
+          exit_code,
+          duration,
+          tool_call_id,
+          task_id
+        )
 
       nil ->
         {:error, timeout_denial(command_vector, timeout)}
@@ -152,7 +182,17 @@ defmodule Tet.Runtime.Tools.PolicyRunner do
       {:error, internal_denial("Command execution error: #{Exception.message(e)}")}
   end
 
-  defp build_artifact(command_vector, cwd, risk, stdout, stderr, exit_code, duration, tool_call_id, task_id) do
+  defp build_artifact(
+         command_vector,
+         cwd,
+         risk,
+         stdout,
+         stderr,
+         exit_code,
+         duration,
+         tool_call_id,
+         task_id
+       ) do
     case Artifact.new(%{
            command: command_vector,
            risk: risk,
@@ -237,4 +277,3 @@ defmodule Tet.Runtime.Tools.PolicyRunner do
     }
   end
 end
-

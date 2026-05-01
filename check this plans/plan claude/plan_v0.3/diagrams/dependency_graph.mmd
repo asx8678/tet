@@ -1,0 +1,22 @@
+flowchart TB
+  CLI[tet_cli<br/>standalone CLI] --> RUNTIME[tet_runtime<br/>Tet facade · OTP runtime]
+  WEB[tet_web_phoenix<br/>optional LiveView adapter] --> RUNTIME
+  RUNTIME --> CORE[tet_core<br/>domain · policies · behaviours]
+
+  STORE_MEM[tet_store_memory<br/>tests] --> CORE
+  STORE_SQL[tet_store_sqlite<br/>default local] --> CORE
+  STORE_PG[tet_store_postgres<br/>optional server] --> CORE
+
+  RUNTIME -. uses configured store .-> STORE_MEM
+  RUNTIME -. uses configured store .-> STORE_SQL
+  RUNTIME -. uses configured store .-> STORE_PG
+
+  PHX[Phoenix/LiveView deps<br/>web only] -. allowed only in .-> WEB
+
+  FORBID1[forbidden: core -> runtime/web/Phoenix/Ecto]
+  FORBID2[forbidden: runtime -> Phoenix/Plug/TetWeb]
+  FORBID3[forbidden: CLI -> web/store/runtime internals]
+
+  CORE -. must not .-> FORBID1
+  RUNTIME -. must not .-> FORBID2
+  CLI -. must not .-> FORBID3

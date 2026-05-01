@@ -1,0 +1,105 @@
+%% Durable workflow execution — v0.3
+%% One execution of an agent loop, journaled step by step.
+%% Steps use colon-separated names (provider_call:attempt:N).
+%% Each step has an idempotency key derived from a step-type-specific
+%% scoped input. Side effects run only after a `started` row exists;
+%% commit happens only after the side effect succeeds.
+
+flowchart TD
+  Start([User prompt arrives]):::user
+  Start --> Open
+
+  Open[Open or attach Workflow<br/>status = :running]:::store
+  Open --> Compose
+
+  subgraph CP["compose_prompt"]
+    direction TB
+    Compose["start_step<br/>idem = hash(workflow_id,<br/>'compose_prompt',<br/>scoped_input)"]:::step
+    Compose --> ComposeRun["pure: assemble<br/>system + AGENT.md +<br/>history + user msg"]:::pure
+    ComposeRun --> ComposeCommit["commit_step<br/>output = composed_prompt"]:::store
+  end
+
+  ComposeCommit --> ProviderCall
+
+  subgraph PC["provider_call:attempt:N"]
+    direction TB
+    ProviderCall["start_step<br/>idem = hash(workflow_id,<br/>'provider_call:attempt:N',<br/>{compose_prompt_output_id, model, attempt})"]:::step
+    ProviderCall --> Stream["stream events<br/>journal each delta<br/>under LLM.TaskSupervisor"]:::side
+    Stream --> Done{stop_reason?}
+    Done -->|:tool_use| ToolDispatch
+    Done -->|:stop / :length| FinalCommit["commit_step<br/>output = assistant_message"]:::store
+    Done -->|:error retryable| Retry["fail_step<br/>start :attempt:N+1"]:::store
+    Done -->|:error fatal| Fail["fail_step<br/>workflow :failed"]:::store
+  end
+
+  FinalCommit --> Persist["emit_event<br/>message.assistant.saved"]:::side
+  Persist --> Continue{more turns?}
+  Continue -->|no| Complete([Workflow :completed]):::done
+  Continue -->|yes| Compose
+
+  ToolDispatch{tool kind?}:::decision
+  ToolDispatch -->|read tool| ReadRun
+  ToolDispatch -->|write tool: propose_patch| ProposePatch
+
+  subgraph TR["tool_run:&lt;read_tool&gt;"]
+    direction TB
+    ReadRun["start_step<br/>idem = hash(... ,<br/>{tool_name, canonical_args})"]:::step
+    ReadRun --> ReadDo["execute under<br/>Tool.TaskSupervisor"]:::side
+    ReadDo --> ReadRedact["redaction layer 1<br/>journal redacted regions"]:::pure
+    ReadRedact --> ReadCommit["commit_step<br/>output = redacted_result"]:::store
+  end
+
+  ReadCommit --> Compose
+
+  subgraph PP["tool_run:propose_patch"]
+    direction TB
+    ProposePatch["start_step<br/>idem = hash(... ,<br/>{tool_name, args, diff_sha256})"]:::step
+    ProposePatch --> Validate["Tet.Patch.validate<br/>reject if touches<br/>redacted region"]:::pure
+    Validate --> SaveDiff["save diff artifact<br/>create approval row"]:::store
+    SaveDiff --> ProposeCommit["commit_step<br/>workflow :paused_for_approval<br/>executor exits"]:::store
+  end
+
+  ProposeCommit --> Pause([Awaiting human approval]):::pause
+
+  Pause -->|tet patch approve| ApplyEntry
+  Pause -->|tet patch reject| RejectExit([Workflow :completed]):::done
+
+  subgraph PA["patch_apply"]
+    direction TB
+    ApplyEntry["start_step<br/>idem = hash(... ,<br/>{approval_id, diff_sha256})"]:::step
+    ApplyEntry --> Snap["snapshot phase:<br/>write manifest.json atomically<br/>copy pre-state for<br/>modify/delete/rename/mode"]:::side
+    Snap --> Check["git apply --check"]:::side
+    Check -->|fail| ApplyFail["fail_step<br/>:patch_does_not_apply"]:::store
+    Check -->|ok| Apply["git apply<br/>(--index opt-in)"]:::side
+    Apply -->|exit non-zero| Rollback
+    Apply -->|exit zero| ApplyCommit["commit_step<br/>output = applied_files,<br/>created, deleted,<br/>renamed, mode_changes"]:::store
+  end
+
+  ApplyCommit --> Verify
+  ApplyFail --> Compose
+
+  subgraph RB["patch_rollback"]
+    direction TB
+    Rollback["start_step<br/>idem = hash(... ,<br/>{approval_id})"]:::step
+    Rollback --> RollbackRun["per-change-type:<br/>create=rm, delete=restore,<br/>modify=overwrite,<br/>rename=undo,<br/>mode=chmod"]:::side
+    RollbackRun --> RollbackCommit["commit_step<br/>workflow :failed<br/>:patch_torn_recovered"]:::store
+  end
+
+  subgraph VR["verifier_run:&lt;name&gt;"]
+    direction TB
+    Verify["start_step<br/>idem = hash(... ,<br/>{verifier_name,<br/>post_apply_workspace_hash})"]:::step
+    Verify --> VerifyRun["allowlisted name<br/>scrubbed env<br/>under Verification.TaskSupervisor"]:::side
+    VerifyRun --> VerifyCommit["commit_step<br/>output = exit_status,<br/>artifacts"]:::store
+  end
+
+  VerifyCommit --> Compose
+  RollbackCommit --> Compose
+
+  classDef user fill:#dbeafe,stroke:#1e40af,color:#0b1727;
+  classDef store fill:#fef3c7,stroke:#b45309,color:#0b1727;
+  classDef side fill:#fce7f3,stroke:#9d174d,color:#0b1727;
+  classDef pure fill:#dcfce7,stroke:#15803d,color:#0b1727;
+  classDef step fill:#e0e7ff,stroke:#3730a3,color:#0b1727;
+  classDef decision fill:#fef9c3,stroke:#854d0e,color:#0b1727;
+  classDef done fill:#d1fae5,stroke:#065f46,color:#0b1727;
+  classDef pause fill:#fde68a,stroke:#92400e,color:#0b1727;

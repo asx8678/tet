@@ -1,0 +1,51 @@
+%% Supervision tree — v0.3
+%% Sessions are pure data; only workflows have running processes.
+%% Workflows paused for approval do not retain a running executor —
+%% the journal is the durable state.
+
+flowchart TD
+  App[Tet.Application<br/>:one_for_one]:::root
+
+  App --> Tel[Tet.Telemetry]:::worker
+  App --> Cfg[Tet.Config.Loader]:::worker
+  App --> Bus[Tet.EventBus<br/>Registry / :pg]:::worker
+  App --> StoreSup[Tet.Store.Supervisor<br/>:one_for_one]:::sup
+  App --> SessReg[Tet.Runtime.SessionRegistry<br/>unique by session_id]:::worker
+  App --> SessDispatch[Tet.Runtime.SessionSupervisor<br/>dispatch fanout, NO state]:::sup
+  App --> WfSup[Tet.Runtime.WorkflowSupervisor<br/>DynamicSupervisor]:::sup
+  App --> WfRecover[Tet.Runtime.WorkflowRecovery<br/>one-shot at boot]:::worker
+  App --> LlmTask[Tet.LLM.TaskSupervisor<br/>bounded provider streams]:::sup
+  App --> ToolTask[Tet.Tool.TaskSupervisor<br/>bounded tool execution]:::sup
+  App --> VerTask[Tet.Verification.TaskSupervisor<br/>bounded verifier execution]:::sup
+
+  StoreSup --> StoreAdapter[Configured store adapter<br/>memory / sqlite / postgres]:::worker
+
+  WfSup -.->|N executors| WfExec1[WorkflowExecutor<br/>workflow_id A]:::dynamic
+  WfSup -.-> WfExec2[WorkflowExecutor<br/>workflow_id B]:::dynamic
+  WfSup -.-> WfExecN[…]:::dynamic
+
+  LlmTask -.->|streams| Stream1[Provider stream task]:::dynamic
+  LlmTask -.-> StreamN[…]:::dynamic
+
+  ToolTask -.-> Tool1[Tool run task]:::dynamic
+  ToolTask -.-> ToolN[…]:::dynamic
+
+  VerTask -.-> Ver1[Verifier task]:::dynamic
+  VerTask -.-> VerN[…]:::dynamic
+
+  %% Annotations on what's GONE in v0.3
+  Removed1["⊘ Tet.Runtime.SessionWorker<br/>(removed: state lives in journal)"]:::removed
+  Removed2["⊘ Tet.Agent.RuntimeSupervisor<br/>(removed: agent loop is a step program)"]:::removed
+  App -.- Removed1
+  App -.- Removed2
+
+  %% Optional web tree (separate release)
+  WebApp[TetWebPhoenix.Application]:::root
+  WebApp --> WebEndpoint[TetWeb.Endpoint]:::worker
+  WebEndpoint -.->|calls Tet.* facade only| App
+
+  classDef root fill:#dbeafe,stroke:#1e40af,color:#0b1727,font-weight:bold;
+  classDef sup fill:#fef9c3,stroke:#854d0e,color:#0b1727;
+  classDef worker fill:#dcfce7,stroke:#15803d,color:#0b1727;
+  classDef dynamic fill:#fce7f3,stroke:#9d174d,color:#0b1727,stroke-dasharray: 4 2;
+  classDef removed fill:#fee2e2,stroke:#991b1b,color:#0b1727,stroke-dasharray: 6 4;
