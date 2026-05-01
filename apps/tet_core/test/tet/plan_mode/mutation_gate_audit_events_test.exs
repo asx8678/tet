@@ -27,8 +27,11 @@ defmodule Tet.PlanMode.MutationGateAuditEventsTest do
       ctx = %{mode: :plan, task_category: :researching, task_id: "t_ev_block"}
       decision = Gate.evaluate(rogue_plan_write_contract(), Policy.default(), ctx)
 
-      assert {:ok, event} = persist_decision(rogue_plan_write_contract(), decision,
-        session_id: "ses_audit_block", seq: 100)
+      assert {:ok, event} =
+               persist_decision(rogue_plan_write_contract(), decision,
+                 session_id: "ses_audit_block",
+                 seq: 100
+               )
 
       assert event.type == :"tool.blocked"
       assert event.session_id == "ses_audit_block"
@@ -43,8 +46,11 @@ defmodule Tet.PlanMode.MutationGateAuditEventsTest do
       ctx = %{mode: :execute, task_category: :acting, task_id: "t_ev_allow"}
       decision = Gate.evaluate(write_contract(), Policy.default(), ctx)
 
-      assert {:ok, event} = persist_decision(write_contract(), decision,
-        session_id: "ses_audit_allow", seq: 200)
+      assert {:ok, event} =
+               persist_decision(write_contract(), decision,
+                 session_id: "ses_audit_allow",
+                 seq: 200
+               )
 
       assert event.type == :"tool.started"
       assert event.session_id == "ses_audit_allow"
@@ -58,8 +64,11 @@ defmodule Tet.PlanMode.MutationGateAuditEventsTest do
       decision = Gate.evaluate(read_contract(), Policy.default(), ctx)
       assert {:guide, _msg} = decision
 
-      assert {:ok, event} = persist_decision(read_contract(), decision,
-        session_id: "ses_audit_guide", seq: 300)
+      assert {:ok, event} =
+               persist_decision(read_contract(), decision,
+                 session_id: "ses_audit_guide",
+                 seq: 300
+               )
 
       assert event.type == :"tool.requested"
       assert event.payload.tool == "read"
@@ -70,20 +79,16 @@ defmodule Tet.PlanMode.MutationGateAuditEventsTest do
       scenarios = [
         # {description, contract, context, expected_decision_shape}
         {"blocked: no task", write_contract(),
-         %{mode: :execute, task_category: :acting, task_id: nil},
-         {:block, :no_active_task}},
+         %{mode: :execute, task_category: :acting, task_id: nil}, {:block, :no_active_task}},
         {"blocked: plan mode", rogue_plan_write_contract(),
          %{mode: :plan, task_category: :researching, task_id: "t"},
          {:block, :plan_mode_blocks_mutation}},
         {"blocked: mode not allowed", write_contract(),
-         %{mode: :plan, task_category: :acting, task_id: "t"},
-         {:block, :mode_not_allowed}},
+         %{mode: :plan, task_category: :acting, task_id: "t"}, {:block, :mode_not_allowed}},
         {"allowed: execute/acting", write_contract(),
-         %{mode: :execute, task_category: :acting, task_id: "t"},
-         :allow},
+         %{mode: :execute, task_category: :acting, task_id: "t"}, :allow},
         {"guided: plan/researching read", read_contract(),
-         %{mode: :plan, task_category: :researching, task_id: "t"},
-         :guided_read}
+         %{mode: :plan, task_category: :researching, task_id: "t"}, :guided_read}
       ]
 
       for {desc, contract, ctx, expected_shape} <- scenarios do
@@ -94,9 +99,11 @@ defmodule Tet.PlanMode.MutationGateAuditEventsTest do
           {:block, reason} ->
             assert {:block, ^reason} = decision,
                    "Scenario #{desc}: expected {:block, #{inspect(reason)}}, got #{inspect(decision)}"
+
           :allow ->
             assert decision == :allow,
                    "Scenario #{desc}: expected :allow, got #{inspect(decision)}"
+
           :guided_read ->
             assert match?({:guide, _}, decision),
                    "Scenario #{desc}: expected {:guide, _}, got #{inspect(decision)}"
@@ -108,6 +115,7 @@ defmodule Tet.PlanMode.MutationGateAuditEventsTest do
 
         # Verify the event type matches the decision
         expected_type = decision_to_event_type(expected_shape)
+
         assert event.type == expected_type,
                "Scenario #{desc}: expected event type #{inspect(expected_type)}, got #{inspect(event.type)}"
       end
@@ -120,15 +128,18 @@ defmodule Tet.PlanMode.MutationGateAuditEventsTest do
       blocked_ctx = %{mode: :plan, task_category: :researching, task_id: "t_corr"}
       blocked_decision = Gate.evaluate(rogue_plan_write_contract(), Policy.default(), blocked_ctx)
 
-      assert {:ok, blocked_event} = persist_decision(rogue_plan_write_contract(), blocked_decision,
-        session_id: session, seq: 1)
+      assert {:ok, blocked_event} =
+               persist_decision(rogue_plan_write_contract(), blocked_decision,
+                 session_id: session,
+                 seq: 1
+               )
 
       # Approved
       approved_ctx = %{mode: :execute, task_category: :acting, task_id: "t_corr"}
       approved_decision = Gate.evaluate(write_contract(), Policy.default(), approved_ctx)
 
-      assert {:ok, approved_event} = persist_decision(write_contract(), approved_decision,
-        session_id: session, seq: 2)
+      assert {:ok, approved_event} =
+               persist_decision(write_contract(), approved_decision, session_id: session, seq: 2)
 
       # Same session correlation
       assert blocked_event.session_id == approved_event.session_id
@@ -218,7 +229,8 @@ defmodule Tet.PlanMode.MutationGateAuditEventsTest do
         # 1. Read-only guided in plan/researching
         {read_contract(), %{mode: :plan, task_category: :researching, task_id: "t_lc1"}},
         # 2. Write blocked in plan mode (use rogue contract that declares :plan mode)
-        {rogue_plan_write_contract(), %{mode: :plan, task_category: :researching, task_id: "t_lc1"}},
+        {rogue_plan_write_contract(),
+         %{mode: :plan, task_category: :researching, task_id: "t_lc1"}},
         # 3. Write blocked (no task)
         {write_contract(), %{mode: :execute, task_category: :acting, task_id: nil}},
         # 4. Write allowed in execute/acting
@@ -230,8 +242,9 @@ defmodule Tet.PlanMode.MutationGateAuditEventsTest do
           seq = System.unique_integer([:positive, :monotonic])
 
           decision = Gate.evaluate(contract, Policy.default(), ctx)
-          assert {:ok, event} = persist_decision(contract, decision,
-            session_id: session, seq: seq)
+
+          assert {:ok, event} =
+                   persist_decision(contract, decision, session_id: session, seq: seq)
 
           event
         end
@@ -242,10 +255,14 @@ defmodule Tet.PlanMode.MutationGateAuditEventsTest do
       assert seqs == Enum.sort(seqs), "Events should have monotonically increasing seq numbers"
 
       # Verify event types in order
-      assert Enum.at(events, 0).type == :"tool.requested"  # guided read
-      assert Enum.at(events, 1).type == :"tool.blocked"     # blocked write
-      assert Enum.at(events, 2).type == :"tool.blocked"     # blocked write (no task)
-      assert Enum.at(events, 3).type == :"tool.started"    # approved write
+      # guided read
+      assert Enum.at(events, 0).type == :"tool.requested"
+      # blocked write
+      assert Enum.at(events, 1).type == :"tool.blocked"
+      # blocked write (no task)
+      assert Enum.at(events, 2).type == :"tool.blocked"
+      # approved write
+      assert Enum.at(events, 3).type == :"tool.started"
 
       # All events share the same session
       assert Enum.all?(events, &(&1.session_id == session))
@@ -326,8 +343,12 @@ defmodule Tet.PlanMode.MutationGateAuditEventsTest do
       blocked_decision = Gate.evaluate(rogue_plan_write_contract(), Policy.default(), blocked_ctx)
       assert Gate.blocked?(blocked_decision)
 
-      assert {:ok, blocked_event} = persist_decision(rogue_plan_write_contract(), blocked_decision,
-        session_id: session, seq: 1)
+      assert {:ok, blocked_event} =
+               persist_decision(rogue_plan_write_contract(), blocked_decision,
+                 session_id: session,
+                 seq: 1
+               )
+
       assert blocked_event.type == :"tool.blocked"
 
       # Approved attempt
@@ -335,8 +356,9 @@ defmodule Tet.PlanMode.MutationGateAuditEventsTest do
       approved_decision = Gate.evaluate(write_contract(), Policy.default(), approved_ctx)
       assert Gate.allowed?(approved_decision)
 
-      assert {:ok, approved_event} = persist_decision(write_contract(), approved_decision,
-        session_id: session, seq: 2)
+      assert {:ok, approved_event} =
+               persist_decision(write_contract(), approved_decision, session_id: session, seq: 2)
+
       assert approved_event.type == :"tool.started"
 
       # BOTH are persisted — the acceptance criterion is met

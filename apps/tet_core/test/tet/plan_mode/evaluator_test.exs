@@ -33,6 +33,7 @@ defmodule Tet.PlanMode.EvaluatorTest do
 
       for block <- @all_block_reasons do
         {:ok, final, audit} = Evaluator.evaluate(block, profile, ctx)
+
         assert final == block,
                "expected #{inspect(block)} to pass through, got #{inspect(final)}"
 
@@ -112,6 +113,7 @@ defmodule Tet.PlanMode.EvaluatorTest do
 
         if Gate.blocked?(gate_decision) do
           {:ok, final, _audit} = Evaluator.evaluate(gate_decision, profile, ctx)
+
           assert final == gate_decision,
                  "gate #{inspect(gate_decision)} overridden for #{contract.name} in #{inspect(ctx)}"
         end
@@ -126,12 +128,16 @@ defmodule Tet.PlanMode.EvaluatorTest do
         Profile.conservative(),
         Profile.aggressive(),
         Profile.new!(%{focus_areas: [:file_safety, :test_first, :scope_narrowing]}),
-        Profile.new!(%{aggressiveness: :aggressive, risk_tolerance: :low,
-                       focus_areas: [:minimal_mutations]})
+        Profile.new!(%{
+          aggressiveness: :aggressive,
+          risk_tolerance: :low,
+          focus_areas: [:minimal_mutations]
+        })
       ]
 
       for profile <- profiles, block <- @all_block_reasons do
         {:ok, final, audit} = Evaluator.evaluate(block, profile, ctx)
+
         assert final == block,
                "block overridden: #{inspect(block)} with #{inspect(profile.aggressiveness)}"
 
@@ -470,6 +476,7 @@ defmodule Tet.PlanMode.EvaluatorTest do
 
         if Gate.allowed?(gate_decision) do
           {:ok, final, _audit} = Evaluator.evaluate(gate_decision, profile, ctx)
+
           assert Gate.allowed?(final),
                  "Evaluator downgraded #{contract.name} from allowed: #{inspect(final)}"
         end
@@ -503,10 +510,11 @@ defmodule Tet.PlanMode.EvaluatorTest do
     end
 
     test "profile with all focus areas adds guidance for each" do
-      profile = Profile.new!(%{
-        aggressiveness: :aggressive,
-        focus_areas: Profile.known_focus_areas()
-      })
+      profile =
+        Profile.new!(%{
+          aggressiveness: :aggressive,
+          focus_areas: Profile.known_focus_areas()
+        })
 
       ctx = %{mode: :execute, task_category: :acting, task_id: "t1"}
       {:ok, decision, audit} = Evaluator.evaluate(:allow, profile, ctx)

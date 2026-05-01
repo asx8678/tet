@@ -25,9 +25,7 @@ defmodule Tet.Runtime.Tools.PathGateAuditTest do
 
   describe "4: path policy enforcement — mutations outside allowed paths" do
     test "path escape denial is representable as a tool.blocked event" do
-      path_denial = PathResolver.workspace_escape_denial(
-        "Resolved path escapes workspace"
-      )
+      path_denial = PathResolver.workspace_escape_denial("Resolved path escapes workspace")
 
       assert {:ok, event} =
                Event.new(%{
@@ -46,9 +44,7 @@ defmodule Tet.Runtime.Tools.PathGateAuditTest do
     end
 
     test "path traversal denial is representable as tool.blocked event" do
-      path_denial = PathResolver.workspace_escape_denial(
-        "Path traversal ('..') is not allowed"
-      )
+      path_denial = PathResolver.workspace_escape_denial("Path traversal ('..') is not allowed")
 
       assert {:ok, event} =
                Event.new(%{
@@ -67,9 +63,7 @@ defmodule Tet.Runtime.Tools.PathGateAuditTest do
     end
 
     test "null byte path denial is representable as tool.blocked event" do
-      path_denial = PathResolver.invalid_path_denial(
-        "Path contains null bytes"
-      )
+      path_denial = PathResolver.invalid_path_denial("Path contains null bytes")
 
       assert {:ok, event} =
                Event.new(%{

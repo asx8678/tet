@@ -35,7 +35,6 @@ defmodule Tet.PlanMode.Evaluator.Profile do
     the evaluator for context-aware guidance.
   """
 
-
   @aggressiveness_levels [:conservative, :moderate, :aggressive]
   @risk_levels [:low, :medium, :high]
   @known_focus_areas [:file_safety, :scope_narrowing, :test_first, :minimal_mutations]
