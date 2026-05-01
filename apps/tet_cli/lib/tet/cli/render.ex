@@ -1,6 +1,8 @@
 defmodule Tet.CLI.Render do
   @moduledoc false
 
+  alias Tet.Prompt.Canonical
+
   def help do
     """
     tet - standalone Tet CLI scaffold
@@ -14,6 +16,10 @@ defmodule Tet.CLI.Render do
       tet sessions                         List persisted sessions
       tet session show SESSION_ID          Show a session and its messages
       tet doctor                           Check config/store/provider/release health
+      tet prompt-lab refine PROMPT         Refine a prompt (--preset, --json)
+      tet prompt-lab presets               List available prompt presets (--json)
+      tet prompt-lab dimensions            List quality dimensions (--json)
+      tet correct COMMAND                  Suggest safer command alternatives (--json)
       tet help                             Show this help
     """
   end
@@ -154,6 +160,176 @@ defmodule Tet.CLI.Render do
       "checks:" | check_lines
     ]
     |> Enum.join("\n")
+  end
+
+  # ── Prompt Lab rendering ────────────────────────────────────────────────
+
+  @doc "Formats a single refinement as human-readable output."
+  def prompt_lab_refinement(refinement) do
+    quality_lines = quality_score_lines(refinement.scores_before, refinement.scores_after)
+
+    [
+      "Prompt refinement #{refinement.status}",
+      "  preset: #{refinement.preset_id}",
+      "  summary: #{refinement.summary}",
+      quality_lines,
+      prompt_lab_change_summary(refinement.changes),
+      prompt_lab_questions(refinement.questions),
+      prompt_lab_warnings(refinement.warnings),
+      "  refined prompt:",
+      indent_block(refinement.refined_prompt, 4)
+    ]
+    |> Enum.reject(&is_nil/1)
+    |> Enum.join("\n")
+    |> Kernel.<>("\n")
+  end
+
+  @doc "Formats a refinement as JSON for scriptable consumption."
+  def prompt_lab_refinement_json(refinement) do
+    map = Tet.PromptLab.Refinement.to_map(refinement)
+    json = Canonical.encode(map)
+    json <> "\n"
+  end
+
+  @doc "Formats presets as human-readable list."
+  def prompt_lab_presets(presets) when is_list(presets) do
+    lines =
+      Enum.map(presets, fn preset ->
+        tags = Enum.join(preset.tags, ", ")
+
+        "  #{preset.id}: #{preset.name} (#{Enum.count(preset.dimensions)} dimensions, tags: #{tags})"
+      end)
+
+    ["Prompt Lab presets:" | lines]
+    |> Enum.join("\n")
+    |> Kernel.<>("\n")
+  end
+
+  @doc "Formats presets as JSON."
+  def prompt_lab_presets_json(presets) when is_list(presets) do
+    maps = Enum.map(presets, &Tet.PromptLab.Preset.to_map/1)
+    json = Canonical.encode(maps)
+    json <> "\n"
+  end
+
+  @doc "Formats dimensions as human-readable list."
+  def prompt_lab_dimensions(dimensions) when is_list(dimensions) do
+    lines =
+      Enum.map(dimensions, fn dim ->
+        "  #{dim.id}: #{dim.label}\n    #{dim.description}\n    rubric: #{dim.rubric}"
+      end)
+
+    ["Prompt Lab quality dimensions:" | lines]
+    |> Enum.join("\n")
+    |> Kernel.<>("\n")
+  end
+
+  @doc "Formats dimensions as JSON."
+  def prompt_lab_dimensions_json(dimensions) when is_list(dimensions) do
+    maps = Enum.map(dimensions, &Tet.PromptLab.Dimension.to_map/1)
+    json = Canonical.encode(maps)
+    json <> "\n"
+  end
+
+  # ── Command correction rendering ────────────────────────────────────────
+
+  @doc "Formats command suggestions as human-readable output with 'Did you mean' hints."
+  def command_suggestions(suggestions) when is_list(suggestions) do
+    lines =
+      suggestions
+      |> Enum.with_index()
+      |> Enum.flat_map(fn {suggestion, idx} ->
+        [
+          "  #{idx + 1}. #{label_for_suggestion_type(suggestion)}",
+          "     #{command_suggestion_detail(suggestion)}"
+        ]
+      end)
+
+    ["Command corrections:" | lines]
+    |> Enum.join("\n")
+    |> Kernel.<>("\n")
+  end
+
+  @doc "Formats command suggestions as JSON."
+  def command_suggestions_json(suggestions) when is_list(suggestions) do
+    maps = Enum.map(suggestions, &Tet.Command.Suggestion.to_map/1)
+    json = Canonical.encode(maps)
+    json <> "\n"
+  end
+
+  # ── Prompt Lab helpers ──────────────────────────────────────────────────
+
+  defp quality_score_lines(before_scores, after_scores) do
+    before_scores
+    |> Enum.sort_by(fn {dim_id, _entry} -> dim_id end)
+    |> Enum.map(fn {dim_id, before_entry} ->
+      after_entry = Map.fetch!(after_scores, dim_id)
+      before_score = before_entry["score"]
+      after_score = after_entry["score"]
+      label = String.replace(dim_id, "_", " ")
+      arrow = score_arrow(before_score, after_score)
+      "    #{label}: #{before_score} #{arrow} #{after_score}/10 (#{after_entry["comment"]})"
+    end)
+  end
+
+  defp score_arrow(b_val, a_val) when a_val > b_val, do: "→"
+  defp score_arrow(b_val, a_val) when a_val < b_val, do: "←"
+  defp score_arrow(_b_val, _a_val), do: "="
+
+  defp label_for_suggestion_type(%{correction_type: :safe}), do: "✅ Safe — proceeding as-is"
+  defp label_for_suggestion_type(%{correction_type: :modified}), do: "✏️  Did you mean:"
+
+  defp label_for_suggestion_type(%{correction_type: :blocked}),
+    do: "🚫 Blocked — no safe alternative"
+
+  defp command_suggestion_detail(%{suggested_command: nil, reason: reason} = suggestion) do
+    "#{reason} | risk: #{risk_label_with_icon(suggestion)}"
+  end
+
+  defp command_suggestion_detail(%{suggested_command: cmd, reason: reason} = suggestion) do
+    "#{cmd} — #{reason} | risk: #{risk_label_with_icon(suggestion)}"
+  end
+
+  defp risk_label_with_icon(%{risk_level: :none}), do: "No risk (read-only)"
+  defp risk_label_with_icon(%{risk_level: :low}), do: "Low risk (minimally invasive)"
+  defp risk_label_with_icon(%{risk_level: :medium}), do: "Medium risk (potentially destructive)"
+  defp risk_label_with_icon(%{risk_level: :high}), do: "High risk (destructive operation)"
+  defp risk_label_with_icon(%{risk_level: :critical}), do: "Critical risk (system-destructive)"
+
+  defp prompt_lab_change_summary([]), do: nil
+
+  defp prompt_lab_change_summary(changes) do
+    lines =
+      Enum.map(changes, fn change ->
+        "    #{change["dimension"]}: #{change["kind"]} (#{change["impact"]}) — #{change["rationale"]}"
+      end)
+
+    ["  changes:" | lines]
+    |> Enum.join("\n")
+  end
+
+  defp prompt_lab_questions([]), do: nil
+
+  defp prompt_lab_questions(questions) do
+    lines = Enum.map(questions, &"    ? #{&1}")
+
+    ["  clarifying questions:" | lines]
+    |> Enum.join("\n")
+  end
+
+  defp prompt_lab_warnings([]), do: nil
+
+  defp prompt_lab_warnings(warnings) do
+    lines = Enum.map(warnings, &"    ⚠ #{&1}")
+
+    ["  warnings:" | lines]
+    |> Enum.join("\n")
+  end
+
+  defp indent_block(text, spaces) do
+    indent = String.duplicate(" ", spaces)
+    replaced = String.replace(text, "\n", "\n#{indent}")
+    "#{indent}#{replaced}"
   end
 
   defp registry_error?(%Tet.ProfileRegistry.Error{}), do: true
