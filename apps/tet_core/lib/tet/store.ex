@@ -219,6 +219,9 @@ defmodule Tet.Store do
   @doc "Lists workflow steps for ordered replay."
   @callback list_steps(workflow_id()) :: result([workflow_step()])
 
+  @doc "Lists workflow steps for ordered replay, with storage options."
+  @callback list_steps(workflow_id(), options()) :: result([workflow_step()])
+
   @doc "Claims a workflow for recovery/execution. Single-node adapters may always claim."
   @callback claim_workflow(workflow_id(), node(), pos_integer()) ::
               {:ok, :claimed} | {:error, :held_by, node()} | {:error, error()}

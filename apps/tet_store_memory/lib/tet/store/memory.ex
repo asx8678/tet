@@ -604,7 +604,10 @@ defmodule Tet.Store.Memory do
   end
 
   @impl true
-  def list_steps(workflow_id) do
+  def list_steps(workflow_id), do: list_steps(workflow_id, [])
+
+  @impl true
+  def list_steps(workflow_id, _opts) do
     steps = Agent.get(__MODULE__, fn state -> Map.get(state.workflow_steps, workflow_id, []) end)
     {:ok, steps}
   end
