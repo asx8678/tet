@@ -69,6 +69,7 @@ defmodule Tet.PlanMode.InvariantsEventTest do
 
       for contract <- ReadOnlyContracts.all() do
         decision = Gate.evaluate(contract, Policy.default(), ctx)
+
         assert Gate.guided?(decision),
                "#{contract.name} should get guidance in plan/researching, got #{inspect(decision)}"
       end
@@ -407,31 +408,34 @@ defmodule Tet.PlanMode.InvariantsEventTest do
     end
 
     test "nil plan_safe_categories never emits guidance" do
-      policy = struct(Policy, %{
-        plan_mode: :plan,
-        safe_modes: [:plan, :explore],
-        plan_safe_categories: nil,
-        acting_categories: [:acting],
-        require_active_task: true
-      })
+      policy =
+        struct(Policy, %{
+          plan_mode: :plan,
+          safe_modes: [:plan, :explore],
+          plan_safe_categories: nil,
+          acting_categories: [:acting],
+          require_active_task: true
+        })
 
       ctx = %{mode: :plan, task_category: :researching, task_id: "t_nil_cat"}
 
       for contract <- ReadOnlyContracts.all() do
         decision = Gate.evaluate(contract, policy, ctx)
+
         refute Gate.guided?(decision),
                "#{contract.name} got guidance with nil plan_safe_categories: #{inspect(decision)}"
       end
     end
 
     test "structurally invalid policy never allows mutation" do
-      policy = struct(Policy, %{
-        plan_mode: nil,
-        safe_modes: nil,
-        plan_safe_categories: nil,
-        acting_categories: nil,
-        require_active_task: true
-      })
+      policy =
+        struct(Policy, %{
+          plan_mode: nil,
+          safe_modes: nil,
+          plan_safe_categories: nil,
+          acting_categories: nil,
+          require_active_task: true
+        })
 
       for contract <- [write_contract(), shell_contract()] do
         ctx = %{mode: :execute, task_category: :acting, task_id: "t_corrupt"}
@@ -443,13 +447,14 @@ defmodule Tet.PlanMode.InvariantsEventTest do
     end
 
     test "structurally invalid policy still allows read-only in some paths" do
-      policy = struct(Policy, %{
-        plan_mode: :plan,
-        safe_modes: [],
-        plan_safe_categories: [],
-        acting_categories: [],
-        require_active_task: true
-      })
+      policy =
+        struct(Policy, %{
+          plan_mode: :plan,
+          safe_modes: [],
+          plan_safe_categories: [],
+          acting_categories: [],
+          require_active_task: true
+        })
 
       for mode <- [:plan, :explore, :execute],
           category <- [:researching, :planning, :acting] do

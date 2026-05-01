@@ -79,7 +79,11 @@ defmodule Tet.Event do
                  :message_persisted,
                  :session_started,
                  :session_resumed
-               ] ++ @provider_types ++ @provider_route_types ++ @profile_swap_types ++ @swap_types ++ @steering_types ++ @read_tool_types ++ @v03_types
+               ] ++
+                 @provider_types ++
+                 @provider_route_types ++
+                 @profile_swap_types ++
+                 @swap_types ++ @steering_types ++ @read_tool_types ++ @v03_types
 
   @enforce_keys [:type]
   defstruct [:id, :type, :session_id, :sequence, :seq, :created_at, payload: %{}, metadata: %{}]

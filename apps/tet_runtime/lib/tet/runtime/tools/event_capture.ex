@@ -30,7 +30,13 @@ defmodule Tet.Runtime.Tools.EventCapture do
   alias Tet.Runtime.Tools
 
   @large_result_bytes 102_400
-  @known_redaction_classes [:workspace_content, :workspace_metadata, :workspace_snippets, :workspace_diff, :operator_input]
+  @known_redaction_classes [
+    :workspace_content,
+    :workspace_metadata,
+    :workspace_snippets,
+    :workspace_diff,
+    :operator_input
+  ]
 
   @doc """
   Runs a read-only tool with event capture.
@@ -47,8 +53,10 @@ defmodule Tet.Runtime.Tools.EventCapture do
     - `:redaction_class` — redaction class atom from the tool contract
       (default: `:workspace_content`)
   """
-  @spec run(String.t(), map(), keyword()) :: {:ok, map(), [Tet.Event.t()]} | {:error, map(), [Tet.Event.t()]}
-  def run(tool_name, args, opts \\ []) when is_binary(tool_name) and is_map(args) and is_list(opts) do
+  @spec run(String.t(), map(), keyword()) ::
+          {:ok, map(), [Tet.Event.t()]} | {:error, map(), [Tet.Event.t()]}
+  def run(tool_name, args, opts \\ [])
+      when is_binary(tool_name) and is_map(args) and is_list(opts) do
     session_id = Keyword.get(opts, :session_id)
     task_id = Keyword.get(opts, :task_id)
     redaction_class = resolve_redaction_class(Keyword.get(opts, :redaction_class))
@@ -73,7 +81,12 @@ defmodule Tet.Runtime.Tools.EventCapture do
 
     publish_event(started_event)
 
-    result = Tools.run_tool(tool_name, args, Keyword.drop(opts, [:session_id, :task_id, :tool_call_id, :redaction_class]))
+    result =
+      Tools.run_tool(
+        tool_name,
+        args,
+        Keyword.drop(opts, [:session_id, :task_id, :tool_call_id, :redaction_class])
+      )
 
     completed_payload =
       if result.ok do
@@ -106,7 +119,9 @@ defmodule Tet.Runtime.Tools.EventCapture do
   @spec summary_args(map()) :: map()
   def summary_args(args) when is_map(args) do
     args
-    |> Map.take(~w(path query regex case_sensitive recursive max_depth start_line line_count include_globs exclude_globs))
+    |> Map.take(
+      ~w(path query regex case_sensitive recursive max_depth start_line line_count include_globs exclude_globs)
+    )
     |> Enum.map(fn {k, v} -> {k, truncate_value(v)} end)
     |> Map.new()
   end
@@ -151,6 +166,7 @@ defmodule Tet.Runtime.Tools.EventCapture do
 
   defp summarize_result("list", data) when is_map(data) do
     summary = Map.get(data, :summary, %{})
+
     %{
       entry_count: Map.get(summary, :entry_count, 0),
       file_count: Map.get(summary, :file_count, 0),
@@ -162,6 +178,7 @@ defmodule Tet.Runtime.Tools.EventCapture do
 
   defp summarize_result("search", data) when is_map(data) do
     summary = Map.get(data, :summary, %{})
+
     %{
       match_count: Map.get(summary, :match_count, 0),
       file_count: Map.get(summary, :file_count, 0),
@@ -204,6 +221,7 @@ defmodule Tet.Runtime.Tools.EventCapture do
 
     if bytes > @large_result_bytes do
       match_count = length(matches)
+
       %{
         match_count: match_count,
         content_bytes: bytes,
