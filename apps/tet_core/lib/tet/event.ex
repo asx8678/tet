@@ -38,6 +38,11 @@ defmodule Tet.Event do
 
   @swap_types [:profile_swap_cache_result]
 
+  @read_tool_types [
+    :"read_tool.started",
+    :"read_tool.completed"
+  ]
+
   @v03_types [
     :"workspace.created",
     :"workspace.trusted",
@@ -70,7 +75,7 @@ defmodule Tet.Event do
                  :message_persisted,
                  :session_started,
                  :session_resumed
-               ] ++ @provider_types ++ @provider_route_types ++ @profile_swap_types ++ @swap_types ++ @v03_types
+               ] ++ @provider_types ++ @provider_route_types ++ @profile_swap_types ++ @swap_types ++ @read_tool_types ++ @v03_types
 
   @enforce_keys [:type]
   defstruct [:id, :type, :session_id, :sequence, :seq, :created_at, payload: %{}, metadata: %{}]
@@ -112,6 +117,36 @@ defmodule Tet.Event do
 
   @doc "Returns swap-related event types (cache result etc)."
   def swap_types, do: @swap_types
+
+  @doc "Returns read-tool event types (started/completed)."
+  def read_tool_types, do: @read_tool_types
+
+  @doc """
+  Builds a normalized read-tool-started event.
+
+  Payload should include:
+    - `tool_name` — one of "read", "list", "search"
+    - `args` — map of validated tool arguments
+    - `redaction_class` — from the contract (e.g. `:workspace_content`)
+  """
+  def read_tool_started(payload \\ %{}, opts \\ []) when is_map(payload) and is_list(opts) do
+    provider_event(:"read_tool.started", payload, opts)
+  end
+
+  @doc """
+  Builds a normalized read-tool-completed event.
+
+  Payload should include:
+    - `tool_name` — one of "read", "list", "search"
+    - `args` — map of validated tool arguments
+    - `ok` — boolean result status
+    - `result_summary` — summary of result (counts, truncated, etc.)
+    - `redaction_class` — from the contract
+    - `artifact_ref` — optional artifact reference for large results
+  """
+  def read_tool_completed(payload \\ %{}, opts \\ []) when is_map(payload) and is_list(opts) do
+    provider_event(:"read_tool.completed", payload, opts)
+  end
 
   @doc "Builds a normalized profile-swap-queued event."
   def profile_swap_queued(payload \\ %{}, opts \\ []) when is_map(payload) and is_list(opts) do
