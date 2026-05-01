@@ -10,7 +10,7 @@ defmodule Tet.Runtime.GuidanceLoop do
 
   1. On init, subscribes to the runtime-wide event topic.
   2. When a task or tool event arrives:
-     a. All active guidance is marked as expired (superseded by new events).
+     a. Active guidance for the event's session is marked as expired (superseded by new events).
      b. If the event payload contains a steering decision with guidance
         (`:focus` or `:guide`), a `GuidanceMessage` is created with the
         event's session_id and sequence for correlation.
@@ -19,7 +19,7 @@ defmodule Tet.Runtime.GuidanceLoop do
   ## Task/tool events that trigger guidance lifecycle
 
   - `:tool.started`, `:tool.finished`
-  - `:\"read_tool.started\"`, `:\"read_tool.completed\"`
+  - `:"read_tool.started"`, `:"read_tool.completed"`
   - `:steering_decision`
 
   ## Usage

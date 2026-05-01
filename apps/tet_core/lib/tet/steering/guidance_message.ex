@@ -60,8 +60,8 @@ defmodule Tet.Steering.GuidanceMessage do
 
   Required: `:decision_type` (`:focus` or `:guide`), `:message` (non-empty
   binary). The `:id`, `:session_id`, and `:event_seq` are generated
-  automatically if not provided, using `Tet.Runtime.Ids` for runtime callers
-  or explicit values for testing.
+  automatically if not provided, using `crypto.strong_rand_bytes` for
+  ID generation or explicit values for testing.
 
   ## Options
 
@@ -245,12 +245,9 @@ defmodule Tet.Steering.GuidanceMessage do
         end
 
       value when is_binary(value) ->
-        type_atom = String.to_existing_atom(value)
-
-        if Enum.member?(known, type_atom) do
-          {:ok, type_atom}
-        else
-          {:error, {:invalid_guidance_field, key, value}}
+        case Enum.find(known, &(Atom.to_string(&1) == value)) do
+          nil -> {:error, {:invalid_guidance_field, key, value}}
+          type_atom -> {:ok, type_atom}
         end
 
       _ ->
