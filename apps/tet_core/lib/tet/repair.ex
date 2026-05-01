@@ -131,8 +131,11 @@ defmodule Tet.Repair do
 
   defp fetch_strategy(attrs) do
     case fetch_value(attrs, :strategy) do
-      strategy when is_atom(strategy) and not is_nil(strategy) ->
+      strategy when strategy in @allowed_strategies ->
         {:ok, strategy}
+
+      strategy when is_atom(strategy) ->
+        {:error, {:invalid_repair_field, :strategy}}
 
       strategy when is_binary(strategy) and strategy != "" ->
         case Enum.find(@allowed_strategies, &(Atom.to_string(&1) == strategy)) do
@@ -157,6 +160,7 @@ defmodule Tet.Repair do
   defp fetch_status(attrs, key, default) do
     case fetch_value(attrs, key, default) do
       status when status in @statuses -> {:ok, status}
+      status when is_atom(status) -> {:error, {:invalid_repair_field, key}}
       status when is_binary(status) -> parse_status(status)
       _ -> {:error, {:invalid_repair_field, key}}
     end

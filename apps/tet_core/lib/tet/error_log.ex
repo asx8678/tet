@@ -138,8 +138,11 @@ defmodule Tet.ErrorLog do
 
   defp fetch_kind(attrs) do
     case fetch_value(attrs, :kind) do
-      kind when is_atom(kind) and not is_nil(kind) ->
+      kind when kind in @allowed_kinds ->
         {:ok, kind}
+
+      kind when is_atom(kind) ->
+        {:error, {:invalid_error_log_field, :kind}}
 
       kind when is_binary(kind) and kind != "" ->
         case Enum.find(@allowed_kinds, &(Atom.to_string(&1) == kind)) do
@@ -164,6 +167,7 @@ defmodule Tet.ErrorLog do
   defp fetch_status(attrs, key, default) do
     case fetch_value(attrs, key, default) do
       status when status in @statuses -> {:ok, status}
+      status when is_atom(status) -> {:error, {:invalid_error_log_field, key}}
       status when is_binary(status) -> parse_status(status)
       _ -> {:error, {:invalid_error_log_field, key}}
     end
