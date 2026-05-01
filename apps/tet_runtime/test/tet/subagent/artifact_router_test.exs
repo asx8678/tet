@@ -55,7 +55,6 @@ defmodule Tet.Runtime.Subagent.ArtifactRouterTest do
     :ok
   end
 
-
   describe "route/3 with Result struct" do
     test "routes artifacts from a Tet.Subagent.Result struct" do
       {:ok, result} =
@@ -240,8 +239,6 @@ defmodule Tet.Runtime.Subagent.ArtifactRouterTest do
   end
 
   describe "route/3 with real Tet.Store.Memory" do
-    end
-
     test "routes artifacts and stores them as proper Artifact structs" do
       result = %{
         "id" => "res_real_001",
