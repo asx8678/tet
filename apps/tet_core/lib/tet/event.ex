@@ -38,6 +38,10 @@ defmodule Tet.Event do
 
   @swap_types [:profile_swap_cache_result]
 
+  @steering_types [
+    :steering_decision
+  ]
+
   @read_tool_types [
     :"read_tool.started",
     :"read_tool.completed"
@@ -75,7 +79,7 @@ defmodule Tet.Event do
                  :message_persisted,
                  :session_started,
                  :session_resumed
-               ] ++ @provider_types ++ @provider_route_types ++ @profile_swap_types ++ @swap_types ++ @read_tool_types ++ @v03_types
+               ] ++ @provider_types ++ @provider_route_types ++ @profile_swap_types ++ @swap_types ++ @steering_types ++ @read_tool_types ++ @v03_types
 
   @enforce_keys [:type]
   defstruct [:id, :type, :session_id, :sequence, :seq, :created_at, payload: %{}, metadata: %{}]
@@ -118,8 +122,23 @@ defmodule Tet.Event do
   @doc "Returns swap-related event types (cache result etc)."
   def swap_types, do: @swap_types
 
+  @doc "Returns steering decision event types."
+  def steering_types, do: @steering_types
+
   @doc "Returns read-tool event types (started/completed)."
   def read_tool_types, do: @read_tool_types
+
+  @doc """
+  Builds a normalized steering decision event.
+
+  Payload should include:
+    - `decision` — the full `Tet.Steering.Decision` as a map
+    - `context_summary` — optional summary of steering context
+  """
+  def steering_decision(payload \\ %{}, opts \\ [])
+      when is_map(payload) and is_list(opts) do
+    steering_event(:steering_decision, payload, opts)
+  end
 
   @doc """
   Builds a normalized read-tool-started event.
@@ -291,6 +310,18 @@ defmodule Tet.Event do
       sequence: Keyword.get(opts, :sequence),
       payload: payload,
       metadata: Keyword.get(opts, :metadata, %{})
+    }
+  end
+
+  defp steering_event(type, payload, opts) do
+    %__MODULE__{
+      type: type,
+      session_id: Keyword.get(opts, :session_id),
+      sequence: Keyword.get(opts, :sequence),
+      seq: Keyword.get(opts, :seq),
+      payload: payload,
+      metadata: Keyword.get(opts, :metadata, %{}),
+      created_at: Keyword.get(opts, :created_at)
     }
   end
 

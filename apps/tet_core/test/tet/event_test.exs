@@ -104,4 +104,66 @@ defmodule Tet.EventTest do
       assert roundtripped.payload["pending_profile_swap"] == nil
     end
   end
+
+  describe "steering decision events" do
+    test "steering_decision/2 builds a steering decision event" do
+      event =
+        Event.steering_decision(
+          %{
+            decision: %{type: "block", reason: "unsafe", confidence: 0.99},
+            context_summary: %{active_task: "T1", session_age: 42}
+          },
+          session_id: "ses_steer",
+          sequence: 10,
+          metadata: %{evaluator: "llm"}
+        )
+
+      assert event.type == :steering_decision
+      assert event.session_id == "ses_steer"
+      assert event.sequence == 10
+      assert event.payload.decision == %{type: "block", reason: "unsafe", confidence: 0.99}
+      assert event.payload.context_summary == %{active_task: "T1", session_age: 42}
+      assert event.metadata.evaluator == "llm"
+    end
+
+    test "steering_decision/2 works with minimal options" do
+      event = Event.steering_decision(%{decision: %{type: :continue}})
+      assert event.type == :steering_decision
+      assert event.payload.decision.type == :continue
+      assert event.session_id == nil
+      assert event.sequence == nil
+      assert event.metadata == %{}
+    end
+
+    test "steering decision type is listed in known_types" do
+      assert :steering_decision in Event.known_types()
+    end
+
+    test "steering_types/0 returns the steering event types" do
+      assert Event.steering_types() == [:steering_decision]
+    end
+
+    test "steering decision event round-trips through to_map/1 and from_map/1" do
+      original =
+        Event.steering_decision(
+          %{
+            decision: %{type: "block", reason: "unsafe", confidence: 0.95},
+            context_summary: %{active_task: "T1", session_age: 100}
+          },
+          session_id: "ses_rt2",
+          sequence: 15
+        )
+
+      mapped = Event.to_map(original)
+      assert {:ok, roundtripped} = Event.from_map(mapped)
+
+      assert roundtripped.type == original.type
+      assert roundtripped.session_id == original.session_id
+      assert roundtripped.sequence == original.sequence
+      assert roundtripped.payload["decision"]["type"] == "block"
+      assert roundtripped.payload["decision"]["reason"] == "unsafe"
+      assert roundtripped.payload["context_summary"]["active_task"] == "T1"
+      assert roundtripped.payload["context_summary"]["session_age"] == 100
+    end
+  end
 end

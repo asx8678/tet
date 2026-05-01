@@ -15,6 +15,7 @@ defmodule Tet.Core do
     :model_registry,
     :plan_mode,
     :profile_registry,
+    :steering,
     :prompts,
     :prompt_lab,
     :provider_behaviour,
