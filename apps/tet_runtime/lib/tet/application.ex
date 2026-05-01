@@ -10,9 +10,12 @@ defmodule Tet.Application do
       {Registry, keys: :unique, name: Tet.Runtime.SessionRegistry.name()},
       {Registry, keys: :unique, name: Tet.Runtime.Plugin.Registry},
       {Registry, keys: :unique, name: Tet.Runtime.Subagent.Registry},
+      {Registry, keys: :unique, name: Tet.Runtime.Mcp.ProcessRegistry},
+      Tet.Mcp.Registry,
       Tet.Runtime.Subagent.Supervisor,
       Tet.Runtime.SessionSupervisor,
       Tet.Runtime.Plugin.Supervisor,
+      Tet.Runtime.Mcp.Supervisor,
       Tet.Runtime.GuidanceLoop
     ]
 
