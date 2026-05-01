@@ -852,6 +852,43 @@ defmodule Tet.Runtime.Tools.PatchTest do
       assert File.read!(Path.join(root, "lib/hash_first.ex")) == "first\n"
       assert File.read!(Path.join(root, "lib/hash_second.ex")) == "second\n"
     end
+
+    test "hash mismatch on later op rolls back first op", %{workspace_root: root} do
+      touch(Path.join(root, "lib/hash_first_ok.ex"), "original content\n")
+      touch(Path.join(root, "lib/hash_second_bad.ex"), "more content\n")
+
+      # Op 1: modify without expected_hash, should succeed
+      # Op 2: modify with wrong expected_hash, should fail
+      patch =
+        Patch.propose!(%{
+          operations: [
+            %{kind: :modify, file_path: "lib/hash_first_ok.ex", content: "modified\n"},
+            %{
+              kind: :modify,
+              file_path: "lib/hash_second_bad.ex",
+              content: "also modified\n",
+              expected_hash: String.duplicate("f", 64)
+            }
+          ],
+          workspace_path: root
+        })
+
+      assert {:ok, result} =
+               PatchExecutor.apply(patch,
+                 approved: :approved,
+                 tool_call_id: "call_hash_later",
+                 workspace_root: root
+               )
+
+      assert result.ok == false
+      assert result.rolled_back == true
+      assert result.rollback_output != nil
+
+      # First file must be rolled back to original
+      assert File.read!(Path.join(root, "lib/hash_first_ok.ex")) == "original content\n"
+      # Second file must NOT have been modified
+      assert File.read!(Path.join(root, "lib/hash_second_bad.ex")) == "more content\n"
+    end
   end
 
   describe "run_verifier/4" do

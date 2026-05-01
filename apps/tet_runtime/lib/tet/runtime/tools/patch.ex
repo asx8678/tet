@@ -165,7 +165,12 @@ defmodule Tet.Runtime.Tools.Patch do
         return_envelope({:ok, result})
       end
     else
-      {:hash_mismatch, path, expected, actual, applied_so_far, pre_snapshots, _pre_existing} ->
+      {:hash_mismatch, path, expected, actual, applied_so_far, pre_snapshots, pre_existing} ->
+        rollback_output =
+          if applied_so_far != [] do
+            perform_rollback(patch, pre_snapshots, pre_existing, workspace_root)
+          end
+
         result =
           Result.error(
             tool_call_id: tool_call_id,
@@ -178,7 +183,8 @@ defmodule Tet.Runtime.Tools.Patch do
             errors: [
               {:hash_mismatch, path, expected, actual}
             ],
-            rolled_back: false
+            rolled_back: rollback_output != nil,
+            rollback_output: rollback_output
           )
 
         return_envelope({:ok, result})

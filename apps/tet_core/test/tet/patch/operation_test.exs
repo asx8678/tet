@@ -250,6 +250,33 @@ defmodule Tet.Patch.OperationTest do
                  replacements: [%{old_str: 123, new_str: "bar"}]
                })
     end
+
+    test "rejects non-map replacement entry" do
+      assert {:error, {:invalid_operation, :invalid_replacements}} =
+               Operation.new(%{
+                 kind: :modify,
+                 file_path: "lib/file.ex",
+                 replacements: ["not a map"]
+               })
+    end
+
+    test "rejects replacement with missing new_str" do
+      assert {:error, {:invalid_operation, :invalid_replacements}} =
+               Operation.new(%{
+                 kind: :modify,
+                 file_path: "lib/file.ex",
+                 replacements: [%{old_str: "foo"}]
+               })
+    end
+
+    test "allows replacement with explicit empty new_str" do
+      assert {:ok, _op} =
+               Operation.new(%{
+                 kind: :modify,
+                 file_path: "lib/file.ex",
+                 replacements: [%{old_str: "foo", new_str: ""}]
+               })
+    end
   end
 
   describe "new!/1" do

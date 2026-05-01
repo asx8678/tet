@@ -266,9 +266,12 @@ defmodule Tet.Patch.Operation do
 
   defp valid_replacements?(replacements) when is_list(replacements) do
     Enum.all?(replacements, fn r ->
-      old_str = Map.get(r, :old_str, Map.get(r, "old_str", ""))
-      new_str = Map.get(r, :new_str, Map.get(r, "new_str", ""))
-      is_map(r) and is_binary(old_str) and old_str != "" and is_binary(new_str)
+      is_map(r) and
+        (Map.has_key?(r, :old_str) or Map.has_key?(r, "old_str")) and
+        (Map.has_key?(r, :new_str) or Map.has_key?(r, "new_str")) and
+        is_binary(Map.get(r, :old_str, Map.get(r, "old_str", ""))) and
+        Map.get(r, :old_str, Map.get(r, "old_str", "")) != "" and
+        is_binary(Map.get(r, :new_str, Map.get(r, "new_str", nil)))
     end)
   end
 
