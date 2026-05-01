@@ -39,17 +39,17 @@ defmodule Tet.EntitiesRoundTripTest do
       finished_at: @later,
       metadata: %{"runtime" => "noop"}
     },
-    %Tet.Approval{
+    %Tet.Approval.Approval{
       id: "appr_prefixed_ok",
+      tool_call_id: "tool_call_1",
+      status: :pending,
+      approver: nil,
+      rationale: nil,
+      created_at: @now,
+      approved_at: nil,
+      rejected_at: nil,
       session_id: "ses_prefixed_ok",
       task_id: "task_prefixed_ok",
-      tool_run_id: "tool_run_prefixed_ok",
-      status: :rejected,
-      reason: "operator said no",
-      diff_artifact_id: "art_prefixed_ok",
-      resolved_at: @later,
-      created_at: @now,
-      updated_at: @later,
       metadata: %{"reviewer" => "human"}
     },
     %Tet.Artifact{
