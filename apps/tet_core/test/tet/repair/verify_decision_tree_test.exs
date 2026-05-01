@@ -67,7 +67,7 @@ defmodule Tet.Repair.VerifyDecisionTreeTest do
       assert {:ok, :full_restart} = VerifyDecisionTree.decide(patch_result)
     end
 
-    test "returns :release_handler when safe modules + release config" do
+    test "returns :hot_reload when safe modules + release config (hot_reload takes precedence)" do
       patch_result = %{
         compile_status: :pass,
         smoke_status: :pass,
@@ -75,7 +75,7 @@ defmodule Tet.Repair.VerifyDecisionTreeTest do
         has_release_config: true
       }
 
-      assert {:ok, :release_handler} = VerifyDecisionTree.decide(patch_result)
+      assert {:ok, :hot_reload} = VerifyDecisionTree.decide(patch_result)
     end
 
     test "returns :hot_reload when safe modules + no release config" do
