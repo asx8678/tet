@@ -80,7 +80,7 @@ defmodule Tet.SessionTest do
         event_sequence: 42
       })
 
-    assert {:ok, state, _events} = Session.request_swap(pid, "reviewer")
+    assert {:ok, state, _events} = Session.request_swap(pid, "reviewer", cache_capability: :full)
 
     preserved = %{
       history_ref: "hist_1",
