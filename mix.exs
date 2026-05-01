@@ -5,6 +5,7 @@ defmodule Tet.Umbrella.MixProject do
   @standalone_applications [
     tet_core: :permanent,
     tet_store_sqlite: :permanent,
+    tet_store_memory: :temporary,
     tet_runtime: :permanent,
     tet_cli: :permanent
   ]

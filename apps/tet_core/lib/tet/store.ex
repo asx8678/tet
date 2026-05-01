@@ -67,6 +67,9 @@ defmodule Tet.Store do
   @type persisted_event :: Tet.Event.persisted_t()
   @type workflow :: Tet.Workflow.t()
   @type workflow_step :: Tet.WorkflowStep.t()
+  @type checkpoint :: Tet.Checkpoint.t()
+  @type error_log :: Tet.ErrorLog.t()
+  @type repair :: Tet.Repair.t()
 
   @type workspace_attrs :: attrs()
   @type session_attrs :: attrs()
@@ -78,6 +81,10 @@ defmodule Tet.Store do
   @type event_attrs :: attrs()
   @type workflow_attrs :: attrs()
   @type workflow_step_attrs :: attrs()
+  @type checkpoint_attrs :: attrs()
+  @type error_log_attrs :: attrs()
+  @type repair_attrs :: attrs()
+  @type repair_status :: Tet.Repair.status()
 
   @type trust_state :: Tet.Workspace.trust_state()
   @type approval_resolution :: :approved | :rejected
@@ -170,10 +177,10 @@ defmodule Tet.Store do
   @callback list_approvals(session_id(), options()) :: result([approval()])
 
   @doc "Creates an artifact metadata row and, adapter permitting, its content reference."
-  @callback create_artifact(artifact_attrs()) :: result(artifact())
+  @callback create_artifact(artifact_attrs(), options()) :: result(artifact())
 
   @doc "Fetches one artifact by id."
-  @callback get_artifact(artifact_id()) :: result(artifact())
+  @callback get_artifact(artifact_id(), options()) :: result(artifact())
 
   @doc "Appends an event to the per-session durable timeline."
   @callback emit_event(event_attrs()) :: result(persisted_event())
@@ -215,6 +222,59 @@ defmodule Tet.Store do
   @doc "Claims a workflow for recovery/execution. Single-node adapters may always claim."
   @callback claim_workflow(workflow_id(), node(), pos_integer()) ::
               {:ok, :claimed} | {:error, :held_by, node()} | {:error, error()}
+
+  # -- BD-0034: Event Log, Artifacts, Checkpoints, Workflow Steps, Error Log, Repair Queue --
+
+  @doc "Appends an event to the session timeline and returns the persisted event."
+  @callback append_event(event_attrs(), options()) :: result(persisted_event())
+
+  @doc "Fetches a single event by its id."
+  @callback get_event(id(), options()) :: result(persisted_event())
+
+  @doc "Lists artifacts for a session, optionally filtered by task_id."
+  @callback list_artifacts(session_id(), options()) :: result([artifact()])
+
+  @doc "Saves a checkpoint for a session."
+  @callback save_checkpoint(checkpoint_attrs(), options()) :: result(checkpoint())
+
+  @doc "Fetches a checkpoint by id."
+  @callback get_checkpoint(id(), options()) :: result(checkpoint())
+
+  @doc "Lists checkpoints for a session."
+  @callback list_checkpoints(session_id(), options()) :: result([checkpoint()])
+
+  @doc "Deletes a checkpoint by id."
+  @callback delete_checkpoint(id(), options()) :: result(:ok)
+
+  @doc "Appends a workflow step to a session's step log."
+  @callback append_step(workflow_step_attrs(), options()) :: result(workflow_step())
+
+  @doc "Lists workflow steps for a session (aggregating across workflows)."
+  @callback get_steps(session_id(), options()) :: result([workflow_step()])
+
+  @doc "Logs an error entry to the error log."
+  @callback log_error(error_log_attrs(), options()) :: result(error_log())
+
+  @doc "Lists error log entries for a session."
+  @callback list_errors(session_id(), options()) :: result([error_log()])
+
+  @doc "Fetches a single error log entry by id."
+  @callback get_error(id(), options()) :: result(error_log())
+
+  @doc "Resolves an error log entry, setting status to :resolved."
+  @callback resolve_error(id(), options()) :: result(error_log())
+
+  @doc "Enqueues a repair entry for an error."
+  @callback enqueue_repair(repair_attrs(), options()) :: result(repair())
+
+  @doc "Dequeues the next pending repair entry."
+  @callback dequeue_repair(options()) :: result(repair() | nil)
+
+  @doc "Updates a repair entry (e.g., status transitions, result)."
+  @callback update_repair(id(), repair_attrs(), options()) :: result(repair())
+
+  @doc "Lists repair entries, optionally filtered by session or status."
+  @callback list_repairs(options()) :: result([repair()])
 
   @doc "Deprecated compatibility alias for `append_message/1` used by scaffold runtime."
   @callback save_message(message(), options()) :: result(message())
@@ -259,5 +319,22 @@ defmodule Tet.Store do
                       list_autosaves: 1,
                       save_prompt_history: 2,
                       list_prompt_history: 1,
-                      fetch_prompt_history: 2
+                      fetch_prompt_history: 2,
+                      append_event: 2,
+                      get_event: 2,
+                      list_artifacts: 2,
+                      save_checkpoint: 2,
+                      get_checkpoint: 2,
+                      list_checkpoints: 2,
+                      delete_checkpoint: 2,
+                      append_step: 2,
+                      get_steps: 2,
+                      log_error: 2,
+                      list_errors: 2,
+                      get_error: 2,
+                      resolve_error: 2,
+                      enqueue_repair: 2,
+                      dequeue_repair: 1,
+                      update_repair: 3,
+                      list_repairs: 1
 end

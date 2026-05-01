@@ -1,9 +1,9 @@
-defmodule TetStoreSQLite.MixProject do
+defmodule TetStoreMemory.MixProject do
   use Mix.Project
 
   def project do
     [
-      app: :tet_store_sqlite,
+      app: :tet_store_memory,
       version: "0.1.0",
       build_path: "../../_build",
       config_path: "../../config/config.exs",
@@ -22,16 +22,14 @@ defmodule TetStoreSQLite.MixProject do
 
   def application do
     [
-      mod: {Tet.Store.SQLite.Application, []},
+      mod: {Tet.Store.Memory.Application, []},
       extra_applications: [:logger]
     ]
   end
 
   defp deps do
     [
-      {:tet_core, in_umbrella: true},
-      {:ecto_sql, "~> 3.11"},
-      {:ecto_sqlite3, "~> 0.15"}
+      {:tet_core, in_umbrella: true}
     ]
   end
 end
