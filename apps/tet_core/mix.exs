@@ -25,6 +25,8 @@ defmodule TetCore.MixProject do
   end
 
   defp deps do
-    []
+    [
+      {:jason, "~> 1.0"}
+    ]
   end
 end

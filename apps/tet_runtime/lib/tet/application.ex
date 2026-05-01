@@ -8,7 +8,9 @@ defmodule Tet.Application do
     children = [
       {Registry, keys: :duplicate, name: Tet.EventBus.Registry},
       {Registry, keys: :unique, name: Tet.Runtime.SessionRegistry.name()},
+      {Registry, keys: :unique, name: Tet.Runtime.Plugin.Registry},
       Tet.Runtime.SessionSupervisor,
+      Tet.Runtime.Plugin.Supervisor,
       Tet.Runtime.GuidanceLoop
     ]
 
