@@ -3,7 +3,8 @@ defmodule Tet.Approval.DiffArtifactTest do
   BD-0027: DiffArtifact struct tests.
 
   Covers construction, validation, hash consistency, snapshot-based
-  construction, serialization round-trips, and correlation metadata.
+  construction (with action/correlation/whitelist validation),
+  serialization round-trips, and correlation metadata.
   """
 
   use ExUnit.Case, async: true
@@ -28,7 +29,6 @@ defmodule Tet.Approval.DiffArtifactTest do
       assert artifact.content_hash_after == "hash_after"
       assert artifact.old_content == nil
       assert artifact.new_content == nil
-      assert artifact.patch_text == nil
       assert artifact.metadata == %{}
     end
 
@@ -237,14 +237,32 @@ defmodule Tet.Approval.DiffArtifactTest do
                DiffArtifact.from_snapshots(before_snap, after_snap, %{})
     end
 
-    test "prefers before snapshot correlation when both have it" do
+    test "rejects invalid snapshot actions" do
+      before_snap = %Snapshot{
+        id: "sb",
+        file_path: "/f",
+        content_hash: "h1",
+        action: :taken_after
+      }
+
+      after_snap = %Snapshot{
+        id: "sa",
+        file_path: "/f",
+        content_hash: "h2",
+        action: :taken_before
+      }
+
+      assert {:error, {:invalid_snapshot_actions, :taken_after, :taken_before}} =
+               DiffArtifact.from_snapshots(before_snap, after_snap, %{})
+    end
+
+    test "rejects mismatched tool_call_id when both present" do
       before_snap = %Snapshot{
         id: "sb",
         file_path: "/f",
         content_hash: "h1",
         action: :taken_before,
-        tool_call_id: "call_before",
-        session_id: "ses_before"
+        tool_call_id: "call_b"
       }
 
       after_snap = %Snapshot{
@@ -252,13 +270,131 @@ defmodule Tet.Approval.DiffArtifactTest do
         file_path: "/f",
         content_hash: "h2",
         action: :taken_after,
-        tool_call_id: "call_after",
-        session_id: "ses_after"
+        tool_call_id: "call_a"
+      }
+
+      assert {:error, {:snapshot_correlation_mismatch, _}} =
+               DiffArtifact.from_snapshots(before_snap, after_snap, %{id: "d1"})
+    end
+
+    test "rejects mismatched session_id when both present" do
+      before_snap = %Snapshot{
+        id: "sb",
+        file_path: "/f",
+        content_hash: "h1",
+        action: :taken_before,
+        session_id: "ses_b"
+      }
+
+      after_snap = %Snapshot{
+        id: "sa",
+        file_path: "/f",
+        content_hash: "h2",
+        action: :taken_after,
+        session_id: "ses_a"
+      }
+
+      assert {:error, {:snapshot_correlation_mismatch, _}} =
+               DiffArtifact.from_snapshots(before_snap, after_snap, %{id: "d1"})
+    end
+
+    test "rejects extra keys that are derived fields" do
+      before_snap = %Snapshot{
+        id: "sb",
+        file_path: "/f",
+        content_hash: "h1",
+        action: :taken_before
+      }
+
+      after_snap = %Snapshot{
+        id: "sa",
+        file_path: "/f",
+        content_hash: "h2",
+        action: :taken_after
+      }
+
+      assert {:error, {:invalid_extra_fields, [:file_path]}} =
+               DiffArtifact.from_snapshots(before_snap, after_snap, %{
+                 id: "d1",
+                 file_path: "should-not-be-allowed"
+               })
+    end
+
+    test "allows whitelisted extra keys" do
+      before_snap = %Snapshot{
+        id: "sb",
+        file_path: "/f",
+        content_hash: "h1",
+        action: :taken_before,
+        tool_call_id: "call_whitelist"
+      }
+
+      after_snap = %Snapshot{
+        id: "sa",
+        file_path: "/f",
+        content_hash: "h2",
+        action: :taken_after,
+        tool_call_id: "call_whitelist"
+      }
+
+      assert {:ok, artifact} =
+               DiffArtifact.from_snapshots(before_snap, after_snap, %{
+                 id: "d1",
+                 patch_text: "diff content",
+                 metadata: %{source: "test"}
+               })
+
+      assert artifact.id == "d1"
+      assert artifact.patch_text == "diff content"
+      assert artifact.metadata == %{source: "test"}
+    end
+
+    test "prefers before snapshot correlation when both match" do
+      before_snap = %Snapshot{
+        id: "sb",
+        file_path: "/f",
+        content_hash: "h1",
+        action: :taken_before,
+        tool_call_id: "call_match",
+        session_id: "ses_match"
+      }
+
+      after_snap = %Snapshot{
+        id: "sa",
+        file_path: "/f",
+        content_hash: "h2",
+        action: :taken_after,
+        tool_call_id: "call_match",
+        session_id: "ses_match"
       }
 
       assert {:ok, artifact} = DiffArtifact.from_snapshots(before_snap, after_snap, %{id: "d1"})
-      assert artifact.tool_call_id == "call_before"
-      assert artifact.session_id == "ses_before"
+      assert artifact.tool_call_id == "call_match"
+      assert artifact.session_id == "ses_match"
+    end
+
+    test "uses available correlation when one snapshot is nil" do
+      before_snap = %Snapshot{
+        id: "sb",
+        file_path: "/f",
+        content_hash: "h1",
+        action: :taken_before,
+        tool_call_id: nil,
+        session_id: nil
+      }
+
+      after_snap = %Snapshot{
+        id: "sa",
+        file_path: "/f",
+        content_hash: "h2",
+        action: :taken_after,
+        tool_call_id: "call_only",
+        session_id: "ses_only"
+      }
+
+      assert {:ok, artifact} = DiffArtifact.from_snapshots(before_snap, after_snap, %{id: "d1"})
+      assert artifact.tool_call_id == "call_only"
+      assert artifact.session_id == "ses_only"
     end
   end
 

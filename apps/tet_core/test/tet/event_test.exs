@@ -105,6 +105,186 @@ defmodule Tet.EventTest do
     end
   end
 
+  describe "artifact.created events" do
+    test "artifact_created/2 builds an artifact.created event" do
+      event =
+        Event.artifact_created(
+          %{
+            artifact_id: "art_1",
+            tool_call_id: "call_1",
+            file_path: "/lib/foo.ex",
+            snapshot_before_id: "snap_b",
+            snapshot_after_id: "snap_a"
+          },
+          session_id: "ses_art",
+          seq: 5,
+          metadata: %{source: :mutation}
+        )
+
+      assert event.type == :"artifact.created"
+      assert event.payload.artifact_id == "art_1"
+      assert event.payload.tool_call_id == "call_1"
+      assert event.payload.file_path == "/lib/foo.ex"
+      assert event.payload.snapshot_before_id == "snap_b"
+      assert event.payload.snapshot_after_id == "snap_a"
+      assert event.session_id == "ses_art"
+      assert event.seq == 5
+      assert event.metadata.source == :mutation
+    end
+
+    test "artifact.created type is in known_types" do
+      assert :"artifact.created" in Event.known_types()
+    end
+
+    test "artifact_types/0 returns artifact event types" do
+      assert Event.artifact_types() == [:"artifact.created"]
+    end
+
+    test "artifact.created event round-trips through to_map/1 and from_map/1" do
+      original =
+        Event.artifact_created(
+          %{
+            artifact_id: "art_rt",
+            tool_call_id: "call_rt",
+            file_path: "/lib/bar.ex",
+            snapshot_before_id: "sb",
+            snapshot_after_id: "sa"
+          },
+          session_id: "ses_rt",
+          seq: 10
+        )
+
+      mapped = Event.to_map(original)
+      assert {:ok, roundtripped} = Event.from_map(mapped)
+
+      assert roundtripped.type == original.type
+      assert roundtripped.session_id == original.session_id
+      assert roundtripped.seq == original.seq
+      assert roundtripped.payload["artifact_id"] == "art_rt"
+      assert roundtripped.payload["file_path"] == "/lib/bar.ex"
+    end
+  end
+
+  describe "blocked_action.created events" do
+    test "blocked_action/2 builds a blocked_action.created event" do
+      event =
+        Event.blocked_action(
+          %{
+            blocked_action_id: "blk_1",
+            tool_name: "write-file",
+            reason: :plan_mode_blocks_mutation,
+            tool_call_id: "call_blk"
+          },
+          session_id: "ses_blk",
+          seq: 7,
+          metadata: %{risk: :high}
+        )
+
+      assert event.type == :"blocked_action.created"
+      assert event.payload.blocked_action_id == "blk_1"
+      assert event.payload.tool_name == "write-file"
+      assert event.payload.reason == :plan_mode_blocks_mutation
+      assert event.payload.tool_call_id == "call_blk"
+      assert event.session_id == "ses_blk"
+      assert event.seq == 7
+      assert event.metadata.risk == :high
+    end
+
+    test "blocked_action.created type is in known_types" do
+      assert :"blocked_action.created" in Event.known_types()
+    end
+
+    test "blocked_action_types/0 returns blocked-action event types" do
+      assert Event.blocked_action_types() == [:"blocked_action.created"]
+    end
+
+    test "blocked_action.created event round-trips through to_map/1 and from_map/1" do
+      original =
+        Event.blocked_action(
+          %{
+            blocked_action_id: "blk_rt",
+            tool_name: "shell",
+            reason: :no_active_task,
+            tool_call_id: "call_rt"
+          },
+          session_id: "ses_rt",
+          seq: 12
+        )
+
+      mapped = Event.to_map(original)
+      assert {:ok, roundtripped} = Event.from_map(mapped)
+
+      assert roundtripped.type == original.type
+      assert roundtripped.session_id == original.session_id
+      assert roundtripped.seq == original.seq
+      assert roundtripped.payload["blocked_action_id"] == "blk_rt"
+      assert roundtripped.payload["tool_name"] == "shell"
+      assert roundtripped.payload["reason"] == "no_active_task"
+    end
+  end
+
+  describe "full audit story event round-trip" do
+    test "approval lifecycle + artifact + blocked-action events round-trip through serialization" do
+      # Build a complete audit story as events
+      events = [
+        Event.approval_created(
+          %{approval_id: "a1", tool_call_id: "c1", status: :pending},
+          session_id: "ses_audit",
+          seq: 1,
+          metadata: %{task_id: "t1"}
+        ),
+        Event.artifact_created(
+          %{
+            artifact_id: "art_1",
+            tool_call_id: "c1",
+            file_path: "/lib/foo.ex",
+            snapshot_before_id: "sb",
+            snapshot_after_id: "sa"
+          },
+          session_id: "ses_audit",
+          seq: 2
+        ),
+        Event.approval_approved(
+          %{approval_id: "a1", tool_call_id: "c1", approver: "adam", rationale: "OK"},
+          session_id: "ses_audit",
+          seq: 3
+        ),
+        Event.blocked_action(
+          %{
+            blocked_action_id: "blk_1",
+            tool_name: "write-file",
+            reason: :mode_not_allowed,
+            tool_call_id: "c2"
+          },
+          session_id: "ses_audit",
+          seq: 4
+        )
+      ]
+
+      # All events have correct types
+      assert Enum.map(events, & &1.type) == [
+               :"approval.created",
+               :"artifact.created",
+               :"approval.approved",
+               :"blocked_action.created"
+             ]
+
+      # All events share session_id
+      for event <- events do
+        assert event.session_id == "ses_audit"
+      end
+
+      # All events round-trip individually through to_map/from_map
+      for event <- events do
+        mapped = Event.to_map(event)
+        assert {:ok, restored} = Event.from_map(mapped)
+        assert restored.type == event.type
+        assert restored.session_id == event.session_id
+        assert restored.seq == event.seq
+      end
+    end
+  end
+
   describe "steering decision events" do
     test "steering_decision/2 builds a steering decision event" do
       event =

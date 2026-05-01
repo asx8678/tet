@@ -29,12 +29,14 @@ defmodule Tet.Approval.SnapshotTest do
     end
 
     test "builds snapshot with all optional attrs" do
+      content = "defmodule Foo do end"
+
       attrs = %{
         id: "snap_002",
         file_path: "/workspace/lib/bar.ex",
-        content_hash: "def456",
+        content_hash: Snapshot.compute_hash(content),
         action: :taken_after,
-        content: "defmodule Foo do end",
+        content: content,
         timestamp: "2025-05-01T12:00:00Z",
         tool_call_id: "call_abc",
         session_id: "ses_001",

@@ -72,6 +72,9 @@ defmodule Tet.Approval.Snapshot do
   Required: `:id`, `:file_path`, `:content_hash`, `:action`.
   Optional: `:content`, `:timestamp`, `:tool_call_id`, `:session_id`,
   `:task_id`, `:metadata` (default `%{}`).
+
+  When `:content` is provided, the SHA-256 hash of the content is validated
+  against `:content_hash` to catch mismatches early.
   """
   @spec new(map()) :: {:ok, t()} | {:error, term()}
   def new(attrs) when is_map(attrs) do
@@ -84,7 +87,8 @@ defmodule Tet.Approval.Snapshot do
          {:ok, tool_call_id} <- fetch_optional_binary(attrs, :tool_call_id),
          {:ok, session_id} <- fetch_optional_binary(attrs, :session_id),
          {:ok, task_id} <- fetch_optional_binary(attrs, :task_id),
-         {:ok, metadata} <- fetch_map(attrs, :metadata, %{}) do
+         {:ok, metadata} <- fetch_map(attrs, :metadata, %{}),
+         :ok <- validate_content_hash(content, content_hash) do
       {:ok,
        %__MODULE__{
          id: id,
@@ -171,7 +175,6 @@ defmodule Tet.Approval.Snapshot do
   defp fetch_optional_binary(attrs, key) do
     case fetch_value(attrs, key) do
       nil -> {:ok, nil}
-      "" -> {:ok, nil}
       value when is_binary(value) -> {:ok, value}
       _ -> {:error, {:invalid_snapshot_field, key}}
     end
@@ -206,6 +209,19 @@ defmodule Tet.Approval.Snapshot do
     case fetch_value(attrs, key, default) do
       value when is_map(value) -> {:ok, value}
       _ -> {:error, {:invalid_snapshot_field, key}}
+    end
+  end
+
+  # Validate content hash when content is provided (including empty string "").
+  defp validate_content_hash(nil, _content_hash), do: :ok
+
+  defp validate_content_hash(content, content_hash) when is_binary(content) do
+    computed = compute_hash(content)
+
+    if computed == content_hash do
+      :ok
+    else
+      {:error, {:content_hash_mismatch, computed, content_hash}}
     end
   end
 

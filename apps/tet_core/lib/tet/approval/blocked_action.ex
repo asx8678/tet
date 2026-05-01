@@ -25,6 +25,8 @@ defmodule Tet.Approval.BlockedAction do
     :category_blocks_tool
   ]
 
+  @reason_allowlist Enum.into(@known_block_reasons, %{}, &{Atom.to_string(&1), &1})
+
   @enforce_keys [:id, :tool_name, :reason, :tool_call_id]
   defstruct [
     :id,
@@ -157,9 +159,12 @@ defmodule Tet.Approval.BlockedAction do
   end
 
   defp parse_reason(str) when is_binary(str) do
-    # Accept any atom-like string; the gate may produce custom reasons.
-    # We don't restrict to @known_block_reasons for forward compatibility.
-    {:ok, String.to_atom(str)}
+    # Safe parse: try known atoms first, fall back to a generic :unknown_block_reason.
+    # Uses a known-atom allowlist map to avoid creating arbitrary atoms from untrusted input.
+    case Map.get(@reason_allowlist, str) do
+      nil -> {:ok, :unknown_block_reason}
+      reason -> {:ok, reason}
+    end
   rescue
     ArgumentError -> {:error, {:invalid_blocked_action_field, :reason}}
   end

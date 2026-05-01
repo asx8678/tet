@@ -84,12 +84,13 @@ defmodule Tet.Approval.CorrelationTest do
       {:ok, approved} = Approval.approve(approval, "adam", "Safe change")
       assert approved.status == :approved
       assert approved.approver == "adam"
-      assert approved.approved_at != nil
+      refute is_nil(approved.approved_at)
 
       # All records share the same correlation IDs
       for record <- [approved, before_snap, after_snap, diff] do
         assert record.tool_call_id == @tool_call_id || record.tool_call_id == nil ||
-                 (record.tool_call_id == @tool_call_id)
+                 record.tool_call_id == @tool_call_id
+
         # Session and task correlation is present where applicable
       end
 

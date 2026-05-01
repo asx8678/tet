@@ -51,6 +51,9 @@ defmodule Tet.Approval.DiffArtifact do
           metadata: map()
         }
 
+  # Fields that are safe to accept in the extra map (non-derived, user-supplied).
+  @extra_whitelist [:id, :patch_text, :metadata]
+
   @doc """
   Builds a validated diff artifact from atom or string keyed attributes.
 
@@ -108,16 +111,21 @@ defmodule Tet.Approval.DiffArtifact do
   @doc """
   Builds a diff artifact from two Snapshot records and optional patch text.
 
-  Extracts file_path, content hashes, snapshot IDs, and (optionally) content
-  from the before/after snapshot pair. This is the primary construction path
-  in the mutation pipeline.
+  Validates:
+  - `snap_before.action == :taken_before`
+  - `snap_after.action == :taken_after`
+  - matching `tool_call_id`, `session_id`, `task_id` between snapshots
+  - `extra` keys are whitelisted to non-derived fields only
+
+  Returns `{:error, reason}` for any validation violation.
   """
   @spec from_snapshots(Snapshot.t(), Snapshot.t(), map()) :: {:ok, t()} | {:error, term()}
   def from_snapshots(%Snapshot{} = snap_before, %Snapshot{} = snap_after, extra \\ %{})
       when is_map(extra) do
-    if snap_before.file_path != snap_after.file_path do
-      {:error, {:snapshot_file_path_mismatch, snap_before.file_path, snap_after.file_path}}
-    else
+    with :ok <- validate_snapshot_actions(snap_before, snap_after),
+         :ok <- validate_snapshot_correlation(snap_before, snap_after),
+         :ok <- validate_file_path_match(snap_before, snap_after),
+         :ok <- validate_extra_whitelist(extra) do
       attrs =
         %{
           file_path: snap_before.file_path,
@@ -131,7 +139,7 @@ defmodule Tet.Approval.DiffArtifact do
         }
         |> maybe_put_content(snap_before.content, :old_content)
         |> maybe_put_content(snap_after.content, :new_content)
-        |> Map.merge(extra)
+        |> Map.merge(Map.take(extra, @extra_whitelist))
 
       new(attrs)
     end
@@ -162,6 +170,51 @@ defmodule Tet.Approval.DiffArtifact do
   def from_map(attrs) when is_map(attrs), do: new(attrs)
 
   # -- Validators --
+
+  defp validate_snapshot_actions(%Snapshot{action: :taken_before}, %Snapshot{action: :taken_after}),
+       do: :ok
+
+  defp validate_snapshot_actions(%Snapshot{action: before_action}, %Snapshot{action: after_action}),
+       do: {:error, {:invalid_snapshot_actions, before_action, after_action}}
+
+  defp validate_snapshot_correlation(snap_before, snap_after) do
+    errors =
+      []
+      |> check_correlation(:tool_call_id, snap_before, snap_after)
+      |> check_correlation(:session_id, snap_before, snap_after)
+      |> check_correlation(:task_id, snap_before, snap_after)
+
+    if errors == [], do: :ok, else: {:error, {:snapshot_correlation_mismatch, errors}}
+  end
+
+  defp check_correlation(errors, field, snap_before, snap_after) do
+    before_val = Map.get(snap_before, field)
+    after_val = Map.get(snap_after, field)
+
+    if before_val != nil and after_val != nil and before_val != after_val do
+      [{field, before_val, after_val} | errors]
+    else
+      errors
+    end
+  end
+
+  defp validate_file_path_match(snap_before, snap_after) do
+    if snap_before.file_path == snap_after.file_path do
+      :ok
+    else
+      {:error, {:snapshot_file_path_mismatch, snap_before.file_path, snap_after.file_path}}
+    end
+  end
+
+  defp validate_extra_whitelist(extra) do
+    invalid = Map.keys(extra) -- @extra_whitelist
+
+    if invalid == [] do
+      :ok
+    else
+      {:error, {:invalid_extra_fields, invalid}}
+    end
+  end
 
   defp fetch_binary(attrs, key) do
     case fetch_value(attrs, key) do
@@ -200,7 +253,9 @@ defmodule Tet.Approval.DiffArtifact do
   end
 
   defp maybe_put_content(attrs, nil, _key), do: attrs
-  defp maybe_put_content(attrs, content, key) when is_binary(content), do: Map.put(attrs, key, content)
+
+  defp maybe_put_content(attrs, content, key) when is_binary(content),
+    do: Map.put(attrs, key, content)
 
   defp fetch_value(attrs, key, default \\ nil) do
     Map.get(attrs, key, Map.get(attrs, Atom.to_string(key), default))

@@ -69,7 +69,8 @@ defmodule Tet.Approval.ApprovalTest do
     end
 
     test "rejects empty id" do
-      assert {:error, {:invalid_approval_field, :id}} = Approval.new(%{id: "", tool_call_id: "call_1"})
+      assert {:error, {:invalid_approval_field, :id}} =
+               Approval.new(%{id: "", tool_call_id: "call_1"})
     end
 
     test "rejects missing tool_call_id" do
@@ -174,12 +175,14 @@ defmodule Tet.Approval.ApprovalTest do
 
     test "rejects approved → pending" do
       approval = %Approval{id: "a1", tool_call_id: "c1", status: :approved}
+
       assert {:error, {:invalid_approval_transition, :approved, :pending}} =
                Approval.transition(approval, :pending)
     end
 
     test "rejects rejected → approved" do
       approval = %Approval{id: "a1", tool_call_id: "c1", status: :rejected}
+
       assert {:error, {:invalid_approval_transition, :rejected, :approved}} =
                Approval.transition(approval, :approved)
     end
@@ -197,13 +200,14 @@ defmodule Tet.Approval.ApprovalTest do
 
   describe "approve/3" do
     test "approves a pending approval with approver and rationale" do
-      approval = Approval.new!(%{id: "a1", tool_call_id: "c1", session_id: "ses_1", task_id: "t1"})
+      approval =
+        Approval.new!(%{id: "a1", tool_call_id: "c1", session_id: "ses_1", task_id: "t1"})
 
       assert {:ok, updated} = Approval.approve(approval, "adam", "Looks safe")
       assert updated.status == :approved
       assert updated.approver == "adam"
       assert updated.rationale == "Looks safe"
-      assert updated.approved_at != nil
+      refute is_nil(updated.approved_at)
       # Correlation preserved
       assert updated.session_id == "ses_1"
       assert updated.task_id == "t1"
@@ -216,7 +220,9 @@ defmodule Tet.Approval.ApprovalTest do
 
     test "rejects non-binary approver" do
       approval = Approval.new!(%{id: "a1", tool_call_id: "c1"})
-      assert {:error, {:invalid_approver_or_rationale, nil}} = Approval.approve(approval, nil, "ok")
+
+      assert {:error, {:invalid_approver_or_rationale, nil}} =
+               Approval.approve(approval, nil, "ok")
     end
   end
 
@@ -228,7 +234,7 @@ defmodule Tet.Approval.ApprovalTest do
       assert updated.status == :rejected
       assert updated.approver == "bob"
       assert updated.rationale == "Too risky"
-      assert updated.rejected_at != nil
+      refute is_nil(updated.rejected_at)
     end
 
     test "rejects rejecting a non-pending approval" do
