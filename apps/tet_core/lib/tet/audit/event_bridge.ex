@@ -89,6 +89,14 @@ defmodule Tet.Audit.EventBridge do
   defp audit_id(_event), do: nil
 
   defp normalize_timestamp(%DateTime{} = dt), do: dt
+
+  defp normalize_timestamp(value) when is_binary(value) do
+    case DateTime.from_iso8601(value) do
+      {:ok, dt, _offset} -> dt
+      {:error, _} -> DateTime.utc_now()
+    end
+  end
+
   defp normalize_timestamp(_), do: DateTime.utc_now()
 
   # -- Private: classification --

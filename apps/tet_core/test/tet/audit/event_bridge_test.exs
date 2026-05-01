@@ -290,6 +290,34 @@ defmodule Tet.Audit.EventBridgeTest do
       assert %DateTime{} = audit.timestamp
     end
 
+    test "parses ISO8601 string timestamp" do
+      event = %Event{
+        id: "evt_iso",
+        type: :"tool.finished",
+        session_id: "ses_iso",
+        payload: %{},
+        metadata: %{},
+        created_at: "2025-05-01T12:00:00Z"
+      }
+
+      assert {:ok, audit} = EventBridge.from_event(event)
+      assert audit.timestamp == ~U[2025-05-01 12:00:00Z]
+    end
+
+    test "falls back to utc_now for invalid ISO8601 string" do
+      event = %Event{
+        id: "evt_badiso",
+        type: :"tool.finished",
+        session_id: "ses_badiso",
+        payload: %{},
+        metadata: %{},
+        created_at: "not-a-timestamp"
+      }
+
+      assert {:ok, audit} = EventBridge.from_event(event)
+      assert %DateTime{} = audit.timestamp
+    end
+
     test "handles unknown event type with default classification" do
       event = %Event{
         id: "evt_unknown",

@@ -208,6 +208,62 @@ defmodule Tet.AuditTest do
       assert redacted.metadata.line_count == 42
     end
 
+    test "redacts sensitive resource field" do
+      {:ok, entry} =
+        Audit.new(%{
+          event_type: :tool_call,
+          action: :execute,
+          actor: :agent,
+          resource: "Authorization: Bearer secret-123"
+        })
+
+      redacted = Audit.redact(entry)
+      refute String.contains?(redacted.resource, "secret-123")
+      assert String.contains?(redacted.resource, "[REDACTED]")
+    end
+
+    test "redacts sensitive payload_ref field" do
+      {:ok, entry} =
+        Audit.new(%{
+          event_type: :tool_call,
+          action: :execute,
+          actor: :agent,
+          payload_ref: "sk-super-secret-key-abc123"
+        })
+
+      redacted = Audit.redact(entry)
+      refute String.contains?(redacted.payload_ref, "sk-super-secret-key-abc123")
+      assert String.contains?(redacted.payload_ref, "[REDACTED]")
+    end
+
+    test "leaves non-sensitive resource and payload_ref unchanged" do
+      {:ok, entry} =
+        Audit.new(%{
+          event_type: :tool_call,
+          action: :execute,
+          actor: :agent,
+          resource: "/lib/bar.ex",
+          payload_ref: "payload:evt_safe"
+        })
+
+      redacted = Audit.redact(entry)
+      assert redacted.resource == "/lib/bar.ex"
+      assert redacted.payload_ref == "payload:evt_safe"
+    end
+
+    test "handles nil resource and payload_ref in redaction" do
+      {:ok, entry} =
+        Audit.new(%{
+          event_type: :approval,
+          action: :update,
+          actor: :user
+        })
+
+      redacted = Audit.redact(entry)
+      assert redacted.resource == nil
+      assert redacted.payload_ref == nil
+    end
+
     test "preserves all other fields unchanged" do
       {:ok, entry} =
         Audit.new(%{

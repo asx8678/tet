@@ -123,10 +123,23 @@ defmodule Tet.Audit do
   @spec from_map(map()) :: {:ok, t()} | {:error, term()}
   def from_map(attrs) when is_map(attrs), do: new(attrs)
 
-  @doc "Applies redaction to sensitive fields in the audit entry."
+  @doc "Applies redaction to all fields that can contain sensitive data."
   @spec redact(t()) :: t()
   def redact(%__MODULE__{} = entry) do
-    %__MODULE__{entry | metadata: Redactor.redact(entry.metadata)}
+    %__MODULE__{
+      entry
+      | metadata: Redactor.redact(entry.metadata),
+        resource:
+          if(is_binary(entry.resource),
+            do: Redactor.redact(entry.resource),
+            else: entry.resource
+          ),
+        payload_ref:
+          if(is_binary(entry.payload_ref),
+            do: Redactor.redact(entry.payload_ref),
+            else: entry.payload_ref
+          )
+    }
   end
 
   # -- Private helpers --
