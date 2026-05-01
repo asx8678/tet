@@ -67,6 +67,42 @@
     "tool_use": {
       "default_model": "openai/gpt-4o-mini",
       "fallback_models": []
+    },
+    "planner": {
+      "default_model": "openai/gpt-4o-mini",
+      "fallback_models": ["mock/default"]
+    },
+    "reviewer": {
+      "default_model": "openai/gpt-4o-mini",
+      "fallback_models": ["mock/default"]
+    },
+    "critic": {
+      "default_model": "openai/gpt-4o-mini",
+      "fallback_models": ["mock/default"]
+    },
+    "tester": {
+      "default_model": "openai/gpt-4o-mini",
+      "fallback_models": ["mock/default"]
+    },
+    "security": {
+      "default_model": "openai/gpt-4o-mini",
+      "fallback_models": ["mock/default"]
+    },
+    "packager": {
+      "default_model": "openai/gpt-4o-mini",
+      "fallback_models": ["mock/default"]
+    },
+    "retriever": {
+      "default_model": "openai/gpt-4o-mini",
+      "fallback_models": ["mock/default"]
+    },
+    "json-data": {
+      "default_model": "openai/gpt-4o-mini",
+      "fallback_models": ["mock/default"]
+    },
+    "repair": {
+      "default_model": "openai/gpt-4o-mini",
+      "fallback_models": ["mock/default"]
     }
   }
 }
