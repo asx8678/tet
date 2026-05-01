@@ -14,7 +14,7 @@ defmodule Tet.Steering.GuidanceMessage do
     - `event_seq` — event sequence number that produced this guidance
     - `decision_type` — `:focus` or `:guide`
     - `message` — the actionable guidance text
-    - `trigger_event_type` — type of the triggering event (e.g. `:tool.started`)
+    - `trigger_event_type` — type of the triggering event (e.g. `:"tool.started"`)
     - `trigger_event_seq` — sequence of the triggering event
     - `expired` — boolean, false when active, true when superseded
     - `created_at` — timestamp of creation
@@ -65,9 +65,10 @@ defmodule Tet.Steering.GuidanceMessage do
 
   ## Options
 
-    - `:id` — optional explicit id (auto-generated via UUID if omitted)
-    - `:session_id` — optional session id
-    - `:event_seq` — optional event sequence (default 0)
+    - `:id` — optional explicit id (auto-generated as 32-char hex from
+      `:crypto.strong_rand_bytes(16)` if omitted)
+    - `:session_id` — optional session id (defaults to `""`)
+    - `:event_seq` — optional event sequence (defaults to `0`)
     - `:trigger_event_type` — optional atom for the triggering event type
     - `:trigger_event_seq` — optional sequence of the triggering event
     - `:expired` — boolean, defaults to false

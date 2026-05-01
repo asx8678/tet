@@ -18,7 +18,7 @@ defmodule Tet.Runtime.GuidanceLoop do
 
   ## Task/tool events that trigger guidance lifecycle
 
-  - `:tool.started`, `:tool.finished`
+  - `:"tool.started"`, `:"tool.finished"`
   - `:"read_tool.started"`, `:"read_tool.completed"`
   - `:steering_decision`
 
