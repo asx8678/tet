@@ -215,4 +215,48 @@ defmodule Tet.PlanMode.GateTestHelpers do
     {:ok, contract} = Contract.new(attrs)
     contract
   end
+
+  # -- BD-0026 invariant helpers --
+
+  @doc """
+  A policy struct with empty safe_modes, bypassing Policy.new/1 validation.
+  Used to verify the gate fails closed when policy data is missing.
+  """
+  def empty_safe_modes_policy do
+    struct(Tet.PlanMode.Policy, %{
+      plan_mode: :plan,
+      safe_modes: [],
+      plan_safe_categories: [:researching, :planning],
+      acting_categories: [:acting, :verifying, :debugging, :documenting],
+      require_active_task: true
+    })
+  end
+
+  @doc """
+  A policy struct with empty plan_safe_categories, bypassing validation.
+  Tests fail-closed behavior when category data is absent.
+  """
+  def empty_plan_safe_categories_policy do
+    struct(Tet.PlanMode.Policy, %{
+      plan_mode: :plan,
+      safe_modes: [:plan, :explore],
+      plan_safe_categories: [],
+      acting_categories: [:acting, :verifying, :debugging, :documenting],
+      require_active_task: true
+    })
+  end
+
+  @doc """
+  A policy struct with nil safe_modes, bypassing validation.
+  Tests the most extreme fail-closed edge case.
+  """
+  def nil_safe_modes_policy do
+    struct(Tet.PlanMode.Policy, %{
+      plan_mode: :plan,
+      safe_modes: nil,
+      plan_safe_categories: [:researching, :planning],
+      acting_categories: [:acting, :verifying, :debugging, :documenting],
+      require_active_task: true
+    })
+  end
 end

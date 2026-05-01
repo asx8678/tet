@@ -111,20 +111,23 @@ defmodule Tet.PlanMode.Policy do
   @doc "True when the given runtime mode is a plan-safe mode."
   @spec plan_safe_mode?(t(), atom()) :: boolean()
   def plan_safe_mode?(%__MODULE__{safe_modes: safe_modes}, mode) when is_atom(mode) do
-    mode in safe_modes
+    safe_list = safe_modes || []
+    mode in safe_list
   end
 
   @doc "True when the task category is plan-safe (researching/planning)."
   @spec plan_safe_category?(t(), atom()) :: boolean()
   def plan_safe_category?(%__MODULE__{plan_safe_categories: cats}, category)
       when is_atom(category) do
-    category in cats
+    cat_list = cats || []
+    category in cat_list
   end
 
   @doc "True when the task category unlocks write/edit/shell."
   @spec acting_category?(t(), atom()) :: boolean()
   def acting_category?(%__MODULE__{acting_categories: cats}, category) when is_atom(category) do
-    category in cats
+    cat_list = cats || []
+    category in cat_list
   end
 
   @doc "True when the contract is read-only and non-mutating per BD-0020."
