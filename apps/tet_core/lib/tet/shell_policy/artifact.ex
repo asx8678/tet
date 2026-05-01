@@ -11,7 +11,7 @@ defmodule Tet.ShellPolicy.Artifact do
   touch the filesystem, shell out, or persist events.
   """
 
-  @enforce_keys [:command, :risk, :exit_code, :stdout, :stderr, :cwd, :duration_ms, :tool_call_id]
+  @enforce_keys [:command, :risk, :exit_code, :stdout, :cwd, :duration_ms, :tool_call_id]
   defstruct [
     :command,
     :risk,
@@ -44,8 +44,12 @@ defmodule Tet.ShellPolicy.Artifact do
   @doc """
   Builds a validated artifact from attributes.
 
-  Required fields: `:command`, `:risk`, `:exit_code`, `:stdout`, `:stderr`,
+  Required fields: `:command`, `:risk`, `:exit_code`, `:stdout`,
   `:cwd`, `:duration_ms`, `:tool_call_id`.
+
+  > Note: `stderr` is always set to `""` by the runner since stderr is
+  > merged into stdout via `stderr_to_stdout: true`. It is retained in
+  > the struct for schema compatibility but is not required at creation.
   """
   @spec new(map()) :: {:ok, t()} | {:error, term()}
   def new(attrs) when is_map(attrs) do

@@ -122,26 +122,30 @@ defmodule Tet.Runtime.Tools.PolicyRunner do
   defp execute(command_vector, cwd, risk, opts) do
     tool_call_id = Keyword.get(opts, :tool_call_id, "unknown")
     task_id = Keyword.get(opts, :task_id)
-    _timeout = Keyword.get(opts, :timeout, 30_000)
+    timeout = Keyword.get(opts, :timeout, 30_000)
     start = System.monotonic_time(:millisecond)
 
-    result =
+    task = Task.async(fn ->
       System.cmd(hd(command_vector), tl(command_vector),
         cd: cwd,
         stderr_to_stdout: true,
         parallelism: false
       )
+    end)
 
-    duration = System.monotonic_time(:millisecond) - start
-
-    case result do
-      {output, exit_code} when is_binary(output) and is_integer(exit_code) ->
+    case Task.yield(task, timeout) || Task.shutdown(task) do
+      {:ok, {output, exit_code}} when is_binary(output) and is_integer(exit_code) ->
+        duration = System.monotonic_time(:millisecond) - start
         # stderr is merged into stdout when stderr_to_stdout: true
         build_artifact(command_vector, cwd, risk, output, "", exit_code, duration, tool_call_id, task_id)
 
-      {output, exit_code} when is_list(output) and is_integer(exit_code) ->
+      {:ok, {output, exit_code}} when is_list(output) and is_integer(exit_code) ->
+        duration = System.monotonic_time(:millisecond) - start
         output_str = IO.iodata_to_binary(output)
         build_artifact(command_vector, cwd, risk, output_str, "", exit_code, duration, tool_call_id, task_id)
+
+      nil ->
+        {:error, timeout_denial(command_vector, timeout)}
     end
   rescue
     e ->
@@ -197,6 +201,17 @@ defmodule Tet.Runtime.Tools.PolicyRunner do
       retryable: false,
       correlation: nil,
       details: %{gate_reason: reason, context: context}
+    }
+  end
+
+  defp timeout_denial(command_vector, timeout) do
+    %{
+      code: "timeout",
+      message: "Command timed out after #{timeout}ms: #{inspect(command_vector)}",
+      kind: "timeout",
+      retryable: true,
+      correlation: nil,
+      details: %{command: command_vector, timeout_ms: timeout}
     }
   end
 

@@ -68,8 +68,9 @@ defmodule Tet.ShellPolicy do
   Returns the default command allowlist.
 
   Each entry is a map with `:command`, `:subcommands`, and `:risk` keys.
-  Subcommands are matched by prefix — `["test", "test/"]` matches both
-  `["mix", "test"]` and `["mix", "test", "apps/tet_core"]`.
+  Subcommands must match exactly (no prefix matching) — `["test"]` matches
+  `["mix", "test"]` and `["mix", "test", "apps/tet_core"]` (the first
+  argument after the executable is matched exactly).
   """
   @spec default_allowlist() :: [map()]
   def default_allowlist do
@@ -201,7 +202,7 @@ defmodule Tet.ShellPolicy do
            entry.command == executable and
              (entry.subcommands == [] or
                 Enum.any?(entry.subcommands, fn allowed ->
-                  String.starts_with?(subcommand, allowed)
+                  subcommand == allowed
                 end))
          end) do
       nil ->

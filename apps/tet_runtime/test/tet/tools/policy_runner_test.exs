@@ -184,5 +184,27 @@ defmodule Tet.Runtime.Tools.PolicyRunnerTest do
 
       assert denial.code == "policy_denial"
     end
+
+    test "returns timeout error when command exceeds timeout" do
+      custom_allowlist = [%{command: "sleep", subcommands: [], risk: :read}]
+
+      # Use a 1ms timeout on a 60s sleep — it'll get killed immediately
+      assert {:error, denial} =
+               PolicyRunner.run(["sleep", "60"],
+                 cwd: @workspace_root,
+                 workspace_root: @workspace_root,
+                 task_id: "t1",
+                 task_category: :acting,
+                 tool_call_id: "call_timeout",
+                 timeout: 1,
+                 allowlist: custom_allowlist
+               )
+
+      assert denial.code == "timeout"
+      assert denial.kind == "timeout"
+      assert denial.retryable == true
+      assert denial.details.timeout_ms == 1
+      assert denial.details.command == ["sleep", "60"]
+    end
   end
 end
