@@ -5,6 +5,11 @@ defmodule Tet.Runtime.Plugin.Worker do
   Each plugin runs inside a Worker that holds its manifest and delegates
   capability-gated calls to the plugin's entrypoint module. The worker is
   the unit of supervision — if a plugin crashes, only its worker restarts.
+
+  ## Error handling
+
+  Unknown capabilities return `{:error, {:unknown_capability, capability}}`.
+  Plugin exceptions are caught and returned as `{:error, {:plugin_error, exception}}`.
   """
 
   use GenServer
@@ -37,12 +42,14 @@ defmodule Tet.Runtime.Plugin.Worker do
 
   @impl true
   def handle_call({:invoke, capability, args}, _from, manifest) do
-    result =
-      Capability.gate(manifest, capability, fn ->
-        apply(manifest.entrypoint, callback_for(capability), [manifest, args])
-      end)
-
+    result = invoke_capability(manifest, capability, args)
     {:reply, result, manifest}
+  end
+
+  # Fallback for any other call
+  @impl true
+  def handle_call(_unknown, _from, manifest) do
+    {:reply, {:error, :unknown_request}, manifest}
   end
 
   # -- Private --
@@ -51,9 +58,23 @@ defmodule Tet.Runtime.Plugin.Worker do
     {:via, Registry, {Tet.Runtime.Plugin.Registry, name}}
   end
 
-  defp callback_for(:tool_execution), do: :handle_tool_call
-  defp callback_for(:file_access), do: :handle_file_access
-  defp callback_for(:network), do: :handle_network_request
-  defp callback_for(:shell), do: :handle_shell_command
-  defp callback_for(:mcp), do: :handle_mcp_request
+  defp invoke_capability(manifest, capability, args) do
+    with {:ok, callback} <- lookup_callback(capability) do
+      Capability.gate(manifest, capability, fn ->
+        try do
+          apply(manifest.entrypoint, callback, [manifest, args])
+        rescue
+          exception ->
+            {:error, {:plugin_error, exception}}
+        end
+      end)
+    end
+  end
+
+  defp lookup_callback(capability) do
+    case Capability.callback_for(capability) do
+      nil -> {:error, {:unknown_capability, capability}}
+      callback -> {:ok, callback}
+    end
+  end
 end

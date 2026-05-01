@@ -25,7 +25,8 @@ defmodule TetRuntime.MixProject do
 
   defp deps do
     [
-      {:tet_core, in_umbrella: true}
+      {:tet_core, in_umbrella: true},
+      {:jason, "~> 1.0"}
     ]
   end
 end

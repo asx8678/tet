@@ -1,6 +1,6 @@
 defmodule Tet.Plugin.Capability do
   @moduledoc """
-  Known capability types and permission gating for plugins.
+  Known capability types, permission gating, and centralized metadata for plugins.
 
   BD-0051 defines a closed set of capability atoms that plugins may declare.
   The `authorized?/2` and `gate/2` functions enforce that a plugin can only
@@ -24,6 +24,19 @@ defmodule Tet.Plugin.Capability do
 
   If a plugin's manifest declares a capability not permitted by its trust
   level, validation fails at manifest-creation time.
+
+  ## Trust model
+
+  CAUTION: The plugin trust model currently relies on plugins self-attesting
+  their `trust_level` and `capabilities`. In production deployments:
+  - Trust levels should be explicitly granted by an external admin/config,
+    not taken from the plugin manifest.
+  - The runtime enforces the intersection of:
+      requested capabilities ∩ trust ceiling ∩ admin-granted capabilities
+  - Plugin code runs in the same BEAM VM with no sandbox. A malicious
+    plugin CAN still call `System.cmd/3`, `File.write!/2`, etc. directly.
+    The capability gates only control callback dispatch, not BEAM primitives.
+    For true isolation, run plugins in a separate OS process or container.
   """
 
   @known_capabilities [:tool_execution, :file_access, :network, :shell, :mcp]
@@ -34,12 +47,28 @@ defmodule Tet.Plugin.Capability do
     full: @known_capabilities
   }
 
+  @capability_callbacks %{
+    tool_execution: :handle_tool_call,
+    file_access: :handle_file_access,
+    network: :handle_network_request,
+    shell: :handle_shell_command,
+    mcp: :handle_mcp_request
+  }
+
   @type capability :: :tool_execution | :file_access | :network | :shell | :mcp
   @type trust_level :: :sandboxed | :restricted | :full
 
   @doc "Returns all known capability atoms."
   @spec known_capabilities() :: [capability()]
   def known_capabilities, do: @known_capabilities
+
+  @doc "Returns the callback function name for a capability atom."
+  @spec callback_for(capability()) :: atom()
+  def callback_for(capability), do: @capability_callbacks[capability]
+
+  @doc "Returns the full capability-to-callback map."
+  @spec capability_callbacks() :: %{capability() => atom()}
+  def capability_callbacks, do: @capability_callbacks
 
   @doc "Returns the maximum capabilities allowed for a trust level."
   @spec trust_ceiling(trust_level()) :: [capability()]
@@ -48,10 +77,38 @@ defmodule Tet.Plugin.Capability do
   def trust_ceiling(:full), do: @trust_ceiling[:full]
 
   @doc """
+  Returns the effective capabilities granted to a plugin.
+
+  Granted capabilities are the intersection of:
+    1. What the plugin requested (declared in manifest `capabilities`)
+    2. What the trust level allows (`trust_ceiling/1`)
+    3. What the admin has explicitly granted (optional `admin_granted` list)
+
+  If `admin_granted` is `nil`, only #1 and #2 are intersected.
+  """
+  @spec granted_capabilities(
+          [capability()],
+          trust_level(),
+          [capability()] | nil
+        ) :: [capability()]
+  def granted_capabilities(requested, trust_level, admin_granted \\ nil) do
+    ceiling = trust_ceiling(trust_level)
+
+    base =
+      if admin_granted do
+        Enum.filter(requested, &(&1 in admin_granted))
+      else
+        requested
+      end
+
+    Enum.filter(base, &(&1 in ceiling))
+  end
+
+  @doc """
   Checks whether a plugin manifest is authorized to use a given capability.
 
-  Returns `true` when the capability is both declared in the manifest's
-  `capabilities` list *and* permitted by the manifest's `trust_level`.
+  Returns `true` when the capability is in the manifest's `capabilities`
+  list (which should be the *granted* set) and within the trust ceiling.
 
   ## Examples
 
@@ -90,8 +147,8 @@ defmodule Tet.Plugin.Capability do
   @spec gate(Tet.Plugin.Manifest.t(), capability(), (-> term())) ::
           term() | {:error, {:unauthorized_capability, capability()}}
   def gate(%Tet.Plugin.Manifest{} = manifest, capability, fun)
-      when capability in @known_capabilities and is_function(fun, 0) do
-    if authorized?(manifest, capability) do
+      when is_function(fun, 0) do
+    if capability in @known_capabilities and authorized?(manifest, capability) do
       fun.()
     else
       {:error, {:unauthorized_capability, capability}}

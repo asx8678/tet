@@ -9,13 +9,20 @@ defmodule Tet.Plugin.Manifest do
 
   ## Struct fields
 
-    * `name`         — unique plugin identifier (non-empty binary)
+    * `name`         — unique plugin identifier (slug: no `/`, `\\`, `..`)
     * `version`      — semver string (non-empty binary)
     * `description`  — human-readable summary (binary, optional)
     * `author`       — author name (binary, optional)
-    * `capabilities` — list of declared capability atoms
+    * `capabilities` — list of *granted* capability atoms (requested ∩ trust ceiling ∩ admin)
     * `trust_level`  — `:sandboxed` | `:restricted` | `:full`
     * `entrypoint`   — module atom for the plugin's entry point
+
+  ## Trust model
+
+  The `trust_level` and `capabilities` in a manifest are *self-attested* by the
+  plugin author. In production, the runtime should override these with
+  admin/externally-granted values. The struct stores the *effective* (granted)
+  capabilities after validation.
 
   ## Examples
 
@@ -166,10 +173,19 @@ defmodule Tet.Plugin.Manifest do
 
   # -- Validators --
 
+  @slug_regex ~r/^[a-zA-Z0-9][a-zA-Z0-9_-]*$/
+
   defp validate_name(attrs) do
     case fetch_value(attrs, :name) do
-      name when is_binary(name) and byte_size(name) > 0 -> {:ok, name}
-      _other -> {:error, :invalid_name}
+      name when is_binary(name) and byte_size(name) > 0 ->
+        if String.match?(name, @slug_regex) do
+          {:ok, name}
+        else
+          {:error, :invalid_name}
+        end
+
+      _other ->
+        {:error, :invalid_name}
     end
   end
 
@@ -223,7 +239,7 @@ defmodule Tet.Plugin.Manifest do
     Map.get(attrs, key, Map.get(attrs, Atom.to_string(key)))
   end
 
-  defp coerce_capabilities(nil), do: {:ok, []}
+  defp coerce_capabilities(nil), do: {:error, :missing_capabilities}
 
   defp coerce_capabilities(caps) when is_list(caps) do
     caps

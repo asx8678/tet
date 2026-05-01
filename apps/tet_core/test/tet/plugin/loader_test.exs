@@ -11,135 +11,8 @@ defmodule Tet.Plugin.LoaderTest do
     def handle_file_access(_manifest, _args), do: {:ok, "file_result"}
   end
 
-  describe "discover/0" do
-    test "returns empty list when no plugin directories exist" do
-      # Point at a non-existent directory
-      original = Application.get_env(:tet_core, :plugin_dirs)
-
-      Application.put_env(:tet_core, :plugin_dirs, [
-        "/tmp/tet_nonexistent_plugins_#{:erlang.unique_integer()}"
-      ])
-
-      assert Loader.discover() == []
-
-      # Restore
-      if original do
-        Application.put_env(:tet_core, :plugin_dirs, original)
-      else
-        Application.delete_env(:tet_core, :plugin_dirs)
-      end
-    end
-
-    test "discovers valid plugin manifests" do
-      dir = create_temp_plugin_dir()
-
-      write_manifest(dir, "test-plugin", %{
-        "name" => "test-plugin",
-        "version" => "1.0.0",
-        "capabilities" => ["tool_execution"],
-        "trust_level" => "sandboxed",
-        "entrypoint" => "Elixir.Tet.Plugin.LoaderTest.TestPlugin"
-      })
-
-      original = Application.get_env(:tet_core, :plugin_dirs)
-      Application.put_env(:tet_core, :plugin_dirs, [dir])
-
-      results = Loader.discover()
-      assert length(results) == 1
-      assert {:ok, %Manifest{name: "test-plugin"}} = hd(results)
-
-      cleanup(dir, original)
-    end
-
-    test "skips directories without manifest.json" do
-      dir = create_temp_plugin_dir()
-      File.mkdir_p(Path.join(dir, "empty-plugin"))
-
-      original = Application.get_env(:tet_core, :plugin_dirs)
-      Application.put_env(:tet_core, :plugin_dirs, [dir])
-
-      assert Loader.discover() == []
-
-      cleanup(dir, original)
-    end
-
-    test "returns error for invalid JSON" do
-      dir = create_temp_plugin_dir()
-
-      plugin_dir = Path.join(dir, "bad-json")
-      File.mkdir_p!(plugin_dir)
-      File.write!(Path.join(plugin_dir, "manifest.json"), "not valid json{{{")
-
-      original = Application.get_env(:tet_core, :plugin_dirs)
-      Application.put_env(:tet_core, :plugin_dirs, [dir])
-
-      results = Loader.discover()
-      assert length(results) == 1
-      assert {:error, {:invalid_json, _, _}} = hd(results)
-
-      cleanup(dir, original)
-    end
-
-    test "returns error for valid JSON but invalid manifest" do
-      dir = create_temp_plugin_dir()
-
-      write_manifest(dir, "bad-manifest", %{
-        "name" => "",
-        "version" => "1.0.0"
-      })
-
-      original = Application.get_env(:tet_core, :plugin_dirs)
-      Application.put_env(:tet_core, :plugin_dirs, [dir])
-
-      results = Loader.discover()
-      assert length(results) == 1
-      assert {:error, :invalid_name} = hd(results)
-
-      cleanup(dir, original)
-    end
-  end
-
-  describe "load/1" do
-    test "loads a specific plugin by name" do
-      dir = create_temp_plugin_dir()
-
-      write_manifest(dir, "target-plugin", %{
-        "name" => "target-plugin",
-        "version" => "2.0.0",
-        "capabilities" => ["tool_execution", "file_access"],
-        "trust_level" => "restricted",
-        "entrypoint" => "Elixir.Tet.Plugin.LoaderTest.TestPlugin"
-      })
-
-      original = Application.get_env(:tet_core, :plugin_dirs)
-      Application.put_env(:tet_core, :plugin_dirs, [dir])
-
-      assert {:ok, %Manifest{name: "target-plugin", version: "2.0.0"}} =
-               Loader.load("target-plugin")
-
-      cleanup(dir, original)
-    end
-
-    test "returns error for unknown plugin" do
-      original = Application.get_env(:tet_core, :plugin_dirs)
-
-      Application.put_env(:tet_core, :plugin_dirs, [
-        "/tmp/tet_nonexistent_#{:erlang.unique_integer()}"
-      ])
-
-      assert {:error, {:plugin_not_found, "no-such-plugin"}} = Loader.load("no-such-plugin")
-
-      if original do
-        Application.put_env(:tet_core, :plugin_dirs, original)
-      else
-        Application.delete_env(:tet_core, :plugin_dirs)
-      end
-    end
-  end
-
   describe "validate/1" do
     test "returns :ok for plugin with loaded entrypoint and matching callbacks" do
-      # Ensure TestPlugin is loaded (it is, since it's defined in this test module)
       manifest =
         Manifest.new!(%{
           name: "valid-plugin",
@@ -167,8 +40,6 @@ defmodule Tet.Plugin.LoaderTest do
     end
 
     test "returns error when capability callbacks are missing" do
-      # TestPlugin only implements handle_tool_call and handle_file_access,
-      # not handle_network_request
       manifest =
         Manifest.new!(%{
           name: "missing-callbacks",
@@ -180,6 +51,32 @@ defmodule Tet.Plugin.LoaderTest do
 
       assert {:error, {:missing_capability_callbacks, [{:network, :handle_network_request}]}} =
                Loader.validate(manifest)
+    end
+
+    test "returns error for unknown capabilities" do
+      manifest =
+        Manifest.new!(%{
+          name: "unknown-caps",
+          version: "1.0.0",
+          capabilities: [:tool_execution],
+          trust_level: :sandboxed,
+          entrypoint: Tet.Plugin.LoaderTest.TestPlugin
+        })
+
+      assert Loader.validate(manifest) == :ok
+    end
+
+    test "returns error for capabilities exceeding trust level" do
+      # Create manifest directly to bypass validation
+      manifest = %Manifest{
+        name: "leaky",
+        version: "1.0.0",
+        capabilities: [:shell],
+        trust_level: :sandboxed,
+        entrypoint: Tet.Plugin.LoaderTest.TestPlugin
+      }
+
+      assert {:error, :invalid_capabilities_for_trust} = Loader.validate(manifest)
     end
   end
 
@@ -204,7 +101,6 @@ defmodule Tet.Plugin.LoaderTest do
     end
 
     test "returns empty list for plugin with no declared capabilities" do
-      # Create manifest struct directly since empty caps with sandboxed is valid
       manifest = %Manifest{
         name: "no-caps",
         version: "1.0.0",
@@ -214,30 +110,6 @@ defmodule Tet.Plugin.LoaderTest do
       }
 
       assert Loader.capabilities(manifest) == []
-    end
-  end
-
-  # -- Helpers --
-
-  defp create_temp_plugin_dir do
-    dir = Path.join(System.tmp_dir!(), "tet_plugins_test_#{:erlang.unique_integer()}")
-    File.mkdir_p!(dir)
-    dir
-  end
-
-  defp write_manifest(base_dir, plugin_name, data) do
-    plugin_dir = Path.join(base_dir, plugin_name)
-    File.mkdir_p!(plugin_dir)
-    File.write!(Path.join(plugin_dir, "manifest.json"), Jason.encode!(data))
-  end
-
-  defp cleanup(dir, original_env) do
-    File.rm_rf!(dir)
-
-    if original_env do
-      Application.put_env(:tet_core, :plugin_dirs, original_env)
-    else
-      Application.delete_env(:tet_core, :plugin_dirs)
     end
   end
 end

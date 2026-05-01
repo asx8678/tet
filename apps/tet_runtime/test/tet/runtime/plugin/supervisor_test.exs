@@ -16,8 +16,13 @@ defmodule Tet.Runtime.Plugin.SupervisorTest do
   end
 
   setup do
-    # Ensure the plugin supervisor is alive (started by the app supervision tree)
-    pid =
+    # Ensure the Registry is started (needed by worker :via tuples)
+    unless Process.whereis(Tet.Runtime.Plugin.Registry) do
+      {:ok, _} = Registry.start_link(keys: :unique, name: Tet.Runtime.Plugin.Registry)
+    end
+
+    # Ensure the plugin supervisor is alive
+    sup_pid =
       case Process.whereis(Supervisor.name()) do
         nil ->
           {:ok, pid} = Supervisor.start_link([])
@@ -32,7 +37,7 @@ defmodule Tet.Runtime.Plugin.SupervisorTest do
       Supervisor.stop_plugin(name)
     end
 
-    {:ok, sup: pid}
+    {:ok, sup: sup_pid}
   end
 
   defp valid_manifest(name \\ "test-plugin") do

@@ -342,7 +342,7 @@ defmodule Tet.Plugin.ManifestTest do
     end
 
     test "returns error for invalid data" do
-      assert {:error, :invalid_name} = Manifest.from_map(%{"name" => ""})
+      assert {:error, :missing_capabilities} = Manifest.from_map(%{"name" => ""})
     end
   end
 

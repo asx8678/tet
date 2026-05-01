@@ -41,22 +41,27 @@ defmodule Tet.Runtime.Plugin.Supervisor do
   @doc """
   Starts a plugin under the supervisor.
 
-  Expects a validated `Tet.Plugin.Manifest`. The plugin's entrypoint module
-  must implement the `Tet.Plugin.Behaviour` callback or be a plain GenServer
-  compatible module. We wrap it in a `Tet.Runtime.Plugin.Worker` GenServer
-  that holds the manifest and delegates to the entrypoint.
+  Validates the manifest first using `Tet.Plugin.Loader.validate/1`.
+  If validation fails, returns `{:error, {:validation_failed, reason}}`.
+
+  Once validated, wraps the entrypoint in a `Tet.Runtime.Plugin.Worker`
+  GenServer that holds the manifest and delegates to the entrypoint.
 
   Returns `{:ok, pid}` or `{:error, reason}`.
   """
   @spec start_plugin(Tet.Plugin.Manifest.t()) ::
-          DynamicSupervisor.on_start_child() | {:error, :already_started}
+          DynamicSupervisor.on_start_child() | {:error, term()}
   def start_plugin(%Tet.Plugin.Manifest{} = manifest) do
     case find_plugin(manifest.name) do
       nil ->
-        DynamicSupervisor.start_child(
-          @name,
-          {Tet.Runtime.Plugin.Worker, manifest}
-        )
+        with :ok <- Tet.Plugin.Loader.validate(manifest) do
+          DynamicSupervisor.start_child(
+            @name,
+            {Tet.Runtime.Plugin.Worker, manifest}
+          )
+        else
+          {:error, reason} -> {:error, {:validation_failed, reason}}
+        end
 
       _pid ->
         {:error, :already_started}
