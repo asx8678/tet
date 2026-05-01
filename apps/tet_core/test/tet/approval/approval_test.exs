@@ -120,7 +120,7 @@ defmodule Tet.Approval.ApprovalTest do
       }
 
       assert {:ok, approval} = Approval.new(attrs)
-      assert approval.approved_at == "2025-05-01T12:00:00Z"
+      assert approval.approved_at == ~U[2025-05-01 12:00:00Z]
     end
   end
 
