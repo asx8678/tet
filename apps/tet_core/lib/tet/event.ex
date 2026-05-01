@@ -74,6 +74,10 @@ defmodule Tet.Event do
     :"error.recorded"
   ]
 
+  @blocked_action_types [
+    :"blocked_action.created"
+  ]
+
   @known_types [
                  :assistant_chunk,
                  :message_persisted,
@@ -83,7 +87,8 @@ defmodule Tet.Event do
                  @provider_types ++
                  @provider_route_types ++
                  @profile_swap_types ++
-                 @swap_types ++ @steering_types ++ @read_tool_types ++ @v03_types
+                 @swap_types ++
+                 @steering_types ++ @read_tool_types ++ @v03_types ++ @blocked_action_types
 
   @enforce_keys [:type]
   defstruct [:id, :type, :session_id, :sequence, :seq, :created_at, payload: %{}, metadata: %{}]
@@ -132,6 +137,25 @@ defmodule Tet.Event do
   @doc "Returns read-tool event types (started/completed)."
   def read_tool_types, do: @read_tool_types
 
+  @approval_types [
+    :"approval.created",
+    :"approval.approved",
+    :"approval.rejected"
+  ]
+
+  @doc "Returns approval lifecycle event types (created/approved/rejected)."
+  def approval_types, do: @approval_types
+
+  @artifact_types [
+    :"artifact.created"
+  ]
+
+  @doc "Returns artifact event types (created)."
+  def artifact_types, do: @artifact_types
+
+  @doc "Returns blocked-action event types."
+  def blocked_action_types, do: @blocked_action_types
+
   @doc """
   Builds a normalized steering decision event.
 
@@ -142,6 +166,86 @@ defmodule Tet.Event do
   def steering_decision(payload \\ %{}, opts \\ [])
       when is_map(payload) and is_list(opts) do
     steering_event(:steering_decision, payload, opts)
+  end
+
+  @doc """
+  Builds an approval.created event.
+
+  Payload should include:
+    - `approval_id` — the approval row ID
+    - `tool_call_id` — tool call that requires approval
+    - `status` — always `:pending` on creation
+
+  Opts: `:session_id`, `:seq`, `:metadata`.
+  """
+  def approval_created(payload \\ %{}, opts \\ [])
+      when is_map(payload) and is_list(opts) do
+    approval_event(:"approval.created", payload, opts)
+  end
+
+  @doc """
+  Builds an approval.approved event.
+
+  Payload should include:
+    - `approval_id` — the approval row ID
+    - `tool_call_id` — tool call that was approved
+    - `approver` — who approved
+    - `rationale` — why approved
+
+  Opts: `:session_id`, `:seq`, `:metadata`.
+  """
+  def approval_approved(payload \\ %{}, opts \\ [])
+      when is_map(payload) and is_list(opts) do
+    approval_event(:"approval.approved", payload, opts)
+  end
+
+  @doc """
+  Builds an approval.rejected event.
+
+  Payload should include:
+    - `approval_id` — the approval row ID
+    - `tool_call_id` — tool call that was rejected
+    - `approver` — who rejected
+    - `rationale` — why rejected
+
+  Opts: `:session_id`, `:seq`, `:metadata`.
+  """
+  def approval_rejected(payload \\ %{}, opts \\ [])
+      when is_map(payload) and is_list(opts) do
+    approval_event(:"approval.rejected", payload, opts)
+  end
+
+  @doc """
+  Builds an artifact.created event.
+
+  Payload should include:
+    - `artifact_id` — the diff artifact ID
+    - `tool_call_id` — tool call that produced the artifact
+    - `file_path` — path of the mutated file
+    - `snapshot_before_id` — ID of the before snapshot
+    - `snapshot_after_id` — ID of the after snapshot
+
+  Opts: `:session_id`, `:seq`, `:metadata`.
+  """
+  def artifact_created(payload \\ %{}, opts \\ [])
+      when is_map(payload) and is_list(opts) do
+    artifact_event(:"artifact.created", payload, opts)
+  end
+
+  @doc """
+  Builds a blocked_action.created event.
+
+  Payload should include:
+    - `blocked_action_id` — the blocked-action record ID
+    - `tool_name` — name of the blocked tool
+    - `reason` — atom reason why the tool was blocked
+    - `tool_call_id` — the blocked tool call ID
+
+  Opts: `:session_id`, `:seq`, `:metadata`.
+  """
+  def blocked_action(payload \\ %{}, opts \\ [])
+      when is_map(payload) and is_list(opts) do
+    blocked_action_event(:"blocked_action.created", payload, opts)
   end
 
   @doc """
@@ -319,6 +423,45 @@ defmodule Tet.Event do
 
   defp steering_event(type, payload, opts) do
     %__MODULE__{
+      type: type,
+      session_id: Keyword.get(opts, :session_id),
+      sequence: Keyword.get(opts, :sequence),
+      seq: Keyword.get(opts, :seq),
+      payload: payload,
+      metadata: Keyword.get(opts, :metadata, %{}),
+      created_at: Keyword.get(opts, :created_at)
+    }
+  end
+
+  defp approval_event(type, payload, opts) do
+    %__MODULE__{
+      id: Keyword.get(opts, :id),
+      type: type,
+      session_id: Keyword.get(opts, :session_id),
+      sequence: Keyword.get(opts, :sequence),
+      seq: Keyword.get(opts, :seq),
+      payload: payload,
+      metadata: Keyword.get(opts, :metadata, %{}),
+      created_at: Keyword.get(opts, :created_at)
+    }
+  end
+
+  defp artifact_event(type, payload, opts) do
+    %__MODULE__{
+      id: Keyword.get(opts, :id),
+      type: type,
+      session_id: Keyword.get(opts, :session_id),
+      sequence: Keyword.get(opts, :sequence),
+      seq: Keyword.get(opts, :seq),
+      payload: payload,
+      metadata: Keyword.get(opts, :metadata, %{}),
+      created_at: Keyword.get(opts, :created_at)
+    }
+  end
+
+  defp blocked_action_event(type, payload, opts) do
+    %__MODULE__{
+      id: Keyword.get(opts, :id),
       type: type,
       session_id: Keyword.get(opts, :session_id),
       sequence: Keyword.get(opts, :sequence),

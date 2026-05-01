@@ -1,112 +1,61 @@
 defmodule Tet.Approval do
   @moduledoc """
-  Core human-approval entity for write operations.
+  Approval and diff artifact model facade — BD-0027.
 
-  The v0.3 §04 status spelling is `:rejected`, not `:denied`. Yes, naming
-  matters; future migrations should not have to translate vibes. §04 also makes
-  `diff_artifact_id` required for approval rows.
+  Provides the public API surface for the approval/artifact/audit story.
+  All mutation operations produce one of four linked records:
+
+    1. `Tet.Approval.Approval` — pending/approved/rejected status, approver,
+       rationale, and tool_call_id correlation.
+    2. `Tet.Approval.DiffArtifact` — old/new content, patch text, file path,
+       content hashes, and snapshot references.
+    3. `Tet.Approval.Snapshot` — file path, content hash, timestamp, and
+       action (taken_before / taken_after).
+    4. `Tet.Approval.BlockedAction` — reason from Gate, tool name, args
+       summary, and session/task correlation.
+
+  All four structs are linked via correlation IDs (`tool_call_id`, `session_id`,
+  `task_id`), ensuring every mutation has a complete approval/artifact/audit
+  story.
+
+  This module is pure data and pure functions. It does not dispatch tools,
+  touch the filesystem, shell out, persist events, or ask a terminal question.
   """
 
-  alias Tet.Entity
+  alias Tet.Approval.{Approval, BlockedAction, DiffArtifact, Snapshot}
 
-  @statuses [:pending, :approved, :rejected]
+  @doc "Returns all valid approval statuses."
+  @spec approval_statuses() :: [Approval.status()]
+  def approval_statuses, do: Approval.statuses()
 
-  @enforce_keys [
-    :id,
-    :session_id,
-    :tool_run_id,
-    :status,
-    :reason,
-    :diff_artifact_id,
-    :created_at,
-    :updated_at
-  ]
-  defstruct [
-    :id,
-    :session_id,
-    :task_id,
-    :tool_run_id,
-    :status,
-    :reason,
-    :diff_artifact_id,
-    :resolved_at,
-    :created_at,
-    :updated_at,
-    metadata: %{}
-  ]
+  @doc "Returns all valid snapshot actions."
+  @spec snapshot_actions() :: [Snapshot.action()]
+  def snapshot_actions, do: Snapshot.actions()
 
-  @type status :: :pending | :approved | :rejected
-  @type t :: %__MODULE__{
-          id: String.t(),
-          session_id: String.t(),
-          task_id: String.t() | nil,
-          tool_run_id: String.t(),
-          status: status(),
-          reason: String.t(),
-          diff_artifact_id: String.t(),
-          resolved_at: DateTime.t() | nil,
-          created_at: DateTime.t(),
-          updated_at: DateTime.t(),
-          metadata: map()
-        }
+  @doc "Returns known block reasons from Gate decisions."
+  @spec known_block_reasons() :: [BlockedAction.reason()]
+  def known_block_reasons, do: BlockedAction.known_block_reasons()
 
-  @doc "Returns accepted approval statuses."
-  @spec statuses() :: [status()]
-  def statuses, do: @statuses
+  @doc "Delegates to `Approval.new/1`."
+  defdelegate new_approval(attrs), to: Approval, as: :new
 
-  @doc "Builds an approval from atom- or string-keyed attrs."
-  @spec new(map()) :: {:ok, t()} | {:error, term()}
-  def new(attrs) when is_map(attrs) do
-    with {:ok, id} <- Entity.fetch_required_binary(attrs, :id, :approval),
-         {:ok, session_id} <- Entity.fetch_required_binary(attrs, :session_id, :approval),
-         {:ok, task_id} <- Entity.fetch_optional_binary(attrs, :task_id, :approval),
-         {:ok, tool_run_id} <- Entity.fetch_required_binary(attrs, :tool_run_id, :approval),
-         {:ok, status} <- Entity.fetch_atom(attrs, :status, @statuses, :approval),
-         {:ok, reason} <- Entity.fetch_binary_or_nil(attrs, :reason, :approval),
-         {:ok, diff_artifact_id} <-
-           Entity.fetch_required_binary(attrs, :diff_artifact_id, :approval),
-         {:ok, resolved_at} <- Entity.fetch_optional_datetime(attrs, :resolved_at, :approval),
-         {:ok, created_at} <- Entity.fetch_required_datetime(attrs, :created_at, :approval),
-         {:ok, updated_at} <- Entity.fetch_required_datetime(attrs, :updated_at, :approval),
-         {:ok, metadata} <- Entity.fetch_map(attrs, :metadata, :approval) do
-      {:ok,
-       %__MODULE__{
-         id: id,
-         session_id: session_id,
-         task_id: task_id,
-         tool_run_id: tool_run_id,
-         status: status,
-         reason: reason || "",
-         diff_artifact_id: diff_artifact_id,
-         resolved_at: resolved_at,
-         created_at: created_at,
-         updated_at: updated_at,
-         metadata: metadata
-       }}
-    end
-  end
+  @doc "Delegates to `DiffArtifact.new/1`."
+  defdelegate new_diff_artifact(attrs), to: DiffArtifact, as: :new
 
-  def new(_attrs), do: {:error, :invalid_approval}
+  @doc "Delegates to `Snapshot.new/1`."
+  defdelegate new_snapshot(attrs), to: Snapshot, as: :new
 
-  @doc "Converts a decoded map back to an approval."
-  @spec from_map(map()) :: {:ok, t()} | {:error, term()}
-  def from_map(attrs) when is_map(attrs), do: new(attrs)
+  @doc "Delegates to `BlockedAction.new/1`."
+  defdelegate new_blocked_action(attrs), to: BlockedAction, as: :new
 
-  @doc "Converts the approval to a map with stable string enums and timestamps."
-  @spec to_map(t()) :: map()
-  def to_map(%__MODULE__{} = approval) do
-    %{
-      id: approval.id,
-      session_id: approval.session_id,
-      task_id: approval.task_id,
-      tool_run_id: approval.tool_run_id,
-      status: Atom.to_string(approval.status),
-      reason: approval.reason,
-      diff_artifact_id: approval.diff_artifact_id,
-      resolved_at: Entity.datetime_to_map(approval.resolved_at),
-      created_at: Entity.datetime_to_map(approval.created_at),
-      updated_at: Entity.datetime_to_map(approval.updated_at),
-      metadata: approval.metadata
-    }
-  end
+  @doc "Delegates to `DiffArtifact.from_snapshots/3`."
+  defdelegate diff_from_snapshots(snap_before, snap_after, extra),
+    to: DiffArtifact,
+    as: :from_snapshots
+
+  @doc "Delegates to `BlockedAction.from_gate_decision/2`."
+  defdelegate blocked_from_gate(attrs, decision), to: BlockedAction, as: :from_gate_decision
+
+  @doc "Delegates to `Snapshot.compute_hash/1`."
+  defdelegate compute_content_hash(content), to: Snapshot, as: :compute_hash
 end
