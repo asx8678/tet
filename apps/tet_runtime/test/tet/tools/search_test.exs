@@ -340,6 +340,49 @@ defmodule Tet.Runtime.Tools.SearchTest do
     end
   end
 
+  describe "run/2 — BD-0020 error schema with correlation" do
+    test "workspace_escape error includes correlation key" do
+      result = Search.run(%{"path" => "../etc", "query" => "hello"}, workspace_root: "/tmp")
+
+      assert result.ok == false
+
+      assert Map.has_key?(result.error, :correlation),
+             "error.correlation key is missing in: #{inspect(result.error)}"
+
+      assert result.error.correlation == nil
+      assert Map.has_key?(result.error, :code)
+      assert Map.has_key?(result.error, :message)
+      assert Map.has_key?(result.error, :kind)
+      assert Map.has_key?(result.error, :retryable)
+      assert Map.has_key?(result.error, :details)
+    end
+
+    test "invalid_arguments error includes correlation key" do
+      result = Search.run(%{"path" => ".", "query" => nil}, workspace_root: "/tmp")
+
+      assert result.ok == false
+
+      assert Map.has_key?(result.error, :correlation),
+             "error.correlation key is missing in: #{inspect(result.error)}"
+
+      assert result.error.correlation == nil
+    end
+
+    test "not_found error includes correlation key" do
+      result =
+        Search.run(%{"path" => "nonexistent_path", "query" => "hello"},
+          workspace_root: "/tmp"
+        )
+
+      assert result.ok == false
+
+      assert Map.has_key?(result.error, :correlation),
+             "error.correlation key is missing in: #{inspect(result.error)}"
+
+      assert result.error.correlation == nil
+    end
+  end
+
   describe "run/2 — envelope schema (BD-0020)" do
     test "success response has correct envelope keys", %{workspace: ws} do
       skip_without_rg()
@@ -392,6 +435,64 @@ defmodule Tet.Runtime.Tools.SearchTest do
       assert result.ok == false
       assert result.error.code == "workspace_escape"
       assert result.data == nil
+    end
+
+    test "rejects indirect_dir search via ancestor out symlink escape", %{workspace: ws} do
+      skip_without_rg()
+
+      outside = "/tmp/tet_test_search_indirect_#{System.unique_integer([:positive])}"
+      File.mkdir_p!(outside)
+      File.mkdir_p!(Path.join(outside, "subdir"))
+      File.write!(Path.join(outside, "subdir/secret.txt"), "SECRET_DIR_DATA")
+      on_exit(fn -> File.rm_rf!(outside) end)
+
+      out_link = Path.join(ws, "out")
+      File.ln_s!("../outside", out_link)
+
+      indirect_dir = Path.join(ws, "indirect_dir")
+      File.ln_s!("out/subdir", indirect_dir)
+
+      result =
+        Search.run(%{"path" => "indirect_dir", "query" => "SECRET_DIR_DATA"},
+          workspace_root: ws
+        )
+
+      assert result.ok == false
+      assert result.error.code == "workspace_escape"
+      assert result.data == nil
+    end
+  end
+
+  describe "run/2 — workspace_root as symlink (Issue 2: absolute path leak)" do
+    test "match paths are workspace-relative, not absolute, when workspace_root is a symlink",
+         %{workspace: ws} do
+      skip_without_rg()
+
+      # Create a symlink that points to the real workspace
+      symlink_root =
+        "/tmp/tet_test_search_symlink_root_#{System.unique_integer([:positive])}"
+
+      File.ln_s!(ws, symlink_root)
+      on_exit(fn -> File.rm(symlink_root) end)
+
+      result =
+        Search.run(%{"path" => ".", "query" => "hello"}, workspace_root: symlink_root)
+
+      assert result.ok == true
+      assert result.data.summary.match_count >= 1
+
+      for match <- result.data.matches do
+        refute String.starts_with?(match.path, "/"),
+               "Match path should NOT be absolute: #{inspect(match.path)}"
+
+        refute String.contains?(match.path, ".."),
+               "Match path should not contain traversal: #{inspect(match.path)}"
+      end
+
+      first_path = List.first(result.data.matches).path
+
+      assert first_path == "hello.txt" or String.starts_with?(first_path, "sub/"),
+             "Expected workspace-relative path like 'hello.txt', got: #{first_path}"
     end
   end
 

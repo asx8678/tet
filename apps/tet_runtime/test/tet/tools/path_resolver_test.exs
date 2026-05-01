@@ -217,6 +217,49 @@ defmodule Tet.Runtime.Tools.PathResolverTest do
       assert {:error, denial} = PathResolver.resolve("rootlink/out", ws)
       assert denial.code == "workspace_escape"
     end
+
+    test "rejects indirect_secret symlink where target resolves through ancestor symlink escape",
+         %{
+           workspace: ws
+         } do
+      outside = "/tmp/tet_test_indirect_secret_#{System.unique_integer([:positive])}"
+      File.mkdir_p!(outside)
+      File.write!(Path.join(outside, "secret.txt"), "ESCAPED")
+      on_exit(fn -> File.rm_rf!(outside) end)
+
+      # out -> ../outside (escapes workspace)
+      out_link = Path.join(ws, "out")
+      File.ln_s!("../outside", out_link)
+
+      # indirect_secret -> out/secret.txt (target's ancestor is a symlink escape)
+      indirect_link = Path.join(ws, "indirect_secret")
+      File.ln_s!("out/secret.txt", indirect_link)
+
+      assert {:error, denial} = PathResolver.resolve("indirect_secret", ws)
+
+      assert denial.code == "workspace_escape",
+             "Expected workspace_escape for indirect_secret, got: #{inspect(denial)}"
+    end
+
+    test "rejects indirect_dir symlink where target directory resolves through ancestor symlink escape",
+         %{workspace: ws} do
+      outside = "/tmp/tet_test_indirect_dir_#{System.unique_integer([:positive])}"
+      File.mkdir_p!(outside)
+      File.mkdir_p!(Path.join(outside, "subdir"))
+      File.write!(Path.join(outside, "subdir/secret.txt"), "ESCAPED")
+      on_exit(fn -> File.rm_rf!(outside) end)
+
+      out_link = Path.join(ws, "out")
+      File.ln_s!("../outside", out_link)
+
+      indirect_dir = Path.join(ws, "indirect_dir")
+      File.ln_s!("out/subdir", indirect_dir)
+
+      assert {:error, denial} = PathResolver.resolve("indirect_dir", ws)
+
+      assert denial.code == "workspace_escape",
+             "Expected workspace_escape for indirect_dir, got: #{inspect(denial)}"
+    end
   end
 
   describe "validate helpers" do

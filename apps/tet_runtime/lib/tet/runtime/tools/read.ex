@@ -69,6 +69,7 @@ defmodule Tet.Runtime.Tools.Read do
          message: "Path escapes workspace containment boundary",
          kind: "policy_denial",
          retryable: false,
+         correlation: nil,
          details: %{path: resolved_path}
        }}
     end
@@ -96,6 +97,7 @@ defmodule Tet.Runtime.Tools.Read do
        message: "start_line must be >= 1",
        kind: "invalid_input",
        retryable: false,
+       correlation: nil,
        details: %{start_line: start_line}
      }}
   end
@@ -107,6 +109,7 @@ defmodule Tet.Runtime.Tools.Read do
        message: "line_count exceeds maximum of #{max_lines}",
        kind: "invalid_input",
        retryable: false,
+       correlation: nil,
        details: %{line_count: line_count, max: max_lines}
      }}
   end
@@ -118,6 +121,7 @@ defmodule Tet.Runtime.Tools.Read do
        message: "line_count must be >= 1",
        kind: "invalid_input",
        retryable: false,
+       correlation: nil,
        details: %{line_count: line_count}
      }}
   end
@@ -157,6 +161,7 @@ defmodule Tet.Runtime.Tools.Read do
                message: "File not found",
                kind: "not_found",
                retryable: false,
+               correlation: nil,
                details: %{}
              }}
 
@@ -167,6 +172,7 @@ defmodule Tet.Runtime.Tools.Read do
                message: "Permission denied reading file",
                kind: "permission",
                retryable: false,
+               correlation: nil,
                details: %{}
              }}
 
@@ -177,6 +183,7 @@ defmodule Tet.Runtime.Tools.Read do
                message: "Failed to read file: #{reason}",
                kind: "internal",
                retryable: true,
+               correlation: nil,
                details: %{}
              }}
         end
@@ -188,6 +195,7 @@ defmodule Tet.Runtime.Tools.Read do
            message: "File not found",
            kind: "not_found",
            retryable: false,
+           correlation: nil,
            details: %{}
          }}
 
@@ -198,6 +206,7 @@ defmodule Tet.Runtime.Tools.Read do
            message: "Permission denied reading file",
            kind: "permission",
            retryable: false,
+           correlation: nil,
            details: %{}
          }}
 
@@ -208,6 +217,7 @@ defmodule Tet.Runtime.Tools.Read do
            message: "Failed to read file: #{reason}",
            kind: "internal",
            retryable: true,
+           correlation: nil,
            details: %{}
          }}
     end

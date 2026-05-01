@@ -48,16 +48,24 @@ defmodule Tet.Runtime.Tools.Envelope do
   @doc """
   Builds a standard error envelope from a denial map.
 
+  Normalizes the denial to always include BD-0020 required keys:
+  code, message, kind, retryable, correlation, details.
+
   ## Options
     - `:limit_usage` — map with `paths`, `results`/`bytes`/`lines` usage counters
   """
   @spec error(map(), keyword()) :: t()
   def error(denial, opts \\ []) do
+    normalized =
+      denial
+      |> Map.put_new(:correlation, nil)
+      |> Map.put_new(:details, %{})
+
     %{
       ok: false,
       correlation: nil,
       data: nil,
-      error: denial,
+      error: normalized,
       redactions: [],
       truncated: false,
       limit_usage: Keyword.get(opts, :limit_usage, %{paths: %{used: 0, max: 0}})
@@ -74,6 +82,7 @@ defmodule Tet.Runtime.Tools.Envelope do
       message: "Unknown tool: #{tool_name}",
       kind: "unavailable",
       retryable: false,
+      correlation: nil,
       details: %{}
     }
 

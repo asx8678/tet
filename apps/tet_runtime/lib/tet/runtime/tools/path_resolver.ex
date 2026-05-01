@@ -192,7 +192,11 @@ defmodule Tet.Runtime.Tools.PathResolver do
               {:ok, target} ->
                 parent_dir = Path.dirname(path)
                 absolute_target = Path.absname(target, parent_dir) |> Path.expand()
-                resolve_symlink_chain(absolute_target, MapSet.put(visited, path))
+                new_visited = MapSet.put(visited, path)
+                # Walk ALL components of the target to catch intermediate
+                # symlinks in ancestor paths (e.g. indirect_secret -> out/secret.txt
+                # where out itself is a symlink to ../outside)
+                resolve_target_components(absolute_target, new_visited)
 
               {:error, reason} ->
                 {:error, reason}
@@ -204,6 +208,38 @@ defmodule Tet.Runtime.Tools.PathResolver do
         {:error, _reason} ->
           {:ok, path}
       end
+    end
+  end
+
+  defp resolve_target_components(path, visited) do
+    abs_path = Path.expand(path)
+    parts = String.split(abs_path, "/", trim: true)
+    initial = if String.starts_with?(abs_path, "/"), do: "/", else: ""
+
+    result =
+      Enum.reduce_while(parts, initial, fn part, acc ->
+        candidate = Path.join(acc, part)
+
+        case File.lstat(candidate) do
+          {:ok, stat} ->
+            if stat.type == :symlink do
+              case resolve_symlink_chain(candidate, visited) do
+                {:ok, target} -> {:cont, target}
+                {:error, _} = error -> {:halt, error}
+              end
+            else
+              {:cont, candidate}
+            end
+
+          {:error, _reason} ->
+            {:halt, {:ok, candidate}}
+        end
+      end)
+
+    case result do
+      {:ok, path} when is_binary(path) -> {:ok, path}
+      {:error, _} = error -> error
+      resolved when is_binary(resolved) -> {:ok, resolved}
     end
   end
 
@@ -306,6 +342,7 @@ defmodule Tet.Runtime.Tools.PathResolver do
       message: message,
       kind: "policy_denial",
       retryable: false,
+      correlation: nil,
       details: %{}
     }
   end
@@ -316,6 +353,7 @@ defmodule Tet.Runtime.Tools.PathResolver do
       message: message,
       kind: "invalid_input",
       retryable: false,
+      correlation: nil,
       details: %{}
     }
   end
@@ -326,6 +364,7 @@ defmodule Tet.Runtime.Tools.PathResolver do
       message: "File not found: #{path}",
       kind: "not_found",
       retryable: false,
+      correlation: nil,
       details: %{path: path}
     }
   end
@@ -336,6 +375,7 @@ defmodule Tet.Runtime.Tools.PathResolver do
       message: "Path is not a regular file: #{path}",
       kind: "invalid_input",
       retryable: false,
+      correlation: nil,
       details: %{path: path}
     }
   end
@@ -346,6 +386,7 @@ defmodule Tet.Runtime.Tools.PathResolver do
       message: "Path is not a directory: #{path}",
       kind: "not_found",
       retryable: false,
+      correlation: nil,
       details: %{path: path}
     }
   end
@@ -366,6 +407,7 @@ defmodule Tet.Runtime.Tools.PathResolver do
          message: "#{field_name} must be a boolean, got: #{inspect(value)}",
          kind: "invalid_input",
          retryable: false,
+         correlation: nil,
          details: %{field: field_name, value: value}
        }}
     end
@@ -385,6 +427,7 @@ defmodule Tet.Runtime.Tools.PathResolver do
            message: "#{field_name} must be an integer, got: #{inspect(value)}",
            kind: "invalid_input",
            retryable: false,
+           correlation: nil,
            details: %{field: field_name, value: value}
          }}
 
@@ -395,6 +438,7 @@ defmodule Tet.Runtime.Tools.PathResolver do
            message: "#{field_name} must be >= #{min}, got: #{value}",
            kind: "invalid_input",
            retryable: false,
+           correlation: nil,
            details: %{field: field_name, value: value, min: min}
          }}
 
@@ -405,6 +449,7 @@ defmodule Tet.Runtime.Tools.PathResolver do
            message: "#{field_name} must be <= #{max}, got: #{value}",
            kind: "invalid_input",
            retryable: false,
+           correlation: nil,
            details: %{field: field_name, value: value, max: max}
          }}
 
@@ -427,6 +472,7 @@ defmodule Tet.Runtime.Tools.PathResolver do
          message: "#{field_name} must be a string, got: #{inspect(value)}",
          kind: "invalid_input",
          retryable: false,
+         correlation: nil,
          details: %{field: field_name, value: value}
        }}
     end
@@ -446,6 +492,7 @@ defmodule Tet.Runtime.Tools.PathResolver do
            message: "#{field_name} must be a list, got: #{inspect(value)}",
            kind: "invalid_input",
            retryable: false,
+           correlation: nil,
            details: %{field: field_name, value: value}
          }}
 
@@ -456,6 +503,7 @@ defmodule Tet.Runtime.Tools.PathResolver do
            message: "#{field_name} must have at most 100 entries, got: #{length(value)}",
            kind: "invalid_input",
            retryable: false,
+           correlation: nil,
            details: %{field: field_name, count: length(value), max: 100}
          }}
 
@@ -466,6 +514,7 @@ defmodule Tet.Runtime.Tools.PathResolver do
            message: "#{field_name} must be a list of strings",
            kind: "invalid_input",
            retryable: false,
+           correlation: nil,
            details: %{field: field_name}
          }}
 
@@ -476,6 +525,7 @@ defmodule Tet.Runtime.Tools.PathResolver do
            message: "#{field_name} globs must not contain null bytes",
            kind: "invalid_input",
            retryable: false,
+           correlation: nil,
            details: %{field: field_name}
          }}
 
@@ -486,6 +536,7 @@ defmodule Tet.Runtime.Tools.PathResolver do
            message: "#{field_name} glob exceeds maximum length of 4096 bytes",
            kind: "invalid_input",
            retryable: false,
+           correlation: nil,
            details: %{field: field_name, max_bytes: 4_096}
          }}
 

@@ -62,6 +62,7 @@ defmodule Tet.Runtime.Tools.List do
          message: "Path escapes workspace containment boundary",
          kind: "policy_denial",
          retryable: false,
+         correlation: nil,
          details: %{path: resolved_path}
        }}
     end
@@ -113,6 +114,7 @@ defmodule Tet.Runtime.Tools.List do
           message: "Directory not found: #{rel_path}",
           kind: "not_found",
           retryable: false,
+          correlation: nil,
           details: %{path: rel_path}
         })
 
@@ -122,6 +124,7 @@ defmodule Tet.Runtime.Tools.List do
           message: "Permission denied listing directory",
           kind: "permission",
           retryable: false,
+          correlation: nil,
           details: %{path: rel_path}
         })
 
@@ -131,6 +134,7 @@ defmodule Tet.Runtime.Tools.List do
           message: "Failed to list directory: #{reason}",
           kind: "internal",
           retryable: true,
+          correlation: nil,
           details: %{path: rel_path}
         })
     end

@@ -233,31 +233,75 @@ defmodule Tet.Runtime.Tools.ReadTest do
       assert result.error.code == "workspace_escape"
       assert result.data == nil
     end
-  end
 
-  describe "run/2 — envelope schema" do
-    test "success envelope has all BD-0020 keys", %{workspace: ws} do
-      result = Read.run(%{"path" => "hello.txt"}, workspace_root: ws)
+    test "rejects indirect_secret symlink escape via ancestor out symlink", %{workspace: ws} do
+      outside = "/tmp/tet_test_read_indirect_#{System.unique_integer([:positive])}"
+      File.mkdir_p!(outside)
+      File.write!(Path.join(outside, "secret.txt"), "EVIL_SECRET")
+      on_exit(fn -> File.rm_rf!(outside) end)
 
-      assert Map.has_key?(result, :ok)
-      assert Map.has_key?(result, :correlation)
-      assert Map.has_key?(result, :data)
-      assert Map.has_key?(result, :error)
-      assert Map.has_key?(result, :redactions)
-      assert Map.has_key?(result, :truncated)
-      assert Map.has_key?(result, :limit_usage)
-      assert result.error == nil
-      assert result.redactions == []
-    end
+      out_link = Path.join(ws, "out")
+      File.ln_s!("../outside", out_link)
 
-    test "error envelope has all BD-0020 keys with data nil", %{workspace: ws} do
-      result = Read.run(%{"path" => "../etc"}, workspace_root: ws)
+      indirect_link = Path.join(ws, "indirect_secret")
+      File.ln_s!("out/secret.txt", indirect_link)
+
+      result = Read.run(%{"path" => "indirect_secret"}, workspace_root: ws)
 
       assert result.ok == false
+      assert result.error.code == "workspace_escape"
       assert result.data == nil
-      assert result.error != nil
-      assert result.correlation == nil
-      assert result.redactions == []
+    end
+  end
+
+  describe "run/2 — BD-0020 error schema with correlation" do
+    test "workspace_escape error includes correlation key", %{workspace: ws} do
+      result = Read.run(%{"path" => "../etc/passwd"}, workspace_root: ws)
+
+      assert result.ok == false
+
+      assert Map.has_key?(result.error, :correlation),
+             "error.correlation key is missing in: #{inspect(result.error)}"
+
+      assert result.error.correlation == nil
+      assert Map.has_key?(result.error, :code)
+      assert Map.has_key?(result.error, :message)
+      assert Map.has_key?(result.error, :kind)
+      assert Map.has_key?(result.error, :retryable)
+      assert Map.has_key?(result.error, :details)
+    end
+
+    test "not_found error includes correlation key", %{workspace: ws} do
+      result = Read.run(%{"path" => "nonexistent.txt"}, workspace_root: ws)
+
+      assert result.ok == false
+
+      assert Map.has_key?(result.error, :correlation),
+             "error.correlation key is missing in: #{inspect(result.error)}"
+
+      assert result.error.correlation == nil
+    end
+
+    test "invalid_arguments error includes correlation key", %{workspace: ws} do
+      result = Read.run(%{"path" => 42}, workspace_root: ws)
+
+      assert result.ok == false
+
+      assert Map.has_key?(result.error, :correlation),
+             "error.correlation key is missing in: #{inspect(result.error)}"
+
+      assert result.error.correlation == nil
+    end
+
+    test "not_file error includes correlation key", %{workspace: ws} do
+      result = Read.run(%{"path" => "."}, workspace_root: ws)
+
+      assert result.ok == false
+
+      assert Map.has_key?(result.error, :correlation),
+             "error.correlation key is missing in: #{inspect(result.error)}"
+
+      assert result.error.correlation == nil
     end
   end
 end

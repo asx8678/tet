@@ -80,6 +80,7 @@ defmodule Tet.Runtime.Tools.Search do
            message: "Search path not found: #{path_str}",
            kind: "not_found",
            retryable: false,
+           correlation: nil,
            details: %{path: path_str}
          }}
 
@@ -116,6 +117,7 @@ defmodule Tet.Runtime.Tools.Search do
            message: "query must be a string",
            kind: "invalid_input",
            retryable: false,
+           correlation: nil,
            details: %{}
          }}
 
@@ -126,6 +128,7 @@ defmodule Tet.Runtime.Tools.Search do
            message: "query must be a non-empty string",
            kind: "invalid_input",
            retryable: false,
+           correlation: nil,
            details: %{}
          }}
 
@@ -136,6 +139,7 @@ defmodule Tet.Runtime.Tools.Search do
            message: "query must not contain null bytes",
            kind: "invalid_input",
            retryable: false,
+           correlation: nil,
            details: %{}
          }}
 
@@ -146,6 +150,7 @@ defmodule Tet.Runtime.Tools.Search do
            message: "query exceeds maximum length of 4096 bytes",
            kind: "invalid_input",
            retryable: false,
+           correlation: nil,
            details: %{max_bytes: 4_096}
          }}
 
@@ -179,6 +184,7 @@ defmodule Tet.Runtime.Tools.Search do
           message: "ripgrep (rg) is not installed.",
           kind: "unavailable",
           retryable: true,
+          correlation: nil,
           details: %{}
         })
 
@@ -188,6 +194,7 @@ defmodule Tet.Runtime.Tools.Search do
           message: "Search timed out after #{@rg_timeout}ms",
           kind: "timeout",
           retryable: true,
+          correlation: nil,
           details: %{timeout_ms: @rg_timeout}
         })
 
@@ -200,6 +207,7 @@ defmodule Tet.Runtime.Tools.Search do
             message: "Invalid regex pattern: #{String.trim(stderr)}",
             kind: "invalid_input",
             retryable: false,
+            correlation: nil,
             details: %{}
           })
         else
@@ -208,6 +216,7 @@ defmodule Tet.Runtime.Tools.Search do
             message: "Search failed: #{String.trim(stderr)}",
             kind: "internal",
             retryable: true,
+            correlation: nil,
             details: %{}
           })
         end
@@ -218,6 +227,7 @@ defmodule Tet.Runtime.Tools.Search do
           message: "Search failed: #{reason}",
           kind: "internal",
           retryable: true,
+          correlation: nil,
           details: %{}
         })
     end
@@ -451,16 +461,23 @@ defmodule Tet.Runtime.Tools.Search do
         {raw_matches, false}
       end
 
-    truncated = truncated_at_match || io_truncated
+    # Filter out any matches whose canonical path is outside workspace
+    filtered =
+      Enum.filter(matches, fn m ->
+        path_text = get_in(m, ["data", "path", "text"]) || ""
+        relativize(path_text, workspace_root) != nil
+      end)
+
+    truncated = truncated_at_match || io_truncated || length(filtered) < length(matches)
 
     file_count =
-      matches
+      filtered
       |> Enum.map(fn m -> get_in(m, ["data", "path", "text"]) || "" end)
       |> Enum.uniq()
       |> length()
 
     result_matches =
-      Enum.map(matches, fn m ->
+      Enum.map(filtered, fn m ->
         path_text = get_in(m, ["data", "path", "text"]) || ""
         line_number = get_in(m, ["data", "line_number"]) || 1
         submatches = get_in(m, ["data", "submatches"]) || []
@@ -508,11 +525,15 @@ defmodule Tet.Runtime.Tools.Search do
   end
 
   defp relativize(absolute_path, workspace_root) do
-    root = Path.expand(workspace_root) <> "/"
+    root = PathResolver.canonicalize_workspace_root(workspace_root) <> "/"
 
     case String.starts_with?(absolute_path, root) do
-      true -> String.replace_prefix(absolute_path, root, "")
-      false -> absolute_path
+      true ->
+        String.replace_prefix(absolute_path, root, "")
+
+      false ->
+        # Path outside workspace — return a sentinel that will be filtered
+        nil
     end
   end
 

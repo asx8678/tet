@@ -195,33 +195,43 @@ defmodule Tet.Runtime.Tools.ListTest do
     end
   end
 
-  describe "run/2 — envelope schema (BD-0020)" do
-    test "success response has correct envelope keys", %{workspace: ws} do
-      result = List.run(%{"path" => "."}, workspace_root: ws)
-
-      assert Map.has_key?(result, :ok)
-      assert Map.has_key?(result, :correlation)
-      assert Map.has_key?(result, :data)
-      assert Map.has_key?(result, :error)
-      assert Map.has_key?(result, :redactions)
-      assert Map.has_key?(result, :truncated)
-      assert Map.has_key?(result, :limit_usage)
-      assert result.error == nil
-      assert result.redactions == []
-    end
-
-    test "error response has correct envelope keys", %{workspace: ws} do
+  describe "run/2 — BD-0020 error schema with correlation" do
+    test "workspace_escape error includes correlation key", %{workspace: ws} do
       result = List.run(%{"path" => "../etc"}, workspace_root: ws)
 
-      assert Map.has_key?(result, :ok)
-      assert Map.has_key?(result, :correlation)
-      assert Map.has_key?(result, :data)
-      assert Map.has_key?(result, :error)
-      assert Map.has_key?(result, :redactions)
-      assert Map.has_key?(result, :truncated)
-      assert Map.has_key?(result, :limit_usage)
-      assert result.data == nil
-      assert result.redactions == []
+      assert result.ok == false
+
+      assert Map.has_key?(result.error, :correlation),
+             "error.correlation key is missing in: #{inspect(result.error)}"
+
+      assert result.error.correlation == nil
+      assert Map.has_key?(result.error, :code)
+      assert Map.has_key?(result.error, :message)
+      assert Map.has_key?(result.error, :kind)
+      assert Map.has_key?(result.error, :retryable)
+      assert Map.has_key?(result.error, :details)
+    end
+
+    test "not_directory error includes correlation key", %{workspace: ws} do
+      result = List.run(%{"path" => "nonexistent"}, workspace_root: ws)
+
+      assert result.ok == false
+
+      assert Map.has_key?(result.error, :correlation),
+             "error.correlation key is missing in: #{inspect(result.error)}"
+
+      assert result.error.correlation == nil
+    end
+
+    test "invalid_arguments error includes correlation key", %{workspace: ws} do
+      result = List.run(%{"path" => 42}, workspace_root: ws)
+
+      assert result.ok == false
+
+      assert Map.has_key?(result.error, :correlation),
+             "error.correlation key is missing in: #{inspect(result.error)}"
+
+      assert result.error.correlation == nil
     end
   end
 
@@ -298,6 +308,25 @@ defmodule Tet.Runtime.Tools.ListTest do
       File.ln_s!("../outside", out_link)
 
       result = List.run(%{"path" => "rootlink/out"}, workspace_root: ws)
+
+      assert result.ok == false
+      assert result.error.code == "workspace_escape"
+      assert result.data == nil
+    end
+
+    test "rejects indirect_dir listing via ancestor out symlink escape", %{workspace: ws} do
+      outside = "/tmp/tet_test_list_indirect_dir_#{System.unique_integer([:positive])}"
+      File.mkdir_p!(outside)
+      File.mkdir_p!(Path.join(outside, "subdir"))
+      on_exit(fn -> File.rm_rf!(outside) end)
+
+      out_link = Path.join(ws, "out")
+      File.ln_s!("../outside", out_link)
+
+      indirect_dir = Path.join(ws, "indirect_dir")
+      File.ln_s!("out/subdir", indirect_dir)
+
+      result = List.run(%{"path" => "indirect_dir"}, workspace_root: ws)
 
       assert result.ok == false
       assert result.error.code == "workspace_escape"

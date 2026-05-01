@@ -102,5 +102,21 @@ defmodule Tet.Runtime.ToolsTest do
       assert result.redactions == []
       assert result.truncated == false
     end
+
+    test "unknown tool envelope includes error.correlation" do
+      result = Tools.run_tool("delete", %{}, workspace_root: "/tmp")
+
+      assert result.ok == false
+
+      assert Map.has_key?(result.error, :correlation),
+             "error.correlation key is missing in: #{inspect(result.error)}"
+
+      assert result.error.correlation == nil
+      assert Map.has_key?(result.error, :code)
+      assert Map.has_key?(result.error, :message)
+      assert Map.has_key?(result.error, :kind)
+      assert Map.has_key?(result.error, :retryable)
+      assert Map.has_key?(result.error, :details)
+    end
   end
 end
