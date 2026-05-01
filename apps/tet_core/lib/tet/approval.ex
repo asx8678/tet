@@ -49,7 +49,9 @@ defmodule Tet.Approval do
   defdelegate new_blocked_action(attrs), to: BlockedAction, as: :new
 
   @doc "Delegates to `DiffArtifact.from_snapshots/3`."
-  defdelegate diff_from_snapshots(snap_before, snap_after, extra), to: DiffArtifact, as: :from_snapshots
+  defdelegate diff_from_snapshots(snap_before, snap_after, extra),
+    to: DiffArtifact,
+    as: :from_snapshots
 
   @doc "Delegates to `BlockedAction.from_gate_decision/2`."
   defdelegate blocked_from_gate(attrs, decision), to: BlockedAction, as: :from_gate_decision

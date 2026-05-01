@@ -140,7 +140,9 @@ defmodule Tet.Approval.BlockedActionTest do
         task_id: "task_gate"
       }
 
-      assert {:ok, record} = BlockedAction.from_gate_decision(attrs, {:block, :plan_mode_blocks_mutation})
+      assert {:ok, record} =
+               BlockedAction.from_gate_decision(attrs, {:block, :plan_mode_blocks_mutation})
+
       assert record.reason == :plan_mode_blocks_mutation
       assert record.tool_name == "write-file"
       assert record.session_id == "ses_gate"
