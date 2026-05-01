@@ -6,6 +6,18 @@ defmodule Tet.Redactor do
   preserving the surrounding shape for deterministic snapshots. It intentionally
   avoids inspecting raw prompt content; callers decide which values are safe to
   pass in the first place.
+
+  ## Three-layer architecture (BD-0068)
+
+  This module remains the backward-compatible entry point. For layer-specific
+  redaction, use:
+
+    - `Tet.Redactor.Inbound` — redacts before sending to LLM providers
+    - `Tet.Redactor.Outbound` — redacts for audit logs and persistence
+    - `Tet.Redactor.Display` — redacts for human-visible output (CLI/web/logs)
+
+  The `redact/1` function here provides general-purpose redaction suitable
+  for most use cases. The layered modules offer finer-grained control.
   """
 
   @redacted "[REDACTED]"
