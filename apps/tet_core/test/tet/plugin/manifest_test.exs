@@ -231,7 +231,7 @@ defmodule Tet.Plugin.ManifestTest do
           author: "Carol",
           capabilities: [:tool_execution, :network],
           trust_level: :full,
-          entrypoint: RoundTripPlugin
+          entrypoint: Tet.Plugin.ManifestTest
         })
 
       {:ok, restored} = Manifest.from_map(Manifest.to_map(original))
@@ -252,11 +252,80 @@ defmodule Tet.Plugin.ManifestTest do
                  "version" => "1.0.0",
                  "capabilities" => ["tool_execution", "mcp"],
                  "trust_level" => "restricted",
-                 "entrypoint" => "CoercePlugin"
+                 "entrypoint" => "Tet.Plugin.ManifestTest"
                })
 
       assert manifest.capabilities == [:tool_execution, :mcp]
       assert manifest.trust_level == :restricted
+      assert manifest.entrypoint == Tet.Plugin.ManifestTest
+    end
+
+    test "rejects unknown string capability" do
+      assert {:error, {:invalid_capability, "telekinesis"}} =
+               Manifest.from_map(%{
+                 "name" => "bad-cap",
+                 "version" => "1.0.0",
+                 "capabilities" => ["telekinesis"],
+                 "trust_level" => "full",
+                 "entrypoint" => "Tet.Plugin.ManifestTest"
+               })
+    end
+
+    test "rejects unknown string entrypoint" do
+      assert {:error, :invalid_entrypoint} =
+               Manifest.from_map(%{
+                 "name" => "bad-entry",
+                 "version" => "1.0.0",
+                 "capabilities" => ["tool_execution"],
+                 "trust_level" => "sandboxed",
+                 "entrypoint" => "NonExistentModule999"
+               })
+    end
+
+    test "strips Elixir. prefix from string entrypoint" do
+      assert {:ok, manifest} =
+               Manifest.from_map(%{
+                 "name" => "prefixed",
+                 "version" => "1.0.0",
+                 "capabilities" => [:tool_execution],
+                 "trust_level" => :sandboxed,
+                 "entrypoint" => "Elixir.Tet.Plugin.ManifestTest"
+               })
+
+      assert manifest.entrypoint == Tet.Plugin.ManifestTest
+    end
+
+    test "rejects nil entrypoint" do
+      assert {:error, :invalid_entrypoint} =
+               Manifest.new(%{
+                 name: "nil-entry",
+                 version: "1.0.0",
+                 capabilities: [:tool_execution],
+                 trust_level: :sandboxed,
+                 entrypoint: nil
+               })
+    end
+
+    test "handles non-string non-atom capability values" do
+      assert {:error, :invalid_capabilities} =
+               Manifest.from_map(%{
+                 "name" => "weird-caps",
+                 "version" => "1.0.0",
+                 "capabilities" => [123, :tool_execution],
+                 "trust_level" => "sandboxed",
+                 "entrypoint" => "Tet.Plugin.ManifestTest"
+               })
+    end
+
+    test "rejects unknown string trust level" do
+      assert {:error, :invalid_trust_level} =
+               Manifest.from_map(%{
+                 "name" => "bad-trust",
+                 "version" => "1.0.0",
+                 "capabilities" => [:tool_execution],
+                 "trust_level" => "omnipotent",
+                 "entrypoint" => "Tet.Plugin.ManifestTest"
+               })
     end
 
     test "handles atom-keyed maps" do

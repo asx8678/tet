@@ -39,6 +39,7 @@ defmodule Tet.Plugin.Loader do
 
   @default_plugin_dir "~/.tet/plugins"
   @manifest_filename "manifest.json"
+  @known_capabilities Capability.known_capabilities()
 
   @doc """
   Scans configured directories for plugin manifests.
@@ -86,11 +87,23 @@ defmodule Tet.Plugin.Loader do
   """
   @spec validate(Manifest.t()) :: :ok | {:error, term()}
   def validate(%Manifest{} = manifest) do
-    with :ok <- validate_module_loaded(manifest.entrypoint),
+    with :ok <- validate_known_capabilities(manifest.capabilities, manifest.trust_level),
+         :ok <- validate_module_loaded(manifest.entrypoint),
          :ok <- validate_capability_implementations(manifest) do
       :ok
     end
   end
+
+  defp validate_known_capabilities(caps, trust) when is_list(caps) do
+    if Enum.all?(caps, &(&1 in @known_capabilities)) and
+         Capability.validate_for_trust(caps, trust) == :ok do
+      :ok
+    else
+      {:error, :invalid_capabilities_for_trust}
+    end
+  end
+
+  defp validate_known_capabilities(_, _), do: {:error, :invalid_capabilities_for_trust}
 
   @doc """
   Returns the list of capabilities a plugin is authorized to use.

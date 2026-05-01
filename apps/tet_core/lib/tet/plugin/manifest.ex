@@ -36,6 +36,20 @@ defmodule Tet.Plugin.Manifest do
 
   @trust_levels [:sandboxed, :restricted, :full]
 
+  @known_capability_strings %{
+    "tool_execution" => :tool_execution,
+    "file_access" => :file_access,
+    "network" => :network,
+    "shell" => :shell,
+    "mcp" => :mcp
+  }
+
+  @known_trust_level_strings %{
+    "sandboxed" => :sandboxed,
+    "restricted" => :restricted,
+    "full" => :full
+  }
+
   @enforce_keys [:name, :version, :capabilities, :trust_level, :entrypoint]
   defstruct [:name, :version, :description, :author, :capabilities, :trust_level, :entrypoint]
 
@@ -120,25 +134,35 @@ defmodule Tet.Plugin.Manifest do
   Deserializes a plain map (atom or string keys) into a manifest struct.
 
   Entrypoint can be a module atom or a string like `"MyPlugin"` which will be
-  converted via `String.to_atom/1`. Capability and trust_level strings are
-  similarly coerced.
+  converted via `String.to_existing_atom/1` (only already-loaded modules are
+  accepted). Capability and trust_level strings are coerced via explicit
+  allowlist mappings.
 
   Returns `{:ok, manifest}` or `{:error, reason}`.
   """
   @spec from_map(map()) :: {:ok, t()} | {:error, term()}
   def from_map(data) when is_map(data) do
-    attrs = %{
-      name: fetch_value(data, :name),
-      version: fetch_value(data, :version),
-      description: fetch_value(data, :description),
-      author: fetch_value(data, :author),
-      capabilities: coerce_capabilities(fetch_value(data, :capabilities)),
-      trust_level: coerce_trust_level(fetch_value(data, :trust_level)),
-      entrypoint: coerce_entrypoint(fetch_value(data, :entrypoint))
-    }
+    with {:ok, capabilities} <- coerce_capabilities(fetch_value(data, :capabilities)),
+         entrypoint <- coerce_entrypoint(fetch_value(data, :entrypoint)),
+         {:ok, entrypoint} <- coerce_entrypoint_result(entrypoint) do
+      attrs = %{
+        name: fetch_value(data, :name),
+        version: fetch_value(data, :version),
+        description: fetch_value(data, :description),
+        author: fetch_value(data, :author),
+        capabilities: capabilities,
+        trust_level: coerce_trust_level(fetch_value(data, :trust_level)),
+        entrypoint: entrypoint
+      }
 
-    new(attrs)
+      new(attrs)
+    end
   end
+
+  defp coerce_entrypoint_result({:ok, mod}), do: {:ok, mod}
+  defp coerce_entrypoint_result({:error, _} = err), do: err
+  defp coerce_entrypoint_result(mod) when is_atom(mod), do: {:ok, mod}
+  defp coerce_entrypoint_result(_), do: {:error, :invalid_entrypoint}
 
   # -- Validators --
 
@@ -165,7 +189,7 @@ defmodule Tet.Plugin.Manifest do
 
   defp validate_entrypoint(attrs) do
     case fetch_value(attrs, :entrypoint) do
-      mod when is_atom(mod) -> {:ok, mod}
+      mod when is_atom(mod) and not is_nil(mod) -> {:ok, mod}
       _other -> {:error, :invalid_entrypoint}
     end
   end
@@ -199,18 +223,59 @@ defmodule Tet.Plugin.Manifest do
     Map.get(attrs, key, Map.get(attrs, Atom.to_string(key)))
   end
 
-  defp coerce_capabilities(nil), do: []
-  defp coerce_capabilities(caps) when is_list(caps), do: Enum.map(caps, &coerce_capability/1)
-  defp coerce_capabilities(_), do: nil
+  defp coerce_capabilities(nil), do: {:ok, []}
 
-  defp coerce_capability(cap) when is_atom(cap), do: cap
-  defp coerce_capability(cap) when is_binary(cap), do: String.to_atom(cap)
+  defp coerce_capabilities(caps) when is_list(caps) do
+    caps
+    |> Enum.reduce_while({:ok, []}, fn cap, {:ok, acc} ->
+      case coerce_capability(cap) do
+        {:ok, coerced} -> {:cont, {:ok, [coerced | acc]}}
+        {:error, _} = err -> {:halt, err}
+        val when is_atom(val) -> {:cont, {:ok, [val | acc]}}
+        _ -> {:halt, {:error, :invalid_capabilities}}
+      end
+    end)
+    |> case do
+      {:ok, coerced} -> {:ok, Enum.reverse(coerced)}
+      error -> error
+    end
+  end
+
+  defp coerce_capabilities(_), do: {:error, :invalid_capabilities}
+
+  defp coerce_capability(cap) when is_atom(cap), do: {:ok, cap}
+
+  defp coerce_capability(cap) when is_binary(cap) do
+    case Map.get(@known_capability_strings, cap) do
+      nil -> {:error, {:invalid_capability, cap}}
+      coerced -> {:ok, coerced}
+    end
+  end
+
+  defp coerce_capability(_), do: {:error, :invalid_capabilities}
 
   defp coerce_trust_level(level) when level in @trust_levels, do: level
-  defp coerce_trust_level(level) when is_binary(level), do: String.to_atom(level)
+
+  defp coerce_trust_level(level) when is_binary(level) do
+    case Map.get(@known_trust_level_strings, level) do
+      nil -> nil
+      coerced -> coerced
+    end
+  end
+
   defp coerce_trust_level(_), do: nil
 
   defp coerce_entrypoint(mod) when is_atom(mod), do: mod
-  defp coerce_entrypoint(mod) when is_binary(mod), do: String.to_atom("Elixir." <> mod)
-  defp coerce_entrypoint(_), do: nil
+
+  defp coerce_entrypoint(mod) when is_binary(mod) do
+    normalized = if String.starts_with?(mod, "Elixir."), do: mod, else: "Elixir." <> mod
+
+    try do
+      {:ok, String.to_existing_atom(normalized)}
+    rescue
+      ArgumentError -> {:error, :invalid_entrypoint}
+    end
+  end
+
+  defp coerce_entrypoint(_), do: {:error, :invalid_entrypoint}
 end
