@@ -6,7 +6,7 @@ defmodule Tet.CLI do
   returns deterministic status codes. It does not own runtime state or storage.
   """
 
-  alias Tet.CLI.Render
+  alias Tet.CLI.{Completion, History, Render}
 
   @doc "Entrypoint used by escripts and release wrappers."
   def main(argv) do
@@ -50,6 +50,12 @@ defmodule Tet.CLI do
 
       ["timeline" | rest] ->
         events(rest)
+
+      ["completion" | rest] ->
+        completion(rest)
+
+      ["history" | rest] ->
+        history(rest)
 
       ["ask" | args] ->
         ask(args)
@@ -233,6 +239,82 @@ defmodule Tet.CLI do
   end
 
   defp parse_session_filter(_args), do: {:error, "unknown tet events option"}
+
+  defp completion([shell]) do
+    case Completion.generate(shell) do
+      {:ok, script} ->
+        IO.puts(script)
+        0
+
+      {:error, reason} ->
+        IO.puts(:stderr, "tet completion failed: #{inspect(reason)}")
+        1
+    end
+  end
+
+  defp completion(_args) do
+    IO.puts(:stderr, "usage: tet completion <bash|zsh|fish>")
+    64
+  end
+
+  defp history(["search" | rest]) do
+    case parse_history_search(rest) do
+      {:ok, {query, opts}} ->
+        if query == "" do
+          IO.puts(:stderr, "usage: tet history search [--fuzzy] [--limit N] QUERY")
+          64
+        else
+          case History.search(query, opts) do
+            {:ok, entries} ->
+              IO.puts(History.render(entries))
+              0
+
+            {:error, reason} ->
+              IO.puts(:stderr, "tet history search failed: #{Render.error(reason)}")
+              1
+          end
+        end
+
+      {:error, message} ->
+        IO.puts(:stderr, message)
+        64
+    end
+  end
+
+  defp history(_args) do
+    IO.puts(:stderr, "usage: tet history search [--fuzzy] [--limit N] QUERY")
+    64
+  end
+
+  defp parse_history_search(args) do
+    parse_history_search(args, [], [])
+  end
+
+  defp parse_history_search([], opts, query_parts) do
+    {:ok, {query_parts |> Enum.reverse() |> Enum.join(" ") |> String.trim(), opts}}
+  end
+
+  defp parse_history_search(["--fuzzy" | rest], opts, query_parts) do
+    parse_history_search(rest, [{:mode, :fuzzy} | opts], query_parts)
+  end
+
+  defp parse_history_search(["--limit", limit | rest], opts, query_parts) do
+    case Integer.parse(limit) do
+      {n, ""} when n > 0 ->
+        parse_history_search(rest, [{:limit, n} | opts], query_parts)
+
+      _ ->
+        {:error, "invalid --limit value: #{inspect(limit)}"}
+    end
+  end
+
+  defp parse_history_search(["--limit" | _rest], _opts, _query_parts) do
+    {:error, "--limit requires a positive integer"}
+  end
+
+  defp parse_history_search([part | rest], opts, query_parts) do
+    parse_history_search(rest, opts, [part | query_parts])
+  end
 
   defp run_ask(prompt, opts) do
     on_event = fn event ->
