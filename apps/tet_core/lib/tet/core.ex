@@ -14,6 +14,7 @@ defmodule Tet.Core do
     :messages,
     :model_registry,
     :plan_mode,
+    :plan_mode_evaluator,
     :profile_registry,
     :steering,
     :prompts,

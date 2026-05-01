@@ -21,7 +21,8 @@ defmodule Tet.PlanMode do
   - LLM steering (future BD-0029 concern).
   """
 
-  alias Tet.PlanMode.{Gate, Policy}
+  alias Tet.PlanMode.{Evaluator, Gate, Policy}
+  alias Tet.PlanMode.Evaluator.Profile
   alias Tet.Tool.Contract
 
   @doc "Returns the default plan-mode policy."
@@ -64,4 +65,49 @@ defmodule Tet.PlanMode do
 
   @doc "True when the gate decision is a guidance hint."
   defdelegate guided?(decision), to: Gate
+
+  # ── Ring-2 Steering Evaluator (BD-0032) ──────────────────────────
+
+  @doc "Returns the default evaluator profile."
+  @spec default_evaluator_profile() :: Profile.t()
+  def default_evaluator_profile, do: Profile.default()
+
+  @doc """
+  Evaluates a gate decision through the Ring-2 steering evaluator.
+
+  Returns `{:ok, final_decision, audit_entry}`. Blocks are never
+  overridden — they pass through unchanged.
+  """
+  @spec steer(Gate.decision(), Profile.t(), map()) ::
+          {:ok, Gate.decision(), Evaluator.audit_entry()}
+  def steer(gate_decision, %Profile{} = profile, %{} = context) do
+    Evaluator.evaluate(gate_decision, profile, context)
+  end
+
+  @doc """
+  Full evaluation pipeline: gate → evaluator → final decision.
+
+  Runs the deterministic gate (Ring-1) first, then passes the result
+  through the steering evaluator (Ring-2) with the given profile.
+  """
+  @spec evaluate_and_steer(Contract.t(), Policy.t(), Gate.gate_context(), Profile.t()) ::
+          {:ok, Gate.decision(), Evaluator.audit_entry()}
+  def evaluate_and_steer(
+        %Contract{} = contract,
+        %Policy{} = policy,
+        %{} = context,
+        %Profile{} = profile
+      ) do
+    gate_decision = Gate.evaluate(contract, policy, context)
+    Evaluator.evaluate(gate_decision, profile, context)
+  end
+
+  @doc """
+  Verifies the no-override guarantee for a list of block decisions.
+
+  Returns `:ok` if all blocks are preserved, or `{:violated, details}`.
+  """
+  @spec verify_no_override([Gate.decision()], Profile.t(), map()) ::
+          :ok | {:violated, [Gate.decision()]}
+  defdelegate verify_no_override(decisions, profile, context), to: Evaluator
 end
