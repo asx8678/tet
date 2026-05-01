@@ -5,6 +5,10 @@ defmodule Tet.Event do
   Runtime owns event creation and publication. This core struct only defines the
   stable data contract plus JSON-friendly conversion helpers so adapters do not
   reach into runtime internals or invent their own event maps like tiny gremlins.
+
+  `t/0` remains permissive for transient provider/runtime events that have not
+  yet been bound to a session. Store callbacks use `persisted_t/0` for the §04
+  durable per-session timeline, where `session_id` and `seq` are non-null.
   """
 
   @provider_types [
@@ -26,40 +30,64 @@ defmodule Tet.Event do
     :provider_route_error
   ]
 
+  @v03_types [
+    :"workspace.created",
+    :"workspace.trusted",
+    :"session.created",
+    :"session.status_changed",
+    :"message.user.saved",
+    :"message.assistant.saved",
+    :"provider.started",
+    :"provider.text_delta",
+    :"provider.usage",
+    :"provider.done",
+    :"provider.error",
+    :"tool.requested",
+    :"tool.blocked",
+    :"tool.started",
+    :"tool.finished",
+    :"approval.created",
+    :"approval.approved",
+    :"approval.rejected",
+    :"artifact.created",
+    :"patch.applied",
+    :"patch.failed",
+    :"verifier.started",
+    :"verifier.finished",
+    :"error.recorded"
+  ]
+
   @known_types [
                  :assistant_chunk,
                  :message_persisted,
                  :session_started,
                  :session_resumed
-               ] ++ @provider_types ++ @provider_route_types
+               ] ++ @provider_types ++ @provider_route_types ++ @v03_types
 
   @enforce_keys [:type]
-  defstruct [:type, :session_id, :sequence, payload: %{}, metadata: %{}]
+  defstruct [:id, :type, :session_id, :sequence, :seq, :created_at, payload: %{}, metadata: %{}]
 
-  @type type ::
-          :assistant_chunk
-          | :message_persisted
-          | :session_started
-          | :session_resumed
-          | :provider_start
-          | :provider_text_delta
-          | :provider_tool_call_delta
-          | :provider_tool_call_done
-          | :provider_usage
-          | :provider_done
-          | :provider_error
-          | :provider_route_decision
-          | :provider_route_attempt
-          | :provider_route_retry
-          | :provider_route_fallback
-          | :provider_route_done
-          | :provider_route_error
+  @type type :: atom()
   @type t :: %__MODULE__{
+          id: binary() | nil,
           type: type(),
           session_id: binary() | nil,
           sequence: non_neg_integer() | nil,
+          seq: non_neg_integer() | nil,
           payload: map(),
-          metadata: map()
+          metadata: map(),
+          created_at: DateTime.t() | binary() | nil
+        }
+
+  @type persisted_t :: %__MODULE__{
+          id: binary() | nil,
+          type: type(),
+          session_id: binary(),
+          sequence: non_neg_integer() | nil,
+          seq: non_neg_integer(),
+          payload: map(),
+          metadata: map(),
+          created_at: DateTime.t() | binary() | nil
         }
 
   @doc "Returns the core event types currently emitted by the runtime shell."
@@ -133,30 +161,43 @@ defmodule Tet.Event do
 
   @doc "Builds a validated event from atom or string keyed attrs."
   def new(attrs) when is_map(attrs) do
-    with {:ok, type} <- fetch_type(attrs),
+    with {:ok, id} <- fetch_optional_binary(attrs, :id),
+         {:ok, type} <- fetch_type(attrs),
          {:ok, session_id} <- fetch_optional_binary(attrs, :session_id),
-         {:ok, sequence} <- fetch_optional_sequence(attrs),
+         {:ok, sequence} <- fetch_optional_sequence(attrs, :sequence),
+         {:ok, seq} <- fetch_optional_sequence(attrs, :seq),
          {:ok, payload} <- fetch_map(attrs, :payload),
-         {:ok, metadata} <- fetch_map(attrs, :metadata) do
+         {:ok, metadata} <- fetch_map(attrs, :metadata),
+         {:ok, created_at} <- fetch_optional_timestamp(attrs, :created_at) do
+      normalized_sequence = sequence || seq
+
       {:ok,
        %__MODULE__{
+         id: id,
          type: type,
          session_id: session_id,
-         sequence: sequence,
+         sequence: normalized_sequence,
+         seq: seq || normalized_sequence,
          payload: payload,
-         metadata: metadata
+         metadata: metadata,
+         created_at: created_at
        }}
     end
   end
 
   @doc "Converts an event to a JSON-friendly map with stable string event types."
   def to_map(%__MODULE__{} = event) do
+    seq = event.seq || event.sequence
+
     %{
+      id: event.id,
       type: Atom.to_string(event.type),
       session_id: event.session_id,
-      sequence: event.sequence,
+      sequence: event.sequence || seq,
+      seq: seq,
       payload: json_safe(event.payload),
-      metadata: json_safe(event.metadata)
+      metadata: json_safe(event.metadata),
+      created_at: timestamp_value(event.created_at)
     }
   end
 
@@ -164,12 +205,18 @@ defmodule Tet.Event do
   def from_map(attrs) when is_map(attrs), do: new(attrs)
 
   defp provider_event(type, payload, opts) do
+    sequence = Keyword.get(opts, :sequence)
+    seq = Keyword.get(opts, :seq, sequence)
+
     %__MODULE__{
+      id: Keyword.get(opts, :id),
       type: type,
       session_id: Keyword.get(opts, :session_id),
-      sequence: Keyword.get(opts, :sequence),
+      sequence: sequence || seq,
+      seq: seq,
       payload: payload,
-      metadata: Keyword.get(opts, :metadata, %{})
+      metadata: Keyword.get(opts, :metadata, %{}),
+      created_at: Keyword.get(opts, :created_at)
     }
   end
 
@@ -198,11 +245,21 @@ defmodule Tet.Event do
     end
   end
 
-  defp fetch_optional_sequence(attrs) do
-    case fetch_value(attrs, :sequence) do
+  defp fetch_optional_sequence(attrs, key) do
+    case fetch_value(attrs, key) do
       nil -> {:ok, nil}
       value when is_integer(value) and value >= 0 -> {:ok, value}
-      _ -> {:error, {:invalid_event_field, :sequence}}
+      _ -> {:error, {:invalid_event_field, key}}
+    end
+  end
+
+  defp fetch_optional_timestamp(attrs, key) do
+    case fetch_value(attrs, key) do
+      nil -> {:ok, nil}
+      "" -> {:ok, nil}
+      %DateTime{} = value -> {:ok, value}
+      value when is_binary(value) -> {:ok, value}
+      _ -> {:error, {:invalid_event_field, key}}
     end
   end
 
@@ -216,6 +273,9 @@ defmodule Tet.Event do
   defp fetch_value(attrs, key, default \\ nil) do
     Map.get(attrs, key, Map.get(attrs, Atom.to_string(key), default))
   end
+
+  defp timestamp_value(%DateTime{} = datetime), do: DateTime.to_iso8601(datetime)
+  defp timestamp_value(value), do: value
 
   defp json_safe(value) when is_map(value) do
     Map.new(value, fn {key, nested} -> {json_key(key), json_safe(nested)} end)

@@ -25,7 +25,9 @@ defmodule TetStoreSQLite.MixProject do
 
   defp deps do
     [
-      {:tet_core, in_umbrella: true}
+      {:tet_core, in_umbrella: true},
+      {:ecto_sql, "~> 3.11"},
+      {:ecto_sqlite3, "~> 0.15"}
     ]
   end
 end

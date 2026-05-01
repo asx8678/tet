@@ -8,8 +8,8 @@ defmodule Tet.Message do
 
   @roles [:system, :user, :assistant, :tool]
 
-  @enforce_keys [:id, :session_id, :role, :content, :timestamp]
-  defstruct [:id, :session_id, :role, :content, :timestamp, metadata: %{}]
+  @enforce_keys [:id, :session_id, :role, :content]
+  defstruct [:id, :session_id, :role, :content, :timestamp, :created_at, metadata: %{}]
 
   @type role :: :system | :user | :assistant | :tool
   @type t :: %__MODULE__{
@@ -17,7 +17,8 @@ defmodule Tet.Message do
           session_id: binary(),
           role: role(),
           content: binary(),
-          timestamp: binary(),
+          timestamp: binary() | nil,
+          created_at: DateTime.t() | binary() | nil,
           metadata: map()
         }
 
@@ -30,7 +31,9 @@ defmodule Tet.Message do
          {:ok, session_id} <- fetch_binary(attrs, :session_id),
          {:ok, role} <- fetch_role(attrs),
          {:ok, content} <- fetch_binary(attrs, :content),
-         {:ok, timestamp} <- fetch_binary(attrs, :timestamp),
+         {:ok, timestamp} <- fetch_optional_timestamp(attrs, :timestamp),
+         {:ok, created_at} <- fetch_optional_timestamp(attrs, :created_at),
+         :ok <- ensure_time_present(timestamp, created_at),
          {:ok, metadata} <- fetch_metadata(attrs) do
       {:ok,
        %__MODULE__{
@@ -38,7 +41,8 @@ defmodule Tet.Message do
          session_id: session_id,
          role: role,
          content: content,
-         timestamp: timestamp,
+         timestamp: timestamp || timestamp_value(created_at),
+         created_at: created_at,
          metadata: metadata
        }}
     end
@@ -52,6 +56,7 @@ defmodule Tet.Message do
       role: Atom.to_string(message.role),
       content: message.content,
       timestamp: message.timestamp,
+      created_at: timestamp_value(message.created_at),
       metadata: message.metadata
     }
   end
@@ -65,6 +70,22 @@ defmodule Tet.Message do
       _ -> {:error, {:invalid_message_field, key}}
     end
   end
+
+  defp fetch_optional_timestamp(attrs, key) do
+    case fetch_value(attrs, key) do
+      nil -> {:ok, nil}
+      "" -> {:ok, nil}
+      %DateTime{} = value -> {:ok, value}
+      value when is_binary(value) -> {:ok, value}
+      _ -> {:error, {:invalid_message_field, key}}
+    end
+  end
+
+  defp ensure_time_present(nil, nil), do: {:error, {:invalid_message_field, :created_at}}
+  defp ensure_time_present(_timestamp, _created_at), do: :ok
+
+  defp timestamp_value(%DateTime{} = datetime), do: DateTime.to_iso8601(datetime)
+  defp timestamp_value(value), do: value
 
   defp fetch_role(attrs) do
     case fetch_value(attrs, :role) do
