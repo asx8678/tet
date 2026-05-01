@@ -2,10 +2,7 @@ defmodule Tet.Store.MemoryContractTest do
   use ExUnit.Case, async: false
 
   setup do
-    # Ensure any stale agent from a previous test is stopped
-    Tet.Store.Memory.stop()
-
-    {:ok, _pid} = Tet.Store.Memory.start_link(name: Tet.Store.Memory)
+    {:ok, _started} = Application.ensure_all_started(:tet_store_memory)
     Tet.Store.Memory.reset()
 
     {:ok, opts: []}

@@ -1,4 +1,6 @@
 defmodule Tet.WorkflowStep do
+  alias Tet.Entity
+
   @moduledoc """
   Durable workflow step struct for crash-resilient multi-step execution — §12.
 
@@ -56,11 +58,11 @@ defmodule Tet.WorkflowStep do
           input: term() | nil,
           output: term() | nil,
           error: term() | nil,
-          started_at: binary() | nil,
-          committed_at: binary() | nil,
+          started_at: DateTime.t() | nil,
+          committed_at: DateTime.t() | nil,
           attempt: integer() | nil,
           status: status(),
-          created_at: binary() | nil,
+          created_at: DateTime.t() | nil,
           metadata: map()
         }
 
@@ -84,10 +86,10 @@ defmodule Tet.WorkflowStep do
          {:ok, input} <- fetch_optional(attrs, :input),
          {:ok, output} <- fetch_optional(attrs, :output),
          {:ok, error} <- fetch_optional(attrs, :error),
-         {:ok, started_at} <- fetch_optional_binary(attrs, :started_at),
+         {:ok, started_at} <- Entity.fetch_optional_datetime(attrs, :started_at, :workflow_step),
          {:ok, completed_at} <- fetch_committed_at(attrs),
          {:ok, attempt} <- fetch_optional_integer(attrs, :attempt),
-         {:ok, created_at} <- fetch_optional_binary(attrs, :created_at),
+         {:ok, created_at} <- Entity.fetch_optional_datetime(attrs, :created_at, :workflow_step),
          {:ok, metadata} <- fetch_map(attrs, :metadata, %{}) do
       {:ok,
        %__MODULE__{
@@ -123,10 +125,10 @@ defmodule Tet.WorkflowStep do
     |> maybe_put(:input, step.input)
     |> maybe_put(:output, step.output)
     |> maybe_put(:error, step.error)
-    |> maybe_put(:started_at, step.started_at)
-    |> maybe_put(:committed_at, step.committed_at)
+    |> maybe_put(:started_at, Entity.datetime_to_map(step.started_at))
+    |> maybe_put(:committed_at, Entity.datetime_to_map(step.committed_at))
     |> maybe_put(:attempt, step.attempt)
-    |> maybe_put(:created_at, step.created_at)
+    |> maybe_put(:created_at, Entity.datetime_to_map(step.created_at))
     |> Map.put(:metadata, step.metadata)
   end
 
@@ -195,11 +197,26 @@ defmodule Tet.WorkflowStep do
     case fetch_value(attrs, :committed_at) do
       nil ->
         case fetch_value(attrs, :completed_at) do
-          nil -> {:ok, nil}
-          :null -> {:ok, nil}
-          "" -> {:ok, nil}
-          value when is_binary(value) -> {:ok, value}
-          _ -> {:error, {:invalid_workflow_step_field, :committed_at}}
+          nil ->
+            {:ok, nil}
+
+          :null ->
+            {:ok, nil}
+
+          "" ->
+            {:ok, nil}
+
+          %DateTime{} = dt ->
+            {:ok, dt}
+
+          value when is_binary(value) ->
+            case DateTime.from_iso8601(value) do
+              {:ok, dt, _offset} -> {:ok, dt}
+              {:error, _} -> {:error, {:invalid_workflow_step_field, :committed_at}}
+            end
+
+          _ ->
+            {:error, {:invalid_workflow_step_field, :committed_at}}
         end
 
       :null ->
@@ -208,8 +225,14 @@ defmodule Tet.WorkflowStep do
       "" ->
         {:ok, nil}
 
+      %DateTime{} = dt ->
+        {:ok, dt}
+
       value when is_binary(value) ->
-        {:ok, value}
+        case DateTime.from_iso8601(value) do
+          {:ok, dt, _offset} -> {:ok, dt}
+          {:error, _} -> {:error, {:invalid_workflow_step_field, :committed_at}}
+        end
 
       _ ->
         {:error, {:invalid_workflow_step_field, :committed_at}}

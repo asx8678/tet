@@ -1,4 +1,6 @@
 defmodule Tet.Workflow do
+  alias Tet.Entity
+
   @moduledoc """
   Durable workflow struct for crash-resilient multi-step execution — §12.
 
@@ -38,10 +40,10 @@ defmodule Tet.Workflow do
           session_id: binary(),
           task_id: binary() | nil,
           claimed_by: binary() | nil,
-          claim_expires_at: binary() | nil,
+          claim_expires_at: DateTime.t() | nil,
           status: status(),
-          created_at: binary() | nil,
-          updated_at: binary() | nil,
+          created_at: DateTime.t() | nil,
+          updated_at: DateTime.t() | nil,
           metadata: map()
         }
 
@@ -60,10 +62,11 @@ defmodule Tet.Workflow do
          {:ok, session_id} <- fetch_binary(attrs, :session_id),
          {:ok, task_id} <- fetch_optional_binary(attrs, :task_id),
          {:ok, claimed_by} <- fetch_optional_binary(attrs, :claimed_by),
-         {:ok, claim_expires_at} <- fetch_optional_binary(attrs, :claim_expires_at),
+         {:ok, claim_expires_at} <-
+           Entity.fetch_optional_datetime(attrs, :claim_expires_at, :workflow),
          {:ok, status} <- fetch_status(attrs, :status, :created),
-         {:ok, created_at} <- fetch_optional_binary(attrs, :created_at),
-         {:ok, updated_at} <- fetch_optional_binary(attrs, :updated_at),
+         {:ok, created_at} <- Entity.fetch_optional_datetime(attrs, :created_at, :workflow),
+         {:ok, updated_at} <- Entity.fetch_optional_datetime(attrs, :updated_at, :workflow),
          {:ok, metadata} <- fetch_map(attrs, :metadata, %{}) do
       {:ok,
        %__MODULE__{
@@ -90,9 +93,9 @@ defmodule Tet.Workflow do
     }
     |> maybe_put(:task_id, workflow.task_id)
     |> maybe_put(:claimed_by, workflow.claimed_by)
-    |> maybe_put(:claim_expires_at, workflow.claim_expires_at)
-    |> maybe_put(:created_at, workflow.created_at)
-    |> maybe_put(:updated_at, workflow.updated_at)
+    |> maybe_put(:claim_expires_at, Entity.datetime_to_map(workflow.claim_expires_at))
+    |> maybe_put(:created_at, Entity.datetime_to_map(workflow.created_at))
+    |> maybe_put(:updated_at, Entity.datetime_to_map(workflow.updated_at))
     |> Map.put(:metadata, workflow.metadata)
   end
 
