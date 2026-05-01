@@ -249,11 +249,23 @@ defmodule Tet.Approval.Approval do
 
   defp fetch_optional_timestamp(attrs, key) do
     case fetch_value(attrs, key) do
-      nil -> {:ok, nil}
-      "" -> {:ok, nil}
-      %DateTime{} = value -> {:ok, value}
-      value when is_binary(value) -> {:ok, value}
-      _ -> {:error, {:invalid_approval_field, key}}
+      nil ->
+        {:ok, nil}
+
+      "" ->
+        {:ok, nil}
+
+      %DateTime{} = value ->
+        {:ok, value}
+
+      value when is_binary(value) ->
+        case DateTime.from_iso8601(value) do
+          {:ok, datetime, _} -> {:ok, datetime}
+          _ -> {:error, {:invalid_approval_field, key}}
+        end
+
+      _ ->
+        {:error, {:invalid_approval_field, key}}
     end
   end
 
