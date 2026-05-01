@@ -70,6 +70,9 @@ defmodule Tet.Store do
   @type checkpoint :: Tet.Checkpoint.t()
   @type error_log :: Tet.ErrorLog.t()
   @type repair :: Tet.Repair.t()
+  @type finding :: Tet.Finding.t()
+  @type persistent_memory :: Tet.PersistentMemory.t()
+  @type project_lesson :: Tet.ProjectLesson.t()
 
   @type workspace_attrs :: attrs()
   @type session_attrs :: attrs()
@@ -85,6 +88,9 @@ defmodule Tet.Store do
   @type error_log_attrs :: attrs()
   @type repair_attrs :: attrs()
   @type repair_status :: Tet.Repair.status()
+  @type finding_attrs :: attrs()
+  @type persistent_memory_attrs :: attrs()
+  @type project_lesson_attrs :: attrs()
 
   @type trust_state :: Tet.Workspace.trust_state()
   @type approval_resolution :: :approved | :rejected
@@ -276,6 +282,39 @@ defmodule Tet.Store do
   @doc "Lists repair entries, optionally filtered by session or status."
   @callback list_repairs(options()) :: result([repair()])
 
+  # -- BD-0036: Finding Store, Persistent Memory, Project Lessons --
+
+  @doc "Records a finding entry."
+  @callback record_finding(finding_attrs(), options()) :: result(finding())
+
+  @doc "Fetches a single finding by id."
+  @callback get_finding(id(), options()) :: result(finding())
+
+  @doc "Lists findings for a session."
+  @callback list_findings(session_id(), options()) :: result([finding()])
+
+  @doc "Updates a finding entry (e.g., status, promoted_to)."
+  @callback update_finding(id(), finding_attrs(), options()) :: result(finding())
+
+  @doc "Stores a persistent memory entry."
+  @callback store_persistent_memory(persistent_memory_attrs(), options()) ::
+              result(persistent_memory())
+
+  @doc "Fetches a single persistent memory entry by id."
+  @callback get_persistent_memory(id(), options()) :: result(persistent_memory())
+
+  @doc "Lists persistent memory entries for a session."
+  @callback list_persistent_memories(session_id(), options()) :: result([persistent_memory()])
+
+  @doc "Stores a project lesson entry."
+  @callback store_project_lesson(project_lesson_attrs(), options()) :: result(project_lesson())
+
+  @doc "Fetches a single project lesson by id."
+  @callback get_project_lesson(id(), options()) :: result(project_lesson())
+
+  @doc "Lists project lessons, optionally filtered by category."
+  @callback list_project_lessons(options()) :: result([project_lesson()])
+
   @doc "Deprecated compatibility alias for `append_message/1` used by scaffold runtime."
   @callback save_message(message(), options()) :: result(message())
 
@@ -336,5 +375,15 @@ defmodule Tet.Store do
                       enqueue_repair: 2,
                       dequeue_repair: 1,
                       update_repair: 3,
-                      list_repairs: 1
+                      list_repairs: 1,
+                      record_finding: 2,
+                      get_finding: 2,
+                      list_findings: 2,
+                      update_finding: 3,
+                      store_persistent_memory: 2,
+                      get_persistent_memory: 2,
+                      list_persistent_memories: 2,
+                      store_project_lesson: 2,
+                      get_project_lesson: 2,
+                      list_project_lessons: 1
 end

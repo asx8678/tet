@@ -21,6 +21,9 @@ defmodule Tet.Store.SQLite do
   @default_error_log_path ".tet/error_log.jsonl"
   @default_workflow_steps_path ".tet/workflow_steps.jsonl"
   @default_repairs_path ".tet/repairs.jsonl"
+  @default_findings_path ".tet/findings.jsonl"
+  @default_persistent_memories_path ".tet/persistent_memories.jsonl"
+  @default_project_lessons_path ".tet/project_lessons.jsonl"
 
   @impl true
   def boundary do
@@ -582,6 +585,135 @@ defmodule Tet.Store.SQLite do
   @impl true
   def claim_workflow(_id, _node, _ttl), do: {:ok, :claimed}
 
+  # -- BD-0036: Finding Store, Persistent Memory, Project Lessons --
+
+  @impl true
+  def record_finding(attrs, opts) when is_map(attrs) and is_list(opts) do
+    attrs = Tet.Store.Helpers.ensure_created_at(attrs)
+    path = findings_path(opts)
+
+    with {:ok, finding} <- Tet.Finding.new(attrs),
+         line = finding |> Tet.Finding.to_map() |> encode_json!(),
+         :ok <- File.mkdir_p(Path.dirname(path)),
+         :ok <- File.write(path, [line, "\n"], [:append]) do
+      {:ok, finding}
+    end
+  end
+
+  @impl true
+  def get_finding(finding_id, opts) when is_binary(finding_id) and is_list(opts) do
+    with {:ok, findings} <- read_findings(findings_path(opts)) do
+      findings
+      |> Enum.find(&(&1.id == finding_id))
+      |> case do
+        nil -> {:error, :finding_not_found}
+        finding -> {:ok, finding}
+      end
+    end
+  end
+
+  @impl true
+  def list_findings(session_id, opts) when is_binary(session_id) and is_list(opts) do
+    with {:ok, findings} <- read_findings(findings_path(opts)) do
+      {:ok, Enum.filter(findings, &(&1.session_id == session_id))}
+    end
+  end
+
+  @impl true
+  def update_finding(finding_id, attrs, opts)
+      when is_binary(finding_id) and is_map(attrs) and is_list(opts) do
+    path = findings_path(opts)
+
+    with {:ok, findings} <- read_findings(path) do
+      findings
+      |> Enum.find(&(&1.id == finding_id))
+      |> case do
+        nil ->
+          {:error, :finding_not_found}
+
+        finding ->
+          case Tet.Store.Helpers.merge_finding_attrs(finding, attrs) do
+            {:ok, updated} ->
+              remaining = Enum.reject(findings, &(&1.id == finding_id)) ++ [updated]
+
+              with {:ok, :ok} <- rewrite_jsonl(path, remaining, &Tet.Finding.to_map/1) do
+                {:ok, updated}
+              end
+
+            {:error, reason} ->
+              {:error, reason}
+          end
+      end
+    end
+  end
+
+  @impl true
+  def store_persistent_memory(attrs, opts) when is_map(attrs) and is_list(opts) do
+    attrs = Tet.Store.Helpers.ensure_created_at(attrs)
+    path = persistent_memories_path(opts)
+
+    with {:ok, entry} <- Tet.PersistentMemory.new(attrs),
+         line = entry |> Tet.PersistentMemory.to_map() |> encode_json!(),
+         :ok <- File.mkdir_p(Path.dirname(path)),
+         :ok <- File.write(path, [line, "\n"], [:append]) do
+      {:ok, entry}
+    end
+  end
+
+  @impl true
+  def get_persistent_memory(pm_id, opts) when is_binary(pm_id) and is_list(opts) do
+    with {:ok, entries} <- read_persistent_memories(persistent_memories_path(opts)) do
+      entries
+      |> Enum.find(&(&1.id == pm_id))
+      |> case do
+        nil -> {:error, :persistent_memory_not_found}
+        entry -> {:ok, entry}
+      end
+    end
+  end
+
+  @impl true
+  def list_persistent_memories(session_id, opts)
+      when is_binary(session_id) and is_list(opts) do
+    with {:ok, entries} <- read_persistent_memories(persistent_memories_path(opts)) do
+      {:ok, Enum.filter(entries, &(&1.session_id == session_id))}
+    end
+  end
+
+  @impl true
+  def store_project_lesson(attrs, opts) when is_map(attrs) and is_list(opts) do
+    attrs = Tet.Store.Helpers.ensure_created_at(attrs)
+    path = project_lessons_path(opts)
+
+    with {:ok, lesson} <- Tet.ProjectLesson.new(attrs),
+         line = lesson |> Tet.ProjectLesson.to_map() |> encode_json!(),
+         :ok <- File.mkdir_p(Path.dirname(path)),
+         :ok <- File.write(path, [line, "\n"], [:append]) do
+      {:ok, lesson}
+    end
+  end
+
+  @impl true
+  def get_project_lesson(lesson_id, opts) when is_binary(lesson_id) and is_list(opts) do
+    with {:ok, lessons} <- read_project_lessons(project_lessons_path(opts)) do
+      lessons
+      |> Enum.find(&(&1.id == lesson_id))
+      |> case do
+        nil -> {:error, :project_lesson_not_found}
+        lesson -> {:ok, lesson}
+      end
+    end
+  end
+
+  @impl true
+  def list_project_lessons(opts) when is_list(opts) do
+    with {:ok, lessons} <- read_project_lessons(project_lessons_path(opts)) do
+      category = Keyword.get(opts, :category)
+      filtered = Tet.Store.Helpers.maybe_filter_lessons_by_category(lessons, category)
+      {:ok, filtered}
+    end
+  end
+
   # -- Internal readers --
 
   defp read_messages(path) do
@@ -650,6 +782,33 @@ defmodule Tet.Store.SQLite do
       &Tet.WorkflowStep.from_map/1,
       :workflow_step_read_failed,
       {:invalid_workflow_step_record, :not_a_map}
+    )
+  end
+
+  defp read_findings(path) do
+    read_json_lines(
+      path,
+      &Tet.Finding.from_map/1,
+      :finding_read_failed,
+      {:invalid_finding_record, :not_a_map}
+    )
+  end
+
+  defp read_persistent_memories(path) do
+    read_json_lines(
+      path,
+      &Tet.PersistentMemory.from_map/1,
+      :persistent_memory_read_failed,
+      {:invalid_persistent_memory_record, :not_a_map}
+    )
+  end
+
+  defp read_project_lessons(path) do
+    read_json_lines(
+      path,
+      &Tet.ProjectLesson.from_map/1,
+      :project_lesson_read_failed,
+      {:invalid_project_lesson_record, :not_a_map}
     )
   end
 
@@ -863,6 +1022,27 @@ defmodule Tet.Store.SQLite do
       System.get_env("TET_WORKFLOW_STEPS_PATH") ||
       Application.get_env(:tet_runtime, :workflow_steps_path) ||
       @default_workflow_steps_path
+  end
+
+  defp findings_path(opts) do
+    Keyword.get(opts, :findings_path) ||
+      System.get_env("TET_FINDINGS_PATH") ||
+      Application.get_env(:tet_runtime, :findings_path) ||
+      @default_findings_path
+  end
+
+  defp persistent_memories_path(opts) do
+    Keyword.get(opts, :persistent_memories_path) ||
+      System.get_env("TET_PERSISTENT_MEMORIES_PATH") ||
+      Application.get_env(:tet_runtime, :persistent_memories_path) ||
+      @default_persistent_memories_path
+  end
+
+  defp project_lessons_path(opts) do
+    Keyword.get(opts, :project_lessons_path) ||
+      System.get_env("TET_PROJECT_LESSONS_PATH") ||
+      Application.get_env(:tet_runtime, :project_lessons_path) ||
+      @default_project_lessons_path
   end
 
   defp default_autosave_path(message_path) do

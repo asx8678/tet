@@ -21,6 +21,9 @@ defmodule Tet.Store.Memory do
   #   checkpoints: %{id => Tet.Checkpoint.t()},
   #   errors: %{id => Tet.ErrorLog.t()},
   #   repairs: %{id => Tet.Repair.t()},
+  #   findings: %{id => Tet.Finding.t()},
+  #   persistent_memories: %{id => Tet.PersistentMemory.t()},
+  #   project_lessons: %{id => Tet.ProjectLesson.t()},
   #   workflows: %{id => Tet.Workflow.t()},
   #   workflow_steps: %{workflow_id => [Tet.WorkflowStep.t()]},
   #   messages: %{session_id => [Tet.Message.t()]},
@@ -40,6 +43,9 @@ defmodule Tet.Store.Memory do
     checkpoints: %{},
     errors: %{},
     repairs: %{},
+    findings: %{},
+    persistent_memories: %{},
+    project_lessons: %{},
     workflows: %{},
     workflow_steps: %{},
     messages: %{},
@@ -554,6 +560,131 @@ defmodule Tet.Store.Memory do
       |> Tet.Store.Helpers.maybe_filter_by_status(status)
 
     {:ok, repairs}
+  end
+
+  # -- BD-0036: Finding Store --
+
+  @impl true
+  def record_finding(attrs, _opts) when is_map(attrs) do
+    attrs = Tet.Store.Helpers.ensure_created_at(attrs)
+
+    with {:ok, finding} <- Tet.Finding.new(attrs) do
+      Agent.update(__MODULE__, fn state ->
+        put_in(state, [:findings, finding.id], finding)
+      end)
+
+      {:ok, finding}
+    end
+  end
+
+  @impl true
+  def get_finding(finding_id, _opts) when is_binary(finding_id) do
+    case Agent.get(__MODULE__, fn state -> Map.get(state.findings, finding_id) end) do
+      nil -> {:error, :finding_not_found}
+      finding -> {:ok, finding}
+    end
+  end
+
+  @impl true
+  def list_findings(session_id, _opts) when is_binary(session_id) do
+    findings =
+      Agent.get(__MODULE__, fn state ->
+        state.findings
+        |> Map.values()
+        |> Enum.filter(&(&1.session_id == session_id))
+      end)
+
+    {:ok, findings}
+  end
+
+  @impl true
+  def update_finding(finding_id, attrs, _opts)
+      when is_binary(finding_id) and is_map(attrs) do
+    Agent.get_and_update(__MODULE__, fn state ->
+      case Map.get(state.findings, finding_id) do
+        nil ->
+          {{:error, :finding_not_found}, state}
+
+        finding ->
+          case Tet.Store.Helpers.merge_finding_attrs(finding, attrs) do
+            {:ok, updated} ->
+              new_state = put_in(state, [:findings, finding_id], updated)
+              {{:ok, updated}, new_state}
+
+            {:error, reason} ->
+              {{:error, reason}, state}
+          end
+      end
+    end)
+  end
+
+  # -- BD-0036: Persistent Memory --
+
+  @impl true
+  def store_persistent_memory(attrs, _opts) when is_map(attrs) do
+    attrs = Tet.Store.Helpers.ensure_created_at(attrs)
+
+    with {:ok, entry} <- Tet.PersistentMemory.new(attrs) do
+      Agent.update(__MODULE__, fn state ->
+        put_in(state, [:persistent_memories, entry.id], entry)
+      end)
+
+      {:ok, entry}
+    end
+  end
+
+  @impl true
+  def get_persistent_memory(pm_id, _opts) when is_binary(pm_id) do
+    case Agent.get(__MODULE__, fn state -> Map.get(state.persistent_memories, pm_id) end) do
+      nil -> {:error, :persistent_memory_not_found}
+      entry -> {:ok, entry}
+    end
+  end
+
+  @impl true
+  def list_persistent_memories(session_id, _opts) when is_binary(session_id) do
+    entries =
+      Agent.get(__MODULE__, fn state ->
+        state.persistent_memories
+        |> Map.values()
+        |> Enum.filter(&(&1.session_id == session_id))
+      end)
+
+    {:ok, entries}
+  end
+
+  # -- BD-0036: Project Lessons --
+
+  @impl true
+  def store_project_lesson(attrs, _opts) when is_map(attrs) do
+    attrs = Tet.Store.Helpers.ensure_created_at(attrs)
+
+    with {:ok, lesson} <- Tet.ProjectLesson.new(attrs) do
+      Agent.update(__MODULE__, fn state ->
+        put_in(state, [:project_lessons, lesson.id], lesson)
+      end)
+
+      {:ok, lesson}
+    end
+  end
+
+  @impl true
+  def get_project_lesson(lesson_id, _opts) when is_binary(lesson_id) do
+    case Agent.get(__MODULE__, fn state -> Map.get(state.project_lessons, lesson_id) end) do
+      nil -> {:error, :project_lesson_not_found}
+      lesson -> {:ok, lesson}
+    end
+  end
+
+  @impl true
+  def list_project_lessons(opts) when is_list(opts) do
+    category = Keyword.get(opts, :category)
+
+    lessons =
+      Agent.get(__MODULE__, fn state -> Map.values(state.project_lessons) end)
+      |> Tet.Store.Helpers.maybe_filter_lessons_by_category(category)
+
+    {:ok, lessons}
   end
 
   # -- Workflow (required behaviour) --
