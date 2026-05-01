@@ -89,7 +89,12 @@ defmodule Tet.ShellPolicyTest do
     end
 
     test "allows mix test with path argument" do
-      assert {:ok, :medium} = ShellPolicy.check_command(["mix", "test", "apps/tet_core/test/tet/shell_policy_test.exs"])
+      assert {:ok, :medium} =
+               ShellPolicy.check_command([
+                 "mix",
+                 "test",
+                 "apps/tet_core/test/tet/shell_policy_test.exs"
+               ])
     end
 
     test "allows git status with verbose flag" do
@@ -120,6 +125,7 @@ defmodule Tet.ShellPolicyTest do
     test "respects custom allowlist" do
       custom = [%{command: "echo", subcommands: [], risk: :low}]
       assert {:ok, :low} = ShellPolicy.check_command(["echo", "hello"], custom)
+
       assert {:error, {:blocked_command, :unknown_executable}} =
                ShellPolicy.check_command(["git", "status"], custom)
     end

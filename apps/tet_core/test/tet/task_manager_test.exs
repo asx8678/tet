@@ -5,7 +5,9 @@ defmodule Tet.TaskManagerTest do
 
   describe "facade delegates" do
     test "new_task/1 creates a task" do
-      assert {:ok, task} = TaskManager.new_task(%{id: "t1", title: "Test", category: :researching})
+      assert {:ok, task} =
+               TaskManager.new_task(%{id: "t1", title: "Test", category: :researching})
+
       assert task.id == "t1"
     end
 
@@ -33,8 +35,16 @@ defmodule Tet.TaskManagerTest do
       {:ok, state} = TaskManager.new_state(%{id: "tm_lifecycle"})
 
       # Add tasks
-      {:ok, state} = TaskManager.add_task(state, %{id: "t1", title: "Research", category: :researching})
-      {:ok, state} = TaskManager.add_task(state, %{id: "t2", title: "Implement", category: :acting, dependencies: ["t1"]})
+      {:ok, state} =
+        TaskManager.add_task(state, %{id: "t1", title: "Research", category: :researching})
+
+      {:ok, state} =
+        TaskManager.add_task(state, %{
+          id: "t2",
+          title: "Implement",
+          category: :acting,
+          dependencies: ["t1"]
+        })
 
       # Start and activate first task
       {:ok, state} = TaskManager.start_and_activate(state, "t1")
@@ -58,7 +68,10 @@ defmodule Tet.TaskManagerTest do
 
     test "full lifecycle with failure and retry" do
       {:ok, state} = TaskManager.new_state(%{id: "tm_fail"})
-      {:ok, state} = TaskManager.add_task(state, %{id: "t1", title: "Implement", category: :acting})
+
+      {:ok, state} =
+        TaskManager.add_task(state, %{id: "t1", title: "Implement", category: :acting})
+
       {:ok, state} = TaskManager.start_and_activate(state, "t1")
 
       assert TaskManager.active_category(state) == :acting
@@ -73,7 +86,10 @@ defmodule Tet.TaskManagerTest do
   describe "category-driven policy" do
     test "guidance changes as category changes" do
       {:ok, state} = TaskManager.new_state(%{id: "tm_policy"})
-      {:ok, state} = TaskManager.add_task(state, %{id: "t1", title: "Research", category: :researching})
+
+      {:ok, state} =
+        TaskManager.add_task(state, %{id: "t1", title: "Research", category: :researching})
+
       {:ok, state} = TaskManager.start_and_activate(state, "t1")
 
       assert {:guidance, :research, msg1} = TaskManager.guidance(state)
@@ -89,9 +105,25 @@ defmodule Tet.TaskManagerTest do
 
     test "dependency-ordered execution respects categories" do
       {:ok, state} = TaskManager.new_state(%{id: "tm_deps"})
-      {:ok, state} = TaskManager.add_task(state, %{id: "research", title: "Research", category: :researching})
-      {:ok, state} = TaskManager.add_task(state, %{id: "plan", title: "Plan", category: :planning, dependencies: ["research"]})
-      {:ok, state} = TaskManager.add_task(state, %{id: "implement", title: "Implement", category: :acting, dependencies: ["plan"]})
+
+      {:ok, state} =
+        TaskManager.add_task(state, %{id: "research", title: "Research", category: :researching})
+
+      {:ok, state} =
+        TaskManager.add_task(state, %{
+          id: "plan",
+          title: "Plan",
+          category: :planning,
+          dependencies: ["research"]
+        })
+
+      {:ok, state} =
+        TaskManager.add_task(state, %{
+          id: "implement",
+          title: "Implement",
+          category: :acting,
+          dependencies: ["plan"]
+        })
 
       # Can't start plan before research is complete
       refute TaskManager.can_start?(state, "plan")
@@ -113,7 +145,10 @@ defmodule Tet.TaskManagerTest do
   describe "serialization round-trip" do
     test "state survives to_map/from_map" do
       {:ok, state} = TaskManager.new_state(%{id: "tm_roundtrip"})
-      {:ok, state} = TaskManager.add_task(state, %{id: "t1", title: "Test", category: :researching})
+
+      {:ok, state} =
+        TaskManager.add_task(state, %{id: "t1", title: "Test", category: :researching})
+
       {:ok, state} = TaskManager.start_and_activate(state, "t1")
 
       mapped = TaskManager.to_map(state)

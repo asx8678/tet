@@ -60,6 +60,7 @@ defmodule Tet.PlanMode.InvariantsGateTest do
 
       for contract <- ReadOnlyContracts.all() do
         decision = Gate.evaluate(contract, Policy.default(), ctx)
+
         assert Gate.blocked?(decision),
                "#{contract.name} should be blocked without active task, got #{inspect(decision)}"
       end
@@ -116,13 +117,14 @@ defmodule Tet.PlanMode.InvariantsGateTest do
     end
 
     test "fail closed: all-nil policy fields block mutation" do
-      policy = struct(Policy, %{
-        plan_mode: :plan,
-        safe_modes: nil,
-        plan_safe_categories: nil,
-        acting_categories: nil,
-        require_active_task: true
-      })
+      policy =
+        struct(Policy, %{
+          plan_mode: :plan,
+          safe_modes: nil,
+          plan_safe_categories: nil,
+          acting_categories: nil,
+          require_active_task: true
+        })
 
       for contract <- [write_contract(), shell_contract()],
           mode <- [:plan, :explore, :execute],
@@ -136,13 +138,14 @@ defmodule Tet.PlanMode.InvariantsGateTest do
     end
 
     test "fail closed: all-nil policy fields allow read-only contracts safely" do
-      policy = struct(Policy, %{
-        plan_mode: :plan,
-        safe_modes: nil,
-        plan_safe_categories: nil,
-        acting_categories: nil,
-        require_active_task: true
-      })
+      policy =
+        struct(Policy, %{
+          plan_mode: :plan,
+          safe_modes: nil,
+          plan_safe_categories: nil,
+          acting_categories: nil,
+          require_active_task: true
+        })
 
       ctx = %{mode: :plan, task_category: :researching, task_id: "t_valid"}
       decision = Gate.evaluate(read_contract(), policy, ctx)
@@ -187,6 +190,7 @@ defmodule Tet.PlanMode.InvariantsGateTest do
       for mode <- [:plan, :explore], category <- [:researching, :planning] do
         ctx = %{mode: mode, task_category: category, task_id: "t_cat"}
         decision = Gate.evaluate(shell_contract(), Policy.default(), ctx)
+
         assert Gate.blocked?(decision),
                "shell should be blocked in #{mode}/#{category}, got #{inspect(decision)}"
       end
@@ -224,6 +228,7 @@ defmodule Tet.PlanMode.InvariantsGateTest do
 
         for contract <- ReadOnlyContracts.all() do
           decision = Gate.evaluate(contract, Policy.default(), ctx)
+
           assert Gate.allowed?(decision),
                  "#{contract.name} should be allowed in #{mode}/#{category}, got #{inspect(decision)}"
         end
@@ -256,16 +261,18 @@ defmodule Tet.PlanMode.InvariantsGateTest do
     end
 
     test "fail closed: nil acting_categories policy restricts mutation in execute" do
-      policy = struct(Policy, %{
-        plan_mode: :plan,
-        safe_modes: [:plan, :explore],
-        plan_safe_categories: [:researching, :planning],
-        acting_categories: nil,
-        require_active_task: true
-      })
+      policy =
+        struct(Policy, %{
+          plan_mode: :plan,
+          safe_modes: [:plan, :explore],
+          plan_safe_categories: [:researching, :planning],
+          acting_categories: nil,
+          require_active_task: true
+        })
 
       ctx = %{mode: :execute, task_category: :acting, task_id: "t1"}
       decision = Gate.evaluate(write_contract(), policy, ctx)
+
       assert Gate.blocked?(decision),
              "nil acting_categories should fail closed, got #{inspect(decision)}"
     end

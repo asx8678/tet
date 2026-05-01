@@ -89,7 +89,9 @@ defmodule Tet.PlanMode.MutationGateAuditApprovalTest do
       blocked_decision = Gate.evaluate(rogue_plan_write_contract(), Policy.default(), blocked_ctx)
       assert Gate.blocked?(blocked_decision)
 
-      assert {:ok, blocked_event} = persist_decision(rogue_plan_write_contract(), blocked_decision)
+      assert {:ok, blocked_event} =
+               persist_decision(rogue_plan_write_contract(), blocked_decision)
+
       assert blocked_event.type == :"tool.blocked"
 
       # Then: approved after transitioning to execute/acting
@@ -108,12 +110,12 @@ defmodule Tet.PlanMode.MutationGateAuditApprovalTest do
     test "multiple blocked attempts each produce distinct auditable events" do
       # Three distinct block reasons from different contexts
       blocked_scenarios = [
-        {%{mode: :plan, task_category: :researching, task_id: "t1"},
-         rogue_plan_write_contract(), "plan mode blocks mutation"},
-        {%{mode: :execute, task_category: :researching, task_id: "t2"},
-         write_contract(), "plan-safe category blocks tool"},
-        {%{mode: :execute, task_category: :acting, task_id: nil},
-         write_contract(), "no active task"}
+        {%{mode: :plan, task_category: :researching, task_id: "t1"}, rogue_plan_write_contract(),
+         "plan mode blocks mutation"},
+        {%{mode: :execute, task_category: :researching, task_id: "t2"}, write_contract(),
+         "plan-safe category blocks tool"},
+        {%{mode: :execute, task_category: :acting, task_id: nil}, write_contract(),
+         "no active task"}
       ]
 
       reasons =
@@ -129,7 +131,9 @@ defmodule Tet.PlanMode.MutationGateAuditApprovalTest do
 
       # All three blocked attempts produce different block reasons
       unique_reasons = reasons |> Enum.map(&elem(&1, 1)) |> Enum.uniq()
-      assert length(unique_reasons) == 3, "Expected 3 distinct block reasons, got #{inspect(unique_reasons)}"
+
+      assert length(unique_reasons) == 3,
+             "Expected 3 distinct block reasons, got #{inspect(unique_reasons)}"
     end
   end
 end

@@ -375,11 +375,17 @@ defmodule Tet.TaskManager.State do
 
   defp reaches?(tasks, current, target, visited) do
     cond do
-      current == target -> true
-      MapSet.member?(visited, current) -> false
+      current == target ->
+        true
+
+      MapSet.member?(visited, current) ->
+        false
+
       true ->
         case Map.get(tasks, current) do
-          nil -> false
+          nil ->
+            false
+
           task ->
             visited = MapSet.put(visited, current)
             Enum.any?(task.dependencies, &reaches?(tasks, &1, target, visited))

@@ -58,7 +58,9 @@ defmodule Tet.TaskManager.StateTest do
     end
 
     test "adds a task via attrs map", %{state: state} do
-      assert {:ok, state} = State.add_task(state, %{id: "t1", title: "Research", category: :researching})
+      assert {:ok, state} =
+               State.add_task(state, %{id: "t1", title: "Research", category: :researching})
+
       assert State.get_task(state, "t1").category == :researching
     end
 
@@ -70,7 +72,12 @@ defmodule Tet.TaskManager.StateTest do
 
     test "rejects unknown dependencies", %{state: state} do
       assert {:error, {:unknown_dependencies, ["ghost"]}} =
-               State.add_task(state, %{id: "t1", title: "Test", category: :acting, dependencies: ["ghost"]})
+               State.add_task(state, %{
+                 id: "t1",
+                 title: "Test",
+                 category: :acting,
+                 dependencies: ["ghost"]
+               })
     end
 
     test "allows task with satisfied dependencies" do
@@ -118,7 +125,14 @@ defmodule Tet.TaskManager.StateTest do
     test "start_task/2 rejects when deps unsatisfied" do
       state = State.new!(%{id: "tm1"})
       state = add_simple_task(state, "dep1", :researching)
-      {:ok, state} = State.add_task(state, %{id: "t1", title: "Test", category: :acting, dependencies: ["dep1"]})
+
+      {:ok, state} =
+        State.add_task(state, %{
+          id: "t1",
+          title: "Test",
+          category: :acting,
+          dependencies: ["dep1"]
+        })
 
       assert {:error, {:unmet_dependencies, "t1", ["dep1"]}} = State.start_task(state, "t1")
     end
@@ -220,7 +234,9 @@ defmodule Tet.TaskManager.StateTest do
     test "rejects pending task as active" do
       state = State.new!(%{id: "tm1"})
       state = add_simple_task(state, "t1", :acting)
-      assert {:error, {:active_task_not_in_progress, "t1", :pending}} = State.set_active(state, "t1")
+
+      assert {:error, {:active_task_not_in_progress, "t1", :pending}} =
+               State.set_active(state, "t1")
     end
 
     test "rejects completed task as active" do
@@ -229,7 +245,8 @@ defmodule Tet.TaskManager.StateTest do
       {:ok, state} = State.start_task(state, "t1")
       {:ok, state} = State.complete_task(state, "t1")
 
-      assert {:error, {:active_task_not_in_progress, "t1", :completed}} = State.set_active(state, "t1")
+      assert {:error, {:active_task_not_in_progress, "t1", :completed}} =
+               State.set_active(state, "t1")
     end
 
     test "rejects unknown task as active", %{state: state} do
@@ -281,7 +298,15 @@ defmodule Tet.TaskManager.StateTest do
     test "skips in_progress tasks with unmet deps" do
       state = State.new!(%{id: "tm1"})
       state = add_simple_task(state, "dep1", :researching)
-      {:ok, state} = State.add_task(state, %{id: "t1", title: "Test", category: :acting, dependencies: ["dep1"]})
+
+      {:ok, state} =
+        State.add_task(state, %{
+          id: "t1",
+          title: "Test",
+          category: :acting,
+          dependencies: ["dep1"]
+        })
+
       # Manually set t1 to in_progress (bypass dep check) for this select_next test
       task = State.get_task(state, "t1")
       {:ok, in_progress_task} = Task.transition(task, :in_progress)
@@ -295,7 +320,15 @@ defmodule Tet.TaskManager.StateTest do
     test "selects eligible task when deps are met" do
       state = State.new!(%{id: "tm1"})
       state = add_simple_task(state, "dep1", :researching)
-      {:ok, state} = State.add_task(state, %{id: "t1", title: "Test", category: :acting, dependencies: ["dep1"]})
+
+      {:ok, state} =
+        State.add_task(state, %{
+          id: "t1",
+          title: "Test",
+          category: :acting,
+          dependencies: ["dep1"]
+        })
+
       # Complete the dependency first, then start t1
       {:ok, state} = State.start_task(state, "dep1")
       {:ok, state} = State.complete_task(state, "dep1")
