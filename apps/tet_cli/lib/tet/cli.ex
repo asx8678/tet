@@ -60,6 +60,12 @@ defmodule Tet.CLI do
       ["ask" | args] ->
         ask(args)
 
+      ["prompt-lab" | rest] ->
+        prompt_lab(rest)
+
+      ["correct" | args] ->
+        correct(args)
+
       [unknown | _] ->
         IO.puts(:stderr, "unknown tet command: #{unknown}")
         IO.puts(:stderr, "run `tet help` for available scaffold commands")
@@ -332,6 +338,135 @@ defmodule Tet.CLI do
       {:error, reason} ->
         IO.puts(:stderr, "tet ask failed: #{Render.error(reason)}")
         1
+    end
+  end
+
+  # ── Prompt Lab commands ──────────────────────────────────────────────────
+
+  defp prompt_lab([]) do
+    IO.puts(:stderr, "usage: tet prompt-lab (refine | presets | dimensions)")
+    64
+  end
+
+  defp prompt_lab(["refine" | args]) do
+    case extract_prompt_lab_opts(args, []) do
+      {:ok, opts, prompt_parts} ->
+        prompt = Enum.join(prompt_parts, " ") |> String.trim()
+
+        if prompt == "" do
+          IO.puts(:stderr, "usage: tet prompt-lab refine [--preset PRESET] [--json] PROMPT")
+          64
+        else
+          preset_id = Keyword.get(opts, :preset_id, "general")
+          json_mode? = Keyword.get(opts, :json, false)
+
+          case Tet.PromptLab.refine(prompt, preset: preset_id) do
+            {:ok, refinement} ->
+              output =
+                if json_mode? do
+                  Render.prompt_lab_refinement_json(refinement)
+                else
+                  Render.prompt_lab_refinement(refinement)
+                end
+
+              IO.puts(output)
+              0
+
+            {:error, reason} ->
+              IO.puts(:stderr, "prompt-lab refine failed: #{inspect(reason)}")
+              1
+          end
+        end
+
+      {:error, message} ->
+        IO.puts(:stderr, message)
+        IO.puts(:stderr, "usage: tet prompt-lab refine [--preset PRESET] [--json] PROMPT")
+        64
+    end
+  end
+
+  defp prompt_lab(["presets" | args]) do
+    json_mode? = "--json" in args
+    presets = Tet.PromptLab.presets()
+
+    output =
+      if json_mode? do
+        Render.prompt_lab_presets_json(presets)
+      else
+        Render.prompt_lab_presets(presets)
+      end
+
+    IO.puts(output)
+    0
+  end
+
+  defp prompt_lab(["dimensions" | args]) do
+    json_mode? = "--json" in args
+    dimensions = Tet.PromptLab.quality_dimensions()
+
+    output =
+      if json_mode? do
+        Render.prompt_lab_dimensions_json(dimensions)
+      else
+        Render.prompt_lab_dimensions(dimensions)
+      end
+
+    IO.puts(output)
+    0
+  end
+
+  defp prompt_lab(_args) do
+    IO.puts(:stderr, "usage: tet prompt-lab (refine | presets | dimensions)")
+    64
+  end
+
+  defp extract_prompt_lab_opts(["--preset", preset_id | rest], opts) do
+    extract_prompt_lab_opts(rest, [{:preset_id, preset_id} | opts])
+  end
+
+  defp extract_prompt_lab_opts(["--preset"], _opts) do
+    {:error, "--preset requires a preset id"}
+  end
+
+  defp extract_prompt_lab_opts(["--preset" <> _invalid], _opts) do
+    {:error, "--preset requires a preset id"}
+  end
+
+  defp extract_prompt_lab_opts(["--json" | rest], opts) do
+    extract_prompt_lab_opts(rest, [{:json, true} | opts])
+  end
+
+  defp extract_prompt_lab_opts(prompt_parts, opts) when is_list(prompt_parts) do
+    {:ok, Enum.reverse(opts), prompt_parts}
+  end
+
+  # ── Command correction commands ───────────────────────────────────────────
+
+  defp correct([]) do
+    IO.puts(:stderr, "usage: tet correct [--json] COMMAND")
+    64
+  end
+
+  defp correct(args) do
+    json_mode? = "--json" in args
+    parts = Enum.reject(args, &(&1 == "--json"))
+    command = Enum.join(parts, " ") |> String.trim()
+
+    if command == "" do
+      IO.puts(:stderr, "usage: tet correct [--json] COMMAND")
+      64
+    else
+      suggestions = Tet.Command.Correction.suggest(command, %{})
+
+      output =
+        if json_mode? do
+          Render.command_suggestions_json(suggestions)
+        else
+          Render.command_suggestions(suggestions)
+        end
+
+      IO.puts(output)
+      0
     end
   end
 end
