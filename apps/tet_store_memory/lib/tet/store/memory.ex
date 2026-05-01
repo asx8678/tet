@@ -438,6 +438,8 @@ defmodule Tet.Store.Memory do
 
   @impl true
   def log_error(attrs, _opts) when is_map(attrs) do
+    attrs = Tet.Store.Helpers.ensure_created_at(attrs)
+
     with {:ok, error_entry} <- Tet.ErrorLog.new(attrs) do
       Agent.update(__MODULE__, fn state ->
         put_in(state, [:errors, error_entry.id], error_entry)
@@ -475,7 +477,7 @@ defmodule Tet.Store.Memory do
           {{:error, :error_not_found}, state}
 
         error_entry ->
-          resolved_at = DateTime.utc_now() |> DateTime.to_iso8601()
+          resolved_at = DateTime.utc_now()
           resolved = Tet.ErrorLog.resolve(error_entry, resolved_at)
           new_state = put_in(state, [:errors, error_id], resolved)
           {{:ok, resolved}, new_state}
@@ -487,6 +489,8 @@ defmodule Tet.Store.Memory do
 
   @impl true
   def enqueue_repair(attrs, _opts) when is_map(attrs) do
+    attrs = Tet.Store.Helpers.ensure_created_at(attrs)
+
     with {:ok, repair} <- Tet.Repair.new(attrs) do
       Agent.update(__MODULE__, fn state ->
         put_in(state, [:repairs, repair.id], repair)
@@ -510,10 +514,10 @@ defmodule Tet.Store.Memory do
           {{:ok, nil}, state}
 
         [%Tet.Repair{} = repair | _rest] ->
-          updated_at = DateTime.utc_now() |> DateTime.to_iso8601()
-          in_progress = %{repair | status: :in_progress, updated_at: updated_at}
-          new_state = put_in(state, [:repairs, repair.id], in_progress)
-          {{:ok, in_progress}, new_state}
+          now = DateTime.utc_now()
+          running = %{repair | status: :running, started_at: now}
+          new_state = put_in(state, [:repairs, repair.id], running)
+          {{:ok, running}, new_state}
       end
     end)
   end
@@ -527,10 +531,14 @@ defmodule Tet.Store.Memory do
           {{:error, :repair_not_found}, state}
 
         repair ->
-          updated_at = DateTime.utc_now() |> DateTime.to_iso8601()
-          updated = merge_repair_attrs(repair, attrs, updated_at)
-          new_state = put_in(state, [:repairs, repair_id], updated)
-          {{:ok, updated}, new_state}
+          case Tet.Store.Helpers.merge_repair_attrs(repair, attrs) do
+            {:ok, updated} ->
+              new_state = put_in(state, [:repairs, repair_id], updated)
+              {{:ok, updated}, new_state}
+
+            {:error, reason} ->
+              {{:error, reason}, state}
+          end
       end
     end)
   end
@@ -542,8 +550,8 @@ defmodule Tet.Store.Memory do
 
     repairs =
       Agent.get(__MODULE__, fn state -> Map.values(state.repairs) end)
-      |> maybe_filter_by_session(session_id)
-      |> maybe_filter_by_status(status)
+      |> Tet.Store.Helpers.maybe_filter_by_session(session_id)
+      |> Tet.Store.Helpers.maybe_filter_by_status(status)
 
     {:ok, repairs}
   end
@@ -658,30 +666,6 @@ defmodule Tet.Store.Memory do
           end
       end
     end)
-  end
-
-  defp maybe_filter_by_session(repairs, nil), do: repairs
-
-  defp maybe_filter_by_session(repairs, session_id) do
-    Enum.filter(repairs, &(&1.session_id == session_id))
-  end
-
-  defp maybe_filter_by_status(repairs, nil), do: repairs
-
-  defp maybe_filter_by_status(repairs, status) do
-    Enum.filter(repairs, &(&1.status == status))
-  end
-
-  defp merge_repair_attrs(%Tet.Repair{} = repair, attrs, updated_at) do
-    %{
-      repair
-      | status: Map.get(attrs, :status, Map.get(attrs, "status", repair.status)),
-        result: Map.get(attrs, :result, Map.get(attrs, "result", repair.result)),
-        description:
-          Map.get(attrs, :description, Map.get(attrs, "description", repair.description)),
-        context: Map.get(attrs, :context, Map.get(attrs, "context", repair.context)),
-        updated_at: updated_at
-    }
   end
 
   defp generate_id do

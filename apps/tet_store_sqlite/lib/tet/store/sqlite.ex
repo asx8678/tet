@@ -340,6 +340,7 @@ defmodule Tet.Store.SQLite do
 
   @impl true
   def log_error(attrs, opts) when is_map(attrs) and is_list(opts) do
+    attrs = Tet.Store.Helpers.ensure_created_at(attrs)
     path = error_log_path(opts)
 
     with {:ok, error_entry} <- Tet.ErrorLog.new(attrs),
@@ -381,7 +382,7 @@ defmodule Tet.Store.SQLite do
           {:error, :error_not_found}
 
         error_entry ->
-          resolved_at = DateTime.utc_now() |> DateTime.to_iso8601()
+          resolved_at = DateTime.utc_now()
           resolved = Tet.ErrorLog.resolve(error_entry, resolved_at)
           remaining = Enum.reject(errors, &(&1.id == error_id)) ++ [resolved]
 
@@ -397,6 +398,7 @@ defmodule Tet.Store.SQLite do
 
   @impl true
   def enqueue_repair(attrs, opts) when is_map(attrs) and is_list(opts) do
+    attrs = Tet.Store.Helpers.ensure_created_at(attrs)
     path = repairs_path(opts)
 
     with {:ok, repair} <- Tet.Repair.new(attrs),
@@ -413,18 +415,19 @@ defmodule Tet.Store.SQLite do
 
     with {:ok, repairs} <- read_repairs(path) do
       repairs
-      |> Enum.find(&(&1.status == :pending))
+      |> Enum.filter(&(&1.status == :pending))
+      |> Enum.sort_by(& &1.created_at)
       |> case do
-        nil ->
+        [] ->
           {:ok, nil}
 
-        %Tet.Repair{} = repair ->
-          updated_at = DateTime.utc_now() |> DateTime.to_iso8601()
-          in_progress = %{repair | status: :in_progress, updated_at: updated_at}
-          remaining = Enum.reject(repairs, &(&1.id == repair.id)) ++ [in_progress]
+        [%Tet.Repair{} = repair | _rest] ->
+          now = DateTime.utc_now()
+          running = %{repair | status: :running, started_at: now}
+          remaining = Enum.reject(repairs, &(&1.id == repair.id)) ++ [running]
 
           with {:ok, :ok} <- rewrite_jsonl(path, remaining, &Tet.Repair.to_map/1) do
-            {:ok, in_progress}
+            {:ok, running}
           end
       end
     end
@@ -443,12 +446,16 @@ defmodule Tet.Store.SQLite do
           {:error, :repair_not_found}
 
         repair ->
-          updated_at = DateTime.utc_now() |> DateTime.to_iso8601()
-          updated = merge_repair_attrs(repair, attrs, updated_at)
-          remaining = Enum.reject(repairs, &(&1.id == repair_id)) ++ [updated]
+          case Tet.Store.Helpers.merge_repair_attrs(repair, attrs) do
+            {:ok, updated} ->
+              remaining = Enum.reject(repairs, &(&1.id == repair_id)) ++ [updated]
 
-          with {:ok, :ok} <- rewrite_jsonl(path, remaining, &Tet.Repair.to_map/1) do
-            {:ok, updated}
+              with {:ok, :ok} <- rewrite_jsonl(path, remaining, &Tet.Repair.to_map/1) do
+                {:ok, updated}
+              end
+
+            {:error, reason} ->
+              {:error, reason}
           end
       end
     end
@@ -462,8 +469,8 @@ defmodule Tet.Store.SQLite do
 
       filtered =
         repairs
-        |> maybe_filter_by_session(session_id)
-        |> maybe_filter_by_status(status)
+        |> Tet.Store.Helpers.maybe_filter_by_session(session_id)
+        |> Tet.Store.Helpers.maybe_filter_by_status(status)
 
       {:ok, filtered}
     end
@@ -660,30 +667,6 @@ defmodule Tet.Store.SQLite do
 
   defp match_task?(artifact, task_id) do
     artifact.task_id == task_id
-  end
-
-  defp maybe_filter_by_session(repairs, nil), do: repairs
-
-  defp maybe_filter_by_session(repairs, session_id) do
-    Enum.filter(repairs, &(&1.session_id == session_id))
-  end
-
-  defp maybe_filter_by_status(repairs, nil), do: repairs
-
-  defp maybe_filter_by_status(repairs, status) do
-    Enum.filter(repairs, &(&1.status == status))
-  end
-
-  defp merge_repair_attrs(%Tet.Repair{} = repair, attrs, updated_at) do
-    %{
-      repair
-      | status: Map.get(attrs, :status, Map.get(attrs, "status", repair.status)),
-        result: Map.get(attrs, :result, Map.get(attrs, "result", repair.result)),
-        description:
-          Map.get(attrs, :description, Map.get(attrs, "description", repair.description)),
-        context: Map.get(attrs, :context, Map.get(attrs, "context", repair.context)),
-        updated_at: updated_at
-    }
   end
 
   defp rewrite_jsonl(path, records, to_map_fn) do
