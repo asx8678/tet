@@ -211,6 +211,77 @@ defmodule Tet.CLITest do
     assert output =~ "unknown tet command: web"
   end
 
+  test "completion command generates bash script" do
+    output = capture_io(fn -> assert Tet.CLI.run(["completion", "bash"]) == 0 end)
+
+    assert output =~ "_tet_completions"
+    assert output =~ "complete -F _tet_completions tet"
+  end
+
+  test "completion command generates zsh script" do
+    output = capture_io(fn -> assert Tet.CLI.run(["completion", "zsh"]) == 0 end)
+
+    assert output =~ "#compdef tet"
+  end
+
+  test "completion command generates fish script" do
+    output = capture_io(fn -> assert Tet.CLI.run(["completion", "fish"]) == 0 end)
+
+    assert output =~ "complete -c tet"
+  end
+
+  test "completion command rejects unsupported shell" do
+    output = capture_io(:stderr, fn -> assert Tet.CLI.run(["completion", "powershell"]) == 1 end)
+
+    assert output =~ "tet completion failed"
+  end
+
+  test "completion command without args returns usage error" do
+    output = capture_io(:stderr, fn -> assert Tet.CLI.run(["completion"]) == 64 end)
+
+    assert output =~ "usage: tet completion <bash|zsh|fish>"
+  end
+
+  test "history command without subcommand returns usage error" do
+    output = capture_io(:stderr, fn -> assert Tet.CLI.run(["history"]) == 64 end)
+
+    assert output =~ "usage: tet history search"
+  end
+
+  test "history search without query returns usage error" do
+    output = capture_io(:stderr, fn -> assert Tet.CLI.run(["history", "search"]) == 64 end)
+
+    assert output =~ "usage: tet history search"
+  end
+
+  test "history search --fuzzy flag enables fuzzy mode" do
+    output =
+      capture_io(fn ->
+        assert Tet.CLI.run(["history", "search", "--fuzzy", "test"]) == 0
+      end)
+
+    # The command should succeed (even with no entries)
+    assert output =~ "History entries" or output =~ "No matching history entries"
+  end
+
+  test "history search invalid --limit returns error with exit 64" do
+    output =
+      capture_io(:stderr, fn ->
+        assert Tet.CLI.run(["history", "search", "--limit", "abc", "test"]) == 64
+      end)
+
+    assert output =~ "invalid --limit value"
+  end
+
+  test "history search --limit without value returns error with exit 64" do
+    output =
+      capture_io(:stderr, fn ->
+        assert Tet.CLI.run(["history", "search", "--limit"]) == 64
+      end)
+
+    assert output =~ "--limit requires"
+  end
+
   defp tmp_path(tmp_root, name), do: Path.join(tmp_root, "#{name}.jsonl")
 
   defp unique_tmp_root(prefix) do

@@ -14,6 +14,8 @@ defmodule Tet.CLI.Render do
       tet sessions                         List persisted sessions
       tet session show SESSION_ID          Show a session and its messages
       tet doctor                           Check config/store/provider/release health
+      tet completion <bash|zsh|fish>        Generate shell completion scripts
+      tet history search [--fuzzy] [--limit N] QUERY  Search prompt history (default: substring; --fuzzy: fuzzy)
       tet help                             Show this help
     """
   end
