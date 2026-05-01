@@ -138,7 +138,10 @@ defmodule Tet.Tool.Contract do
   @doc "Builds a validated contract from atom or string keyed attributes."
   @spec new(map()) :: {:ok, t()} | {:error, term()}
   def new(attrs) when is_map(attrs) do
-    normalized = normalize_keys(attrs)
+    normalized =
+      attrs
+      |> normalize_keys()
+      |> normalize_list_values()
 
     with :ok <- reject_unknown_fields(normalized),
          :ok <- require_fields(normalized),
@@ -170,8 +173,8 @@ defmodule Tet.Tool.Contract do
          :ok <- validate_binary(:description, contract.description),
          :ok <- validate_read_only(contract),
          :ok <- validate_boolean(:interactive, contract.interactive),
-         :ok <- validate_non_empty_list(:modes, contract.modes),
-         :ok <- validate_non_empty_list(:task_categories, contract.task_categories),
+         :ok <- validate_atom_list(:modes, contract.modes),
+         :ok <- validate_atom_list(:task_categories, contract.task_categories),
          :ok <- validate_aliases(contract.aliases),
          :ok <- validate_approval(contract.approval),
          :ok <- validate_schema(:input_schema, contract.input_schema),
@@ -198,9 +201,33 @@ defmodule Tet.Tool.Contract do
     Map.new(attrs, fn {key, value} -> {normalize_key(key), value} end)
   end
 
+  @atom_list_fields [:modes, :task_categories]
+
   defp normalize_key(key) when is_atom(key), do: key
   defp normalize_key(key) when is_binary(key), do: Map.get(@field_names, key, key)
   defp normalize_key(key), do: key
+
+  # Normalize string elements in atom-valued list fields so the gate always
+  # sees a Contract.t() with atom modes and task_categories.
+  defp normalize_list_values(attrs) do
+    Enum.reduce(@atom_list_fields, attrs, fn field, acc ->
+      case Map.get(acc, field) do
+        list when is_list(list) ->
+          Map.put(acc, field, Enum.map(list, &normalize_list_element/1))
+
+        _ ->
+          acc
+      end
+    end)
+  end
+
+  defp normalize_list_element(value) when is_binary(value) do
+    String.to_existing_atom(value)
+  rescue
+    ArgumentError -> value
+  end
+
+  defp normalize_list_element(value), do: value
 
   defp reject_unknown_fields(attrs) do
     unknown =
@@ -239,8 +266,11 @@ defmodule Tet.Tool.Contract do
   defp validate_boolean(_field, value) when is_boolean(value), do: :ok
   defp validate_boolean(field, _value), do: invalid(field)
 
-  defp validate_non_empty_list(_field, [_head | _tail]), do: :ok
-  defp validate_non_empty_list(field, _value), do: invalid(field)
+  defp validate_atom_list(field, [_head | _tail] = list) do
+    if Enum.all?(list, &is_atom/1), do: :ok, else: invalid(field)
+  end
+
+  defp validate_atom_list(field, _value), do: invalid(field)
 
   defp validate_aliases(aliases) when is_list(aliases) do
     if Enum.all?(aliases, &(is_binary(&1) and &1 != "")) do

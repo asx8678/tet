@@ -13,6 +13,7 @@ defmodule Tet.Core do
     :events,
     :messages,
     :model_registry,
+    :plan_mode,
     :profile_registry,
     :prompts,
     :prompt_lab,
