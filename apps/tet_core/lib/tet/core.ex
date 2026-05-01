@@ -19,6 +19,7 @@ defmodule Tet.Core do
     :prompt_lab,
     :provider_behaviour,
     :store_behaviour,
+    :task_manager,
     :tool_contracts
   ]
 
