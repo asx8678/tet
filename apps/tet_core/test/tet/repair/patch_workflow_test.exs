@@ -101,7 +101,7 @@ defmodule Tet.Repair.PatchWorkflowTest do
 
     test "rejects empty approval_id" do
       {:ok, wf} = PatchWorkflow.new(@valid_attrs)
-      assert {:error, _} = PatchWorkflow.request_approval(wf, "")
+      assert {:error, :empty_approval_id} = PatchWorkflow.request_approval(wf, "")
     end
 
     test "rejects when not in pending_approval" do
@@ -134,7 +134,7 @@ defmodule Tet.Repair.PatchWorkflowTest do
 
     test "rejects empty approval_id" do
       {:ok, wf} = PatchWorkflow.new(@valid_attrs)
-      assert {:error, _} = PatchWorkflow.approve(wf, "")
+      assert {:error, :empty_approval_id} = PatchWorkflow.approve(wf, "")
     end
   end
 
@@ -181,7 +181,7 @@ defmodule Tet.Repair.PatchWorkflowTest do
       {:ok, wf} = PatchWorkflow.new(@valid_attrs)
       {:ok, wf} = PatchWorkflow.approve(wf, "apr_001")
 
-      assert {:error, _} = PatchWorkflow.take_checkpoint(wf, "")
+      assert {:error, :empty_checkpoint_id} = PatchWorkflow.take_checkpoint(wf, "")
     end
   end
 
@@ -402,8 +402,6 @@ defmodule Tet.Repair.PatchWorkflowTest do
   describe "terminal_statuses/0" do
     test "returns terminal statuses" do
       assert PatchWorkflow.terminal_statuses() == [
-               :succeeded,
-               :failed,
                :rejected,
                :rolled_back
              ]

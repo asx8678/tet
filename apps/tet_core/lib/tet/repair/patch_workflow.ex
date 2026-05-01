@@ -15,6 +15,10 @@ defmodule Tet.Repair.PatchWorkflow do
       :failed           → :rolled_back (via `rollback/1`)
       :succeeded        → :rolled_back (via `rollback/1`)
 
+  Truly terminal statuses (no further transitions): `:rejected` and `:rolled_back`.
+  Note that `:succeeded` and `:failed` can still transition to `:rolled_back`,
+  so they are *not* terminal.
+
   This module is pure data and pure functions. It does not execute patches,
   touch the filesystem, persist events, or manage processes.
   """
@@ -31,7 +35,7 @@ defmodule Tet.Repair.PatchWorkflow do
     :rolled_back
   ]
 
-  @terminal_statuses [:succeeded, :failed, :rejected, :rolled_back]
+  @terminal_statuses [:rejected, :rolled_back]
 
   @enforce_keys [:id, :repair_id, :plan]
   defstruct [
@@ -79,7 +83,12 @@ defmodule Tet.Repair.PatchWorkflow do
   @spec statuses() :: [status()]
   def statuses, do: @statuses
 
-  @doc "Returns terminal statuses (no further transitions)."
+  @doc """
+  Returns terminal statuses (no further transitions).
+
+  Only `:rejected` and `:rolled_back` are truly terminal —
+  `:succeeded` and `:failed` can still transition to `:rolled_back`.
+  """
   @spec terminal_statuses() :: [status()]
   def terminal_statuses, do: @terminal_statuses
 
@@ -122,6 +131,9 @@ defmodule Tet.Repair.PatchWorkflow do
     {:ok, %__MODULE__{wf | approval_id: approval_id}}
   end
 
+  def request_approval(%__MODULE__{status: :pending_approval}, ""),
+    do: {:error, :empty_approval_id}
+
   def request_approval(%__MODULE__{status: status}, _approval_id) do
     {:error, {:invalid_transition, :request_approval, status}}
   end
@@ -136,6 +148,8 @@ defmodule Tet.Repair.PatchWorkflow do
       when is_binary(approval_id) and approval_id != "" do
     {:ok, %__MODULE__{wf | status: :approved, approval_id: approval_id}}
   end
+
+  def approve(%__MODULE__{status: :pending_approval}, ""), do: {:error, :empty_approval_id}
 
   def approve(%__MODULE__{status: status}, _approval_id) do
     {:error, {:invalid_transition, :approve, status}}
@@ -165,6 +179,8 @@ defmodule Tet.Repair.PatchWorkflow do
       when is_binary(checkpoint_id) and checkpoint_id != "" do
     {:ok, %__MODULE__{wf | checkpoint_id: checkpoint_id}}
   end
+
+  def take_checkpoint(%__MODULE__{status: :approved}, ""), do: {:error, :empty_checkpoint_id}
 
   def take_checkpoint(%__MODULE__{status: status}, _checkpoint_id) do
     {:error, {:invalid_transition, :take_checkpoint, status}}
