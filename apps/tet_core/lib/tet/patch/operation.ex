@@ -116,13 +116,13 @@ defmodule Tet.Patch.Operation do
     end)
   end
 
-  defp normalize_key(key) when is_atom(key), do: key
-
   @known_keys [:kind, :file_path, :content, :replacements, :old_str, :new_str, :expected_hash]
 
   @doc "Returns the list of known/allowlisted operation keys."
   @spec known_keys() :: [atom()]
   def known_keys, do: @known_keys
+
+  defp normalize_key(key) when is_atom(key), do: key
 
   defp normalize_key(key) when is_binary(key) do
     case key do
@@ -203,10 +203,12 @@ defmodule Tet.Patch.Operation do
     content = Map.get(attrs, :content)
     replacements = Map.get(attrs, :replacements)
     old_str = Map.get(attrs, :old_str)
+    new_str = Map.get(attrs, :new_str)
 
     has_content = is_binary(content) and content != ""
     has_replacements = is_list(replacements) and replacements != []
     has_old_str = is_binary(old_str) and old_str != ""
+    has_new_str = is_binary(new_str) and new_str != ""
 
     cond do
       not has_content and not has_replacements and not has_old_str ->
@@ -214,6 +216,9 @@ defmodule Tet.Patch.Operation do
 
       has_replacements and has_old_str ->
         {:error, {:invalid_operation, :modify_with_both_replacements_and_old_str}}
+
+      has_old_str and not has_new_str ->
+        {:error, {:invalid_operation, :modify_requires_new_str}}
 
       has_replacements and not valid_replacements?(replacements) ->
         {:error, {:invalid_operation, :invalid_replacements}}

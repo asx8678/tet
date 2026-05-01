@@ -117,8 +117,13 @@ defmodule Tet.Runtime.Tools.Patch do
     with {:ok, pre_snapshots, pre_existing} <- capture_pre_snapshots(patch, workspace_root),
          {:ok, applied} <-
            execute_operations(patch, workspace_root, Keyword.get(opts, :timeout_ms, 10_000)) do
-      # Step 4 — Verifier hook
-      verifier_output = run_verifier(Keyword.get(opts, :verifier), opts, tool_call_id, task_id)
+      # Step 4 — Verifier hook (skip if explicitly requested)
+      verifier_output =
+        if Keyword.get(opts, :skip_verifier, false) do
+          nil
+        else
+          run_verifier(Keyword.get(opts, :verifier), opts, tool_call_id, task_id)
+        end
 
       verifier_passed = verifier_passed?(verifier_output)
 

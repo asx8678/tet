@@ -88,6 +88,15 @@ defmodule Tet.Patch.OperationTest do
                Operation.new(%{kind: :modify, file_path: "lib/file.ex"})
     end
 
+    test "rejects modify with old_str but no new_str" do
+      assert {:error, {:invalid_operation, :modify_requires_new_str}} =
+               Operation.new(%{
+                 kind: :modify,
+                 file_path: "lib/file.ex",
+                 old_str: "foo"
+               })
+    end
+
     test "rejects modify with both replacements and old_str" do
       assert {:error, {:invalid_operation, :modify_with_both_replacements_and_old_str}} =
                Operation.new(%{
