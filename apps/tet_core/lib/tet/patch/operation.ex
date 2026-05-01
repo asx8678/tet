@@ -118,6 +118,12 @@ defmodule Tet.Patch.Operation do
 
   defp normalize_key(key) when is_atom(key), do: key
 
+  @known_keys [:kind, :file_path, :content, :replacements, :old_str, :new_str, :expected_hash]
+
+  @doc "Returns the list of known/allowlisted operation keys."
+  @spec known_keys() :: [atom()]
+  def known_keys, do: @known_keys
+
   defp normalize_key(key) when is_binary(key) do
     case key do
       "kind" -> :kind
@@ -131,7 +137,7 @@ defmodule Tet.Patch.Operation do
       "new-str" -> :new_str
       "expected_hash" -> :expected_hash
       "expected-hash" -> :expected_hash
-      _ -> String.to_atom(key)
+      _ -> :__unknown_key__
     end
   end
 

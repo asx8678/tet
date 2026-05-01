@@ -187,7 +187,7 @@ defmodule Tet.Patch do
       "task-id" -> :task_id
       "approval_id" -> :approval_id
       "approval-id" -> :approval_id
-      _ -> String.to_atom(key)
+      _ -> :__unknown_key__
     end
   end
 

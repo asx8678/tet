@@ -8,15 +8,18 @@ defmodule Tet.Runtime.Tools.Patch do
   2. **Pre-apply snapshot** — captures file content + sha256 hash before any
      modification, for rollback
   3. **Approval gating** — patch only applies if there's an approved approval
-     row for this `tool_call_id` (delegated to caller; this module checks the
-     flag)
-  4. **Apply** — executes file operations (create, modify, delete) with
-     per-operation error handling
-  5. **Verifier hook** — runs an optional verification (e.g., compile check,
+     row for this `tool_call_id`. Uses `ApprovalStatus` enum to prevent
+     caller-supplied spoofing of the `approved` flag.
+  4. **Path containment** — every file operation uses `PathResolver.resolve/2`
+     to enforce containment within `workspace_root`
+  5. **Apply** — executes file operations (create, modify, delete) with
+     per-operation error handling and partial-apply rollback
+  6. **Verifier hook** — runs an optional verification (e.g., compile check,
      test run via ShellPolicy)
-  6. **Rollback** — on verifier failure, restores files from pre-apply snapshots
-  7. **Post-apply snapshot** — captures content hash after successful apply
-  8. **Structured result** — returns `Tet.Patch.Result` with before/after
+  7. **Rollback** — on verifier failure OR operation failure, restores files
+     from pre-apply snapshots (partial-apply rollback)
+  8. **Post-apply snapshot** — captures content hash after successful apply
+  9. **Structured result** — returns `Tet.Patch.Result` with before/after
      snapshots, verifier output, and rollback status
 
   ## Usage
@@ -24,7 +27,7 @@ defmodule Tet.Runtime.Tools.Patch do
       {:ok, result} =
         Tet.Runtime.Tools.Patch.apply(
           patch,
-          approved: true,
+          approved: :approved,
           tool_call_id: "call_abc",
           workspace_root: "/workspace"
         )
@@ -34,13 +37,27 @@ defmodule Tet.Runtime.Tools.Patch do
   """
 
   alias Tet.Patch.{Operation, Result, Snapshot}
+  alias Tet.Runtime.Tools.PathResolver
+
+  @typedoc """
+  Approval statuses for gating. Prevents caller-supplied boolean spoofing.
+  """
+  @type approval_status :: :approved | :rejected | :pending | :unknown
+
+  @doc false
+  @spec valid_approval_status?(atom()) :: boolean()
+  def valid_approval_status?(status) do
+    status in [:approved, :rejected, :pending, :unknown]
+  end
 
   @doc """
   Applies a validated patch with the full lifecycle.
 
   ## Options
 
-    - `:approved` — boolean, must be `true` for apply to proceed
+    - `:approved` — approval status atom, must be `:approved` for apply to
+      proceed. Accepts `:approved`, `:rejected`, `:pending`, `:unknown`.
+      This replaces the old boolean `approved:` flag to prevent spoofing.
     - `:tool_call_id` — required, provider/runtime tool-call id
     - `:task_id` — optional task id
     - `:approval_id` — optional approval id
@@ -56,29 +73,48 @@ defmodule Tet.Runtime.Tools.Patch do
   def apply(%Tet.Patch{} = patch, opts) when is_list(opts) do
     tool_call_id = Keyword.fetch!(opts, :tool_call_id)
     workspace_root = Keyword.fetch!(opts, :workspace_root)
-    approved = Keyword.get(opts, :approved, false)
+    approved = Keyword.get(opts, :approved, :unknown)
     task_id = Keyword.get(opts, :task_id)
     approval_id = Keyword.get(opts, :approval_id)
 
-    # Step 1 — Approval gating: reject unapproved patches early
-    if not approved do
-      result =
-        Result.error(
-          tool_call_id: tool_call_id,
-          task_id: task_id,
-          approval_id: approval_id,
-          error: "Patch not approved: approval required before apply"
-        )
-
-      return_envelope({:ok, result})
-    else
+    # Step 1 — Approval gating: validate approval status using enum
+    with :ok <- validate_approval_status(approved, tool_call_id, task_id, approval_id) do
       # Step 2 — Pre-apply snapshot + Step 3 — Apply operations
       apply_result(patch, workspace_root, opts, tool_call_id, task_id, approval_id)
+    else
+      {:error, result} -> return_envelope({:ok, result})
     end
   end
 
+  defp validate_approval_status(:approved, _tool_call_id, _task_id, _approval_id), do: :ok
+
+  defp validate_approval_status(status, tool_call_id, task_id, approval_id)
+       when status in [:rejected, :pending, :unknown] do
+    result =
+      Result.error(
+        tool_call_id: tool_call_id,
+        task_id: task_id,
+        approval_id: approval_id,
+        error: "Patch not approved: approval status is #{inspect(status)}"
+      )
+
+    {:error, result}
+  end
+
+  defp validate_approval_status(invalid, tool_call_id, task_id, approval_id) do
+    result =
+      Result.error(
+        tool_call_id: tool_call_id,
+        task_id: task_id,
+        approval_id: approval_id,
+        error: "Patch not approved: invalid approval status #{inspect(invalid)}"
+      )
+
+    {:error, result}
+  end
+
   defp apply_result(patch, workspace_root, opts, tool_call_id, task_id, approval_id) do
-    with {:ok, pre_snapshots} <- capture_pre_snapshots(patch, workspace_root),
+    with {:ok, pre_snapshots, pre_existing} <- capture_pre_snapshots(patch, workspace_root),
          {:ok, applied} <-
            execute_operations(patch, workspace_root, Keyword.get(opts, :timeout_ms, 10_000)) do
       # Step 4 — Verifier hook
@@ -105,10 +141,10 @@ defmodule Tet.Runtime.Tools.Patch do
         return_envelope({:ok, result})
       else
         # Step 6 — Rollback on verifier failure
-        rollback_output = perform_rollback(patch, pre_snapshots, workspace_root)
+        rollback_output = perform_rollback(patch, pre_snapshots, pre_existing, workspace_root)
 
         result =
-          Result.success(
+          Result.error(
             tool_call_id: tool_call_id,
             task_id: task_id,
             approval_id: approval_id,
@@ -117,12 +153,36 @@ defmodule Tet.Runtime.Tools.Patch do
             post_snapshots: [],
             verifier_output: verifier_output,
             rolled_back: true,
-            rollback_output: rollback_output
+            rollback_output: rollback_output,
+            error: "Verifier failed"
           )
 
         return_envelope({:ok, result})
       end
     else
+      {:error, denial, applied_so_far, pre_snapshots, pre_existing} ->
+        # Issue 1 — Partial apply rollback: if operations were applied before
+        # failure, roll them back
+        rollback_output =
+          if applied_so_far != [] do
+            perform_rollback(patch, pre_snapshots, pre_existing, workspace_root)
+          end
+
+        result =
+          Result.error(
+            tool_call_id: tool_call_id,
+            task_id: task_id,
+            approval_id: approval_id,
+            applied: applied_so_far,
+            pre_snapshots: pre_snapshots,
+            post_snapshots: [],
+            error: Map.get(denial, :message, inspect(denial)),
+            rolled_back: rollback_output != nil,
+            rollback_output: rollback_output
+          )
+
+        return_envelope({:ok, result})
+
       {:error, denial} ->
         result =
           Result.error(
@@ -138,12 +198,20 @@ defmodule Tet.Runtime.Tools.Patch do
 
   @doc """
   Captures pre-apply snapshots for all operations that involve
-  existing files (modify, delete).
+  existing files (modify, delete). Also tracks files that already
+  exist before create operations (for correct rollback behavior).
 
-  Returns `{:ok, [Snapshot.t()]}` or `{:error, denial_map}`.
+  Returns `{:ok, [Snapshot.t()], [pre_existing_paths]}` or `{:error, denial_map}`.
+
+  The third element is a list of file paths (relative) that already existed
+  before the patch was applied. This is used during rollback to avoid deleting
+  files that existed prior to a :create operation (Issue 3).
   """
-  @spec capture_pre_snapshots(Tet.Patch.t(), Path.t()) :: {:ok, [Snapshot.t()]} | {:error, map()}
+  @spec capture_pre_snapshots(Tet.Patch.t(), Path.t()) ::
+          {:ok, [Snapshot.t()], [String.t()]} | {:error, map()}
   def capture_pre_snapshots(%Tet.Patch{} = patch, workspace_root) do
+    pre_existing = find_pre_existing(patch, workspace_root)
+
     snapshot_ops =
       Enum.filter(patch.operations, fn op ->
         op.kind in [:modify, :delete]
@@ -151,22 +219,45 @@ defmodule Tet.Runtime.Tools.Patch do
 
     result =
       Enum.reduce_while(snapshot_ops, {:ok, []}, fn op, {:ok, acc} ->
-        resolved_path = Path.join(workspace_root, op.file_path)
+        case resolve_path(op.file_path, workspace_root) do
+          {:ok, resolved_path} ->
+            case read_file_safe(resolved_path) do
+              {:ok, content} ->
+                snapshot = Snapshot.pre_apply(op.file_path, content)
+                {:cont, {:ok, [snapshot | acc]}}
 
-        case read_file_safe(resolved_path) do
-          {:ok, content} ->
-            snapshot = Snapshot.pre_apply(op.file_path, content)
-            {:cont, {:ok, [snapshot | acc]}}
+              {:error, reason} ->
+                {:halt, {:error, denial_map(:read_error, reason, op.file_path)}}
+            end
 
-          {:error, reason} ->
-            {:halt, {:error, denial_map(:read_error, reason, op.file_path)}}
+          {:error, denial} ->
+            {:halt, {:error, denial}}
         end
       end)
 
     case result do
-      {:ok, snapshots} -> {:ok, Enum.reverse(snapshots)}
+      {:ok, snapshots} -> {:ok, Enum.reverse(snapshots), pre_existing}
       {:error, _} = error -> error
     end
+  end
+
+  @doc """
+  Finds files that already exist at paths targeted by :create operations.
+
+  This is used by rollback to avoid deleting files that existed before
+  the patch was applied (Issue 3).
+  """
+  @spec find_pre_existing(Tet.Patch.t(), Path.t()) :: [String.t()]
+  def find_pre_existing(%Tet.Patch{} = patch, workspace_root) do
+    patch.operations
+    |> Enum.filter(&(&1.kind == :create))
+    |> Enum.filter(fn op ->
+      case resolve_path(op.file_path, workspace_root) do
+        {:ok, resolved_path} -> File.exists?(resolved_path)
+        {:error, _} -> false
+      end
+    end)
+    |> Enum.map(& &1.file_path)
   end
 
   @doc """
@@ -178,22 +269,26 @@ defmodule Tet.Runtime.Tools.Patch do
   def capture_post_snapshots(%Tet.Patch{} = patch, workspace_root) do
     result =
       Enum.reduce_while(patch.operations, {:ok, []}, fn op, {:ok, acc} ->
-        resolved_path = Path.join(workspace_root, op.file_path)
+        case resolve_path(op.file_path, workspace_root) do
+          {:ok, resolved_path} ->
+            case op.kind do
+              :delete ->
+                # Deleted files have no post-apply snapshot
+                {:cont, {:ok, acc}}
 
-        case op.kind do
-          :delete ->
-            # Deleted files have no post-apply snapshot
-            {:cont, {:ok, acc}}
+              _ ->
+                case read_file_safe(resolved_path) do
+                  {:ok, content} ->
+                    snapshot = Snapshot.post_apply(op.file_path, content)
+                    {:cont, {:ok, [snapshot | acc]}}
 
-          _ ->
-            case read_file_safe(resolved_path) do
-              {:ok, content} ->
-                snapshot = Snapshot.post_apply(op.file_path, content)
-                {:cont, {:ok, [snapshot | acc]}}
-
-              {:error, reason} ->
-                {:halt, {:error, denial_map(:read_error, reason, op.file_path)}}
+                  {:error, reason} ->
+                    {:halt, {:error, denial_map(:read_error, reason, op.file_path)}}
+                end
             end
+
+          {:error, denial} ->
+            {:halt, {:error, denial}}
         end
       end)
 
@@ -207,43 +302,83 @@ defmodule Tet.Runtime.Tools.Patch do
   Executes all file operations in order.
 
   Each operation is applied individually. If an operation fails, the
-  entire apply is aborted and an error is returned.
+  entire apply is aborted and a partial-apply rollback is returned
+  so the caller can restore any already-applied operations.
 
-  Returns `{:ok, [applied_op_map]}` or `{:error, denial_map}`.
+  Returns `{:ok, [applied_op_map]}` or
+  `{:error, denial_map, applied_so_far, pre_snapshots, pre_existing}`.
   """
   @spec execute_operations(Tet.Patch.t(), Path.t(), pos_integer()) ::
-          {:ok, [map()]} | {:error, map()}
+          {:ok, [map()]}
+          | {:error, map(), [map()], [Snapshot.t()], [String.t()]}
   def execute_operations(%Tet.Patch{} = patch, workspace_root, timeout_ms \\ 10_000) do
+    # Re-capture pre-existing state so rollback info is available on failure
+    pre_existing = find_pre_existing(patch, workspace_root)
+
+    {pre_snapshots, _} =
+      patch.operations
+      |> Enum.filter(&(&1.kind in [:modify, :delete]))
+      |> Enum.reduce({[], []}, fn op, {acc, errors} ->
+        case resolve_path(op.file_path, workspace_root) do
+          {:ok, resolved_path} ->
+            case read_file_safe(resolved_path) do
+              {:ok, content} ->
+                {[Snapshot.pre_apply(op.file_path, content) | acc], errors}
+
+              _ ->
+                {acc, errors}
+            end
+
+          {:error, _} ->
+            {acc, errors}
+        end
+      end)
+
+    pre_snapshots = Enum.reverse(pre_snapshots)
+
     result =
       Enum.reduce_while(patch.operations, {:ok, []}, fn op, {:ok, acc} ->
-        resolved_path = Path.join(workspace_root, op.file_path)
+        case resolve_path(op.file_path, workspace_root) do
+          {:ok, resolved_path} ->
+            case execute_single_operation(op, resolved_path, timeout_ms) do
+              {:ok, applied_info} ->
+                {:cont, {:ok, [applied_info | acc]}}
 
-        case execute_single_operation(op, resolved_path, timeout_ms) do
-          {:ok, applied_info} ->
-            {:cont, {:ok, [applied_info | acc]}}
+              {:error, reason} ->
+                {:halt,
+                 {:error, denial_map(:apply_error, reason, op.file_path), Enum.reverse(acc),
+                  pre_snapshots, pre_existing}}
+            end
 
-          {:error, reason} ->
-            {:halt, {:error, denial_map(:apply_error, reason, op.file_path)}}
+          {:error, denial} ->
+            {:halt, {:error, denial, Enum.reverse(acc), pre_snapshots, pre_existing}}
         end
       end)
 
     case result do
       {:ok, applied} -> {:ok, Enum.reverse(applied)}
-      {:error, _} = error -> error
+      {:error, _, _, _, _} = error -> error
     end
   end
 
   @doc """
   Performs rollback by restoring files from pre-apply snapshots.
 
+  Accepts an additional `pre_existing` parameter — a list of file paths
+  (relative) that already existed before the patch was applied. Files
+  in this list will NOT be deleted during rollback of :create operations
+  (Issue 3).
+
   Returns a map with `{:restored, [path]}`, `{:failed, [{path, reason}]}`
   and `{:skipped, [path]}` lists. Rollback is intentionally best-effort:
   it tries all restorations and reports partial failures without
   aborting mid-rollback.
   """
-  @spec perform_rollback(Tet.Patch.t(), [Snapshot.t()], Path.t()) :: map()
-  def perform_rollback(%Tet.Patch{} = patch, pre_snapshots, workspace_root) do
+  @spec perform_rollback(Tet.Patch.t(), [Snapshot.t()], [String.t()], Path.t()) :: map()
+  def perform_rollback(%Tet.Patch{} = patch, pre_snapshots, pre_existing, workspace_root) do
     # Build a map of file_path -> pre_apply_snapshot for quick lookup
+    pre_existing_set = MapSet.new(pre_existing)
+
     snapshot_map =
       pre_snapshots
       |> Enum.filter(&(&1.captured_at == :pre_apply))
@@ -255,67 +390,79 @@ defmodule Tet.Runtime.Tools.Patch do
 
     Enum.reduce(patch.operations, %{restored: restored, failed: failed, skipped: skipped}, fn op,
                                                                                               acc ->
-      resolved_path = Path.join(workspace_root, op.file_path)
+      case resolve_path(op.file_path, workspace_root) do
+        {:ok, resolved_path} ->
+          case op.kind do
+            :create ->
+              # Remove created files on rollback — but only if they didn't
+              # exist before the patch (Issue 3)
+              if MapSet.member?(pre_existing_set, op.file_path) do
+                %{acc | skipped: [%{path: op.file_path, reason: :pre_existing} | acc.skipped]}
+              else
+                case File.rm(resolved_path) do
+                  :ok ->
+                    %{
+                      acc
+                      | restored: [%{path: op.file_path, action: :removed_created} | acc.restored]
+                    }
 
-      case op.kind do
-        :create ->
-          # Remove created files on rollback
-          case File.rm(resolved_path) do
-            :ok ->
-              %{acc | restored: [%{path: op.file_path, action: :removed_created} | acc.restored]}
+                  {:error, :enoent} ->
+                    %{acc | skipped: [%{path: op.file_path, reason: :not_found} | acc.skipped]}
 
-            {:error, :enoent} ->
-              %{acc | skipped: [%{path: op.file_path, reason: :not_found} | acc.skipped]}
-
-            {:error, reason} ->
-              %{acc | failed: [%{path: op.file_path, reason: reason} | acc.failed]}
-          end
-
-        :modify ->
-          # Restore from snapshot
-          case Map.get(snapshot_map, op.file_path) do
-            nil ->
-              %{acc | skipped: [%{path: op.file_path, reason: :no_snapshot} | acc.skipped]}
-
-            snapshot ->
-              case File.write(resolved_path, snapshot.content) do
-                :ok ->
-                  %{acc | restored: [%{path: op.file_path, action: :restored} | acc.restored]}
-
-                {:error, reason} ->
-                  %{acc | failed: [%{path: op.file_path, reason: reason} | acc.failed]}
+                  {:error, reason} ->
+                    %{acc | failed: [%{path: op.file_path, reason: reason} | acc.failed]}
+                end
               end
-          end
 
-        :delete ->
-          # Restore from snapshot (the file was deleted, so we need to recreate it)
-          case Map.get(snapshot_map, op.file_path) do
-            nil ->
-              %{acc | skipped: [%{path: op.file_path, reason: :no_snapshot} | acc.skipped]}
+            :modify ->
+              # Restore from snapshot
+              case Map.get(snapshot_map, op.file_path) do
+                nil ->
+                  %{acc | skipped: [%{path: op.file_path, reason: :no_snapshot} | acc.skipped]}
 
-            snapshot ->
-              # Ensure parent directory exists
-              parent = Path.dirname(resolved_path)
-
-              case File.mkdir_p(parent) do
-                :ok ->
+                snapshot ->
                   case File.write(resolved_path, snapshot.content) do
                     :ok ->
-                      %{
-                        acc
-                        | restored: [
-                            %{path: op.file_path, action: :restored_deleted} | acc.restored
-                          ]
-                      }
+                      %{acc | restored: [%{path: op.file_path, action: :restored} | acc.restored]}
 
                     {:error, reason} ->
                       %{acc | failed: [%{path: op.file_path, reason: reason} | acc.failed]}
                   end
+              end
 
-                {:error, reason} ->
-                  %{acc | failed: [%{path: op.file_path, reason: reason} | acc.failed]}
+            :delete ->
+              # Restore from snapshot (the file was deleted, so we need to recreate it)
+              case Map.get(snapshot_map, op.file_path) do
+                nil ->
+                  %{acc | skipped: [%{path: op.file_path, reason: :no_snapshot} | acc.skipped]}
+
+                snapshot ->
+                  # Ensure parent directory exists
+                  parent = Path.dirname(resolved_path)
+
+                  case File.mkdir_p(parent) do
+                    :ok ->
+                      case File.write(resolved_path, snapshot.content) do
+                        :ok ->
+                          %{
+                            acc
+                            | restored: [
+                                %{path: op.file_path, action: :restored_deleted} | acc.restored
+                              ]
+                          }
+
+                        {:error, reason} ->
+                          %{acc | failed: [%{path: op.file_path, reason: reason} | acc.failed]}
+                      end
+
+                    {:error, reason} ->
+                      %{acc | failed: [%{path: op.file_path, reason: reason} | acc.failed]}
+                  end
               end
           end
+
+        {:error, _denial} ->
+          %{acc | skipped: [%{path: op.file_path, reason: :path_resolution_failed} | acc.skipped]}
       end
     end)
   end
@@ -350,23 +497,32 @@ defmodule Tet.Runtime.Tools.Patch do
 
   # -- Private helpers --
 
+  defp resolve_path(rel_path, workspace_root) do
+    PathResolver.resolve(rel_path, workspace_root)
+  end
+
   defp execute_single_operation(
          %Operation{kind: :create, file_path: rel_path, content: content},
          resolved_path,
          _timeout_ms
        ) do
-    parent = Path.dirname(resolved_path)
-
-    with :ok <- File.mkdir_p(parent),
-         :ok <- File.write(resolved_path, content) do
-      {:ok,
-       %{
-         kind: :create,
-         file_path: rel_path,
-         bytes_written: byte_size(content)
-       }}
+    # Issue 3 — Reject :create if target file already exists
+    if File.exists?(resolved_path) do
+      {:error, "Create failed: file already exists at '#{rel_path}'"}
     else
-      {:error, reason} -> {:error, "Create failed: #{inspect(reason)}"}
+      parent = Path.dirname(resolved_path)
+
+      with :ok <- File.mkdir_p(parent),
+           :ok <- File.write(resolved_path, content) do
+        {:ok,
+         %{
+           kind: :create,
+           file_path: rel_path,
+           bytes_written: byte_size(content)
+         }}
+      else
+        {:error, reason} -> {:error, "Create failed: #{inspect(reason)}"}
+      end
     end
   end
 

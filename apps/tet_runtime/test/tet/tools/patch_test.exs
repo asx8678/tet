@@ -6,13 +6,15 @@ defmodule Tet.Runtime.Tools.PatchTest do
 
   setup do
     # Create a temporary workspace
-    tmp_dir = System.tmp_dir!() |> Path.join("tet_patch_test_#{System.unique_integer([:positive])}")
+    tmp_dir =
+      System.tmp_dir!() |> Path.join("tet_patch_test_#{System.unique_integer([:positive])}")
+
     File.mkdir_p!(tmp_dir)
     on_exit(fn -> File.rm_rf!(tmp_dir) end)
     %{workspace_root: tmp_dir}
   end
 
-  defp touch(path, content \\ "original content\n") do
+  defp touch(path, content) do
     parent = Path.dirname(path)
     File.mkdir_p!(parent)
     File.write!(path, content)
@@ -23,13 +25,15 @@ defmodule Tet.Runtime.Tools.PatchTest do
     test "creates a new file", %{workspace_root: root} do
       patch =
         Patch.propose!(%{
-          operations: [%{kind: :create, file_path: "lib/new.ex", content: "defmodule New do\nend\n"}],
+          operations: [
+            %{kind: :create, file_path: "lib/new.ex", content: "defmodule New do\nend\n"}
+          ],
           workspace_path: root
         })
 
       assert {:ok, result} =
                PatchExecutor.apply(patch,
-                 approved: true,
+                 approved: :approved,
                  tool_call_id: "call_1",
                  workspace_root: root
                )
@@ -38,6 +42,28 @@ defmodule Tet.Runtime.Tools.PatchTest do
       assert result.rolled_back == false
       assert File.exists?(Path.join(root, "lib/new.ex"))
       assert File.read!(Path.join(root, "lib/new.ex")) == "defmodule New do\nend\n"
+    end
+
+    test "rejects :create if target file already exists", %{workspace_root: root} do
+      touch(Path.join(root, "lib/existing.ex"), "i exist\n")
+
+      patch =
+        Patch.propose!(%{
+          operations: [%{kind: :create, file_path: "lib/existing.ex", content: "overwrite me\n"}],
+          workspace_path: root
+        })
+
+      assert {:ok, result} =
+               PatchExecutor.apply(patch,
+                 approved: :approved,
+                 tool_call_id: "call_overwrite",
+                 workspace_root: root
+               )
+
+      assert result.ok == false
+      assert result.error =~ "file already exists"
+      # Content should remain unchanged
+      assert File.read!(Path.join(root, "lib/existing.ex")) == "i exist\n"
     end
 
     test "modifies an existing file with full content", %{workspace_root: root} do
@@ -52,7 +78,7 @@ defmodule Tet.Runtime.Tools.PatchTest do
 
       assert {:ok, result} =
                PatchExecutor.apply(patch,
-                 approved: true,
+                 approved: :approved,
                  tool_call_id: "call_2",
                  workspace_root: root
                )
@@ -80,7 +106,7 @@ defmodule Tet.Runtime.Tools.PatchTest do
 
       assert {:ok, _result} =
                PatchExecutor.apply(patch,
-                 approved: true,
+                 approved: :approved,
                  tool_call_id: "call_3",
                  workspace_root: root
                )
@@ -106,7 +132,7 @@ defmodule Tet.Runtime.Tools.PatchTest do
 
       assert {:ok, _result} =
                PatchExecutor.apply(patch,
-                 approved: true,
+                 approved: :approved,
                  tool_call_id: "call_4",
                  workspace_root: root
                )
@@ -127,7 +153,7 @@ defmodule Tet.Runtime.Tools.PatchTest do
 
       assert {:ok, _result} =
                PatchExecutor.apply(patch,
-                 approved: true,
+                 approved: :approved,
                  tool_call_id: "call_5",
                  workspace_root: root
                )
@@ -144,13 +170,32 @@ defmodule Tet.Runtime.Tools.PatchTest do
 
       assert {:ok, result} =
                PatchExecutor.apply(patch,
-                 approved: false,
+                 approved: :rejected,
                  tool_call_id: "call_no_approval",
                  workspace_root: root
                )
 
       assert result.ok == false
       assert result.error =~ "not approved"
+    end
+
+    test "rejects unknown approval status", %{workspace_root: root} do
+      patch =
+        Patch.propose!(%{
+          operations: [%{kind: :create, file_path: "lib/new.ex", content: "x"}],
+          workspace_path: root
+        })
+
+      # The old boolean `true` is not a valid approval status atom
+      assert {:ok, result} =
+               PatchExecutor.apply(patch,
+                 approved: true,
+                 tool_call_id: "call_spoof",
+                 workspace_root: root
+               )
+
+      assert result.ok == false
+      assert result.error =~ "invalid approval status"
     end
 
     test "captures pre-apply snapshots", %{workspace_root: root} do
@@ -166,7 +211,7 @@ defmodule Tet.Runtime.Tools.PatchTest do
 
       assert {:ok, result} =
                PatchExecutor.apply(patch,
-                 approved: true,
+                 approved: :approved,
                  tool_call_id: "call_snap",
                  workspace_root: root
                )
@@ -190,7 +235,7 @@ defmodule Tet.Runtime.Tools.PatchTest do
 
       assert {:ok, result} =
                PatchExecutor.apply(patch,
-                 approved: true,
+                 approved: :approved,
                  tool_call_id: "call_post",
                  workspace_root: root
                )
@@ -219,7 +264,7 @@ defmodule Tet.Runtime.Tools.PatchTest do
 
       assert {:ok, result} =
                PatchExecutor.apply(patch,
-                 approved: true,
+                 approved: :approved,
                  tool_call_id: "call_multi",
                  workspace_root: root
                )
@@ -244,19 +289,20 @@ defmodule Tet.Runtime.Tools.PatchTest do
           workspace_path: root
         })
 
-      # Use a verifier that always fails
       verifier = {__MODULE__, :failing_verifier, []}
 
       assert {:ok, result} =
                PatchExecutor.apply(patch,
-                 approved: true,
+                 approved: :approved,
                  tool_call_id: "call_rollback",
                  workspace_root: root,
                  verifier: verifier
                )
 
-      assert result.ok == true
+      # Issue 2 — Verifier failure must return ok: false
+      assert result.ok == false
       assert result.rolled_back == true
+      assert result.error == "Verifier failed"
       assert result.rollback_output != nil
 
       # File should be restored to original
@@ -276,13 +322,14 @@ defmodule Tet.Runtime.Tools.PatchTest do
 
       assert {:ok, result} =
                PatchExecutor.apply(patch,
-                 approved: true,
+                 approved: :approved,
                  tool_call_id: "call_rollback_create",
                  workspace_root: root,
                  verifier: verifier
                )
 
-      assert result.ok == true
+      # Issue 2 — Verifier failure must return ok: false
+      assert result.ok == false
       assert result.rolled_back == true
 
       # Created file should be removed
@@ -304,17 +351,80 @@ defmodule Tet.Runtime.Tools.PatchTest do
 
       assert {:ok, result} =
                PatchExecutor.apply(patch,
-                 approved: true,
+                 approved: :approved,
                  tool_call_id: "call_rollback_delete",
                  workspace_root: root,
                  verifier: verifier
                )
 
-      assert result.ok == true
+      # Issue 2 — Verifier failure must return ok: false
+      assert result.ok == false
       assert result.rolled_back == true
 
       # Deleted file should be restored
       assert File.read!(Path.join(root, "lib/to_restore.ex")) == "content to restore\n"
+    end
+
+    test "does not delete pre-existing file on create+rollback", %{workspace_root: root} do
+      # Issue 3 — :create on existing file is rejected; but if somehow created
+      # (e.g. via multi-op where a create target file was already there),
+      # rollback must not delete it. Here we test the verifier-failure path
+      # where a create happened on a pre-existing file.
+      touch(Path.join(root, "lib/preexisting.ex"), "i was here first\n")
+
+      patch =
+        Patch.propose!(%{
+          operations: [
+            %{kind: :create, file_path: "lib/preexisting.ex", content: "new content\n"}
+          ],
+          workspace_path: root
+        })
+
+      # The create is rejected because the file already exists
+      assert {:ok, result} =
+               PatchExecutor.apply(patch,
+                 approved: :approved,
+                 tool_call_id: "call_preexisting",
+                 workspace_root: root
+               )
+
+      assert result.ok == false
+      assert result.error =~ "file already exists"
+
+      # Pre-existing file must remain intact
+      assert File.read!(Path.join(root, "lib/preexisting.ex")) == "i was here first\n"
+    end
+
+    test "partial apply rolls back previous operations on failure", %{workspace_root: root} do
+      # Issue 1 — If operation 2 fails, operation 1 must be rolled back
+      touch(Path.join(root, "lib/to_modify.ex"), "original content\n")
+      touch(Path.join(root, "lib/to_fail.ex"), "some content\n")
+
+      # Op 1: modify succeeds. Op 2: modify with old_str that doesn't match.
+      # This passes validation but fails at execution time.
+      patch =
+        Patch.propose!(%{
+          operations: [
+            %{kind: :modify, file_path: "lib/to_modify.ex", content: "modified\n"},
+            %{kind: :modify, file_path: "lib/to_fail.ex", old_str: "NONEXISTENT", new_str: "x"}
+          ],
+          workspace_path: root
+        })
+
+      assert {:ok, result} =
+               PatchExecutor.apply(patch,
+                 approved: :approved,
+                 tool_call_id: "call_partial",
+                 workspace_root: root
+               )
+
+      # Operation 2 should fail (old_str not found) and trigger rollback
+      assert result.ok == false
+      assert result.rolled_back == true
+      assert result.rollback_output != nil
+
+      # File from operation 1 must be restored to original
+      assert File.read!(Path.join(root, "lib/to_modify.ex")) == "original content\n"
     end
 
     test "passes verifier without rollback", %{workspace_root: root} do
@@ -332,7 +442,7 @@ defmodule Tet.Runtime.Tools.PatchTest do
 
       assert {:ok, result} =
                PatchExecutor.apply(patch,
-                 approved: true,
+                 approved: :approved,
                  tool_call_id: "call_verify_ok",
                  workspace_root: root,
                  verifier: verifier
@@ -359,7 +469,7 @@ defmodule Tet.Runtime.Tools.PatchTest do
 
       assert {:ok, result} =
                PatchExecutor.apply(patch,
-                 approved: true,
+                 approved: :approved,
                  tool_call_id: "call_skip_v",
                  workspace_root: root,
                  verifier: verifier,
@@ -385,7 +495,7 @@ defmodule Tet.Runtime.Tools.PatchTest do
           workspace_path: root
         })
 
-      assert {:ok, snapshots} = PatchExecutor.capture_pre_snapshots(patch, root)
+      assert {:ok, snapshots, pre_existing} = PatchExecutor.capture_pre_snapshots(patch, root)
       assert length(snapshots) == 2
 
       a_snap = Enum.find(snapshots, &(&1.file_path == "lib/a.ex"))
@@ -393,6 +503,9 @@ defmodule Tet.Runtime.Tools.PatchTest do
 
       b_snap = Enum.find(snapshots, &(&1.file_path == "lib/b.ex"))
       assert b_snap.content == "content b\n"
+
+      # No create ops, so pre_existing should be empty
+      assert pre_existing == []
     end
 
     test "skips snapshots for create operations", %{workspace_root: root} do
@@ -404,18 +517,36 @@ defmodule Tet.Runtime.Tools.PatchTest do
           workspace_path: root
         })
 
-      assert {:ok, snapshots} = PatchExecutor.capture_pre_snapshots(patch, root)
+      assert {:ok, snapshots, pre_existing} = PatchExecutor.capture_pre_snapshots(patch, root)
       assert snapshots == []
+      # create target does not exist, so pre_existing is empty
+      assert pre_existing == []
+    end
+
+    test "tracks pre-existing files for create operations", %{workspace_root: root} do
+      touch(Path.join(root, "lib/already_there.ex"), "i exist\n")
+
+      patch =
+        Patch.propose!(%{
+          operations: [
+            %{kind: :create, file_path: "lib/already_there.ex", content: "new\n"}
+          ],
+          workspace_path: root
+        })
+
+      assert {:ok, snapshots, pre_existing} = PatchExecutor.capture_pre_snapshots(patch, root)
+      assert snapshots == []
+      # pre_existing should include the create target that already has a file
+      assert "lib/already_there.ex" in pre_existing
     end
   end
 
-  describe "perform_rollback/3" do
+  describe "perform_rollback/4" do
     test "restores modified files from snapshots", %{workspace_root: root} do
       file_path = "lib/restore.ex"
       abs_path = Path.join(root, file_path)
       touch(abs_path, "original\n")
 
-      # Capture pre-apply snapshot
       pre_snapshot = Tet.Patch.Snapshot.pre_apply(file_path, "original\n")
 
       # Now modify the file
@@ -427,7 +558,7 @@ defmodule Tet.Runtime.Tools.PatchTest do
           workspace_path: root
         })
 
-      rollback_output = PatchExecutor.perform_rollback(patch, [pre_snapshot], root)
+      rollback_output = PatchExecutor.perform_rollback(patch, [pre_snapshot], [], root)
 
       assert length(rollback_output.restored) == 1
       assert hd(rollback_output.restored).path == file_path
@@ -449,13 +580,39 @@ defmodule Tet.Runtime.Tools.PatchTest do
           workspace_path: root
         })
 
-      rollback_output = PatchExecutor.perform_rollback(patch, [], root)
+      rollback_output = PatchExecutor.perform_rollback(patch, [], [], root)
 
       assert length(rollback_output.restored) == 1
       assert hd(rollback_output.restored).path == file_path
 
       # Created file should be removed
       refute File.exists?(abs_path)
+    end
+
+    test "does not delete pre-existing file on rollback of create", %{workspace_root: root} do
+      # Issue 3 — When a :create targets a file that already existed before
+      # the patch, rollback must not delete it.
+      file_path = "lib/existing_rollback.ex"
+      abs_path = Path.join(root, file_path)
+      touch(abs_path, "i was here before the patch\n")
+
+      patch =
+        Patch.propose!(%{
+          operations: [%{kind: :create, file_path: file_path, content: "new\n"}],
+          workspace_path: root
+        })
+
+      # Pre-existing list contains this file
+      rollback_output = PatchExecutor.perform_rollback(patch, [], [file_path], root)
+
+      # File should be skipped, not deleted
+      assert length(rollback_output.skipped) == 1
+      assert hd(rollback_output.skipped).path == file_path
+      assert hd(rollback_output.skipped).reason == :pre_existing
+
+      # File must still exist
+      assert File.exists?(abs_path)
+      assert File.read!(abs_path) == "i was here before the patch\n"
     end
 
     test "handles idempotent rollback (safe to run twice)", %{workspace_root: root} do
@@ -473,10 +630,10 @@ defmodule Tet.Runtime.Tools.PatchTest do
         })
 
       # First rollback
-      _first = PatchExecutor.perform_rollback(patch, [pre_snapshot], root)
+      _first = PatchExecutor.perform_rollback(patch, [pre_snapshot], [], root)
 
       # Second rollback should be safe
-      second = PatchExecutor.perform_rollback(patch, [pre_snapshot], root)
+      second = PatchExecutor.perform_rollback(patch, [pre_snapshot], [], root)
 
       assert length(second.restored) == 1
       # File should still be "original\n"
@@ -505,6 +662,22 @@ defmodule Tet.Runtime.Tools.PatchTest do
       verifier = {__MODULE__, :raising_verifier, []}
       result = PatchExecutor.run_verifier(verifier, [], "call_1", "task_1")
       assert result.error =~ "raised"
+    end
+  end
+
+  describe "valid_approval_status?/1" do
+    test "accepts valid status atoms" do
+      assert PatchExecutor.valid_approval_status?(:approved)
+      assert PatchExecutor.valid_approval_status?(:rejected)
+      assert PatchExecutor.valid_approval_status?(:pending)
+      assert PatchExecutor.valid_approval_status?(:unknown)
+    end
+
+    test "rejects invalid statuses" do
+      refute PatchExecutor.valid_approval_status?(true)
+      refute PatchExecutor.valid_approval_status?(true)
+      refute PatchExecutor.valid_approval_status?(:yes)
+      refute PatchExecutor.valid_approval_status?("approved")
     end
   end
 
