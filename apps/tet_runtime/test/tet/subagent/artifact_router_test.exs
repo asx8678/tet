@@ -1,5 +1,5 @@
 defmodule Tet.Runtime.Subagent.ArtifactRouterTest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
 
   alias Tet.Runtime.Subagent.ArtifactRouter
   alias Tet.Subagent.Result
@@ -35,15 +35,26 @@ defmodule Tet.Runtime.Subagent.ArtifactRouterTest do
     end
   end
 
-  setup do
+  setup_all do
     case Process.whereis(TestStore) do
       nil ->
         {:ok, _pid} = TestStore.start_link([])
 
       _pid ->
-        TestStore.clear()
+        :ok
     end
 
+    on_exit(fn ->
+      if pid = Process.whereis(TestStore) do
+        Agent.stop(pid)
+      end
+    end)
+
+    :ok
+  end
+
+  setup do
+    TestStore.clear()
     :ok
   end
 
