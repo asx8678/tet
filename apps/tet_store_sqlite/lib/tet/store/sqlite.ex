@@ -19,6 +19,7 @@ defmodule Tet.Store.SQLite do
   @default_artifacts_path ".tet/artifacts.jsonl"
   @default_checkpoints_path ".tet/checkpoints.jsonl"
   @default_error_log_path ".tet/error_log.jsonl"
+  @default_workflow_steps_path ".tet/workflow_steps.jsonl"
   @default_repairs_path ".tet/repairs.jsonl"
 
   @impl true
@@ -229,15 +230,29 @@ defmodule Tet.Store.SQLite do
   # -- BD-0034: Artifacts --
 
   @impl true
-  def create_artifact(attrs) when is_map(attrs) do
-    with {:ok, artifact} <- Tet.ShellPolicy.Artifact.new(attrs) do
+  def create_artifact(attrs, opts) when is_map(attrs) and is_list(opts) do
+    path = artifacts_path(opts)
+
+    with {:ok, artifact} <- Tet.ShellPolicy.Artifact.new(attrs),
+         line = artifact |> Tet.ShellPolicy.Artifact.to_map() |> encode_json!(),
+         :ok <- File.mkdir_p(Path.dirname(path)),
+         :ok <- File.write(path, [line, "\n"], [:append]) do
       {:ok, artifact}
     end
   end
 
   @impl true
-  def get_artifact(artifact_id) when is_binary(artifact_id) do
-    {:error, {:not_implemented, :get_artifact}}
+  def get_artifact(artifact_id, opts) when is_binary(artifact_id) and is_list(opts) do
+    path = artifacts_path(opts)
+
+    with {:ok, artifacts} <- read_artifacts(path) do
+      artifacts
+      |> Enum.find(&(&1.id == artifact_id))
+      |> case do
+        nil -> {:error, :artifact_not_found}
+        artifact -> {:ok, artifact}
+      end
+    end
   end
 
   @impl true
@@ -304,19 +319,21 @@ defmodule Tet.Store.SQLite do
 
   @impl true
   def append_step(attrs, opts) when is_map(attrs) and is_list(opts) do
-    with {:ok, step} <- Tet.WorkflowStep.new(attrs) do
+    path = workflow_steps_path(opts)
+
+    with {:ok, step} <- Tet.WorkflowStep.new(attrs),
+         line = step |> Tet.WorkflowStep.to_map() |> encode_json!(),
+         :ok <- File.mkdir_p(Path.dirname(path)),
+         :ok <- File.write(path, [line, "\n"], [:append]) do
       {:ok, step}
     end
   end
 
   @impl true
   def get_steps(session_id, opts) when is_binary(session_id) and is_list(opts) do
-    # For the JSONL adapter, steps are tracked per-workflow, not in a dedicated
-    # session-indexed file. This returns empty until workflow-backed step persistence
-    # is fully implemented (see §12 durable execution).
-    _session_id = session_id
-    _opts = opts
-    {:ok, []}
+    with {:ok, steps} <- read_workflow_steps(workflow_steps_path(opts)) do
+      {:ok, Enum.filter(steps, &(&1.session_id == session_id))}
+    end
   end
 
   # -- BD-0034: Error Log --
@@ -367,8 +384,11 @@ defmodule Tet.Store.SQLite do
           resolved_at = DateTime.utc_now() |> DateTime.to_iso8601()
           resolved = Tet.ErrorLog.resolve(error_entry, resolved_at)
           remaining = Enum.reject(errors, &(&1.id == error_id)) ++ [resolved]
-          rewrite_jsonl(path, remaining, &Tet.ErrorLog.to_map/1)
-          {:ok, resolved}
+
+          case rewrite_jsonl(path, remaining, &Tet.ErrorLog.to_map/1) do
+            {:ok, :ok} -> {:ok, resolved}
+            {:error, reason} -> {:error, {:resolve_error_write_failed, reason}}
+          end
       end
     end
   end
@@ -617,12 +637,23 @@ defmodule Tet.Store.SQLite do
     )
   end
 
+  defp read_workflow_steps(path) do
+    read_json_lines(
+      path,
+      &Tet.WorkflowStep.from_map/1,
+      :workflow_step_read_failed,
+      {:invalid_workflow_step_record, :not_a_map}
+    )
+  end
+
   defp decode_artifact(map) when is_map(map) do
     Tet.ShellPolicy.Artifact.new(map)
   end
 
   defp match_session?(artifact, session_id) do
-    artifact.task_id == session_id or artifact.tool_call_id == session_id
+    artifact.session_id == session_id or
+      artifact.task_id == session_id or
+      artifact.tool_call_id == session_id
   end
 
   defp match_task?(_artifact, nil), do: true
@@ -842,6 +873,13 @@ defmodule Tet.Store.SQLite do
       System.get_env("TET_REPAIRS_PATH") ||
       Application.get_env(:tet_runtime, :repairs_path) ||
       @default_repairs_path
+  end
+
+  defp workflow_steps_path(opts) do
+    Keyword.get(opts, :workflow_steps_path) ||
+      System.get_env("TET_WORKFLOW_STEPS_PATH") ||
+      Application.get_env(:tet_runtime, :workflow_steps_path) ||
+      @default_workflow_steps_path
   end
 
   defp default_autosave_path(message_path) do

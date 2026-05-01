@@ -177,10 +177,10 @@ defmodule Tet.Store do
   @callback list_approvals(session_id(), options()) :: result([approval()])
 
   @doc "Creates an artifact metadata row and, adapter permitting, its content reference."
-  @callback create_artifact(artifact_attrs()) :: result(artifact())
+  @callback create_artifact(artifact_attrs(), options()) :: result(artifact())
 
   @doc "Fetches one artifact by id."
-  @callback get_artifact(artifact_id()) :: result(artifact())
+  @callback get_artifact(artifact_id(), options()) :: result(artifact())
 
   @doc "Appends an event to the per-session durable timeline."
   @callback emit_event(event_attrs()) :: result(persisted_event())

@@ -21,6 +21,8 @@ defmodule Tet.ShellPolicy.Artifact do
     :cwd,
     :duration_ms,
     :tool_call_id,
+    id: nil,
+    session_id: nil,
     task_id: nil,
     successful: false,
     metadata: %{}
@@ -36,6 +38,8 @@ defmodule Tet.ShellPolicy.Artifact do
           cwd: String.t(),
           duration_ms: non_neg_integer(),
           tool_call_id: String.t(),
+          id: String.t() | nil,
+          session_id: String.t() | nil,
           task_id: String.t() | nil,
           successful: boolean(),
           metadata: map()
@@ -61,9 +65,12 @@ defmodule Tet.ShellPolicy.Artifact do
          {:ok, cwd} <- fetch_string(attrs, :cwd),
          {:ok, duration_ms} <- fetch_duration(attrs),
          {:ok, tool_call_id} <- fetch_string(attrs, :tool_call_id),
+         {:ok, id} <- fetch_optional_string(attrs, :id),
+         {:ok, session_id} <- fetch_optional_string(attrs, :session_id),
          {:ok, task_id} <- fetch_optional_string(attrs, :task_id),
          {:ok, metadata} <- fetch_map(attrs, :metadata, %{}) do
       successful = exit_code == 0
+      id = id || tool_call_id
 
       {:ok,
        %__MODULE__{
@@ -75,6 +82,8 @@ defmodule Tet.ShellPolicy.Artifact do
          cwd: cwd,
          duration_ms: duration_ms,
          tool_call_id: tool_call_id,
+         id: id,
+         session_id: session_id,
          task_id: task_id,
          successful: successful,
          metadata: metadata
@@ -95,6 +104,7 @@ defmodule Tet.ShellPolicy.Artifact do
   @spec to_map(t()) :: map()
   def to_map(%__MODULE__{} = artifact) do
     %{
+      id: artifact.id,
       command: artifact.command,
       risk: Atom.to_string(artifact.risk),
       exit_code: artifact.exit_code,
@@ -104,6 +114,7 @@ defmodule Tet.ShellPolicy.Artifact do
       duration_ms: artifact.duration_ms,
       tool_call_id: artifact.tool_call_id,
       task_id: artifact.task_id,
+      session_id: artifact.session_id,
       successful: artifact.successful,
       metadata: artifact.metadata
     }

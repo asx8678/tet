@@ -123,11 +123,32 @@ defmodule Tet.ErrorLog do
     end
   end
 
+  @allowed_kinds [
+    :provider_error,
+    :tool_error,
+    :verification_error,
+    :auth_error,
+    :rate_limit_error,
+    :timeout_error,
+    :parse_error,
+    :policy_error,
+    :store_error,
+    :unknown_error
+  ]
+
   defp fetch_kind(attrs) do
+    allowed = @allowed_kinds
+
     case fetch_value(attrs, :kind) do
-      kind when is_atom(kind) and not is_nil(kind) -> {:ok, kind}
-      kind when is_binary(kind) and kind != "" -> {:ok, String.to_atom(kind)}
-      _ -> {:error, {:invalid_error_log_field, :kind}}
+      kind when is_atom(kind) and not is_nil(kind) ->
+        {:ok, kind}
+
+      kind when is_binary(kind) and kind != "" ->
+        atom = String.to_existing_atom(kind)
+        if atom in allowed, do: {:ok, atom}, else: {:error, {:invalid_error_log_field, :kind}}
+
+      _ ->
+        {:error, {:invalid_error_log_field, :kind}}
     end
   end
 

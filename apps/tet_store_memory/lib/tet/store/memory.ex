@@ -331,13 +331,10 @@ defmodule Tet.Store.Memory do
   # -- BD-0034: Artifacts --
 
   @impl true
-  def create_artifact(attrs) when is_map(attrs) do
+  def create_artifact(attrs, _opts) when is_map(attrs) do
     with {:ok, artifact} <- Tet.ShellPolicy.Artifact.new(attrs) do
-      # Use tool_call_id as the key since Artifact has no explicit id field
-      key = artifact.tool_call_id
-
       Agent.update(__MODULE__, fn state ->
-        put_in(state, [:artifacts, key], artifact)
+        put_in(state, [:artifacts, artifact.id], artifact)
       end)
 
       {:ok, artifact}
@@ -345,7 +342,7 @@ defmodule Tet.Store.Memory do
   end
 
   @impl true
-  def get_artifact(artifact_id) when is_binary(artifact_id) do
+  def get_artifact(artifact_id, _opts) when is_binary(artifact_id) do
     case Agent.get(__MODULE__, fn state -> Map.get(state.artifacts, artifact_id) end) do
       nil -> {:error, :artifact_not_found}
       artifact -> {:ok, artifact}
@@ -359,7 +356,9 @@ defmodule Tet.Store.Memory do
 
     filtered =
       Enum.filter(artifacts, fn artifact ->
-        artifact.task_id == session_id or artifact.tool_call_id == session_id
+        artifact.session_id == session_id or
+          artifact.task_id == session_id or
+          artifact.tool_call_id == session_id
       end)
 
     {:ok, filtered}
