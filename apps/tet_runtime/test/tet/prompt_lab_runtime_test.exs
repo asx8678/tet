@@ -61,8 +61,6 @@ defmodule Tet.PromptLabRuntimeTest do
   end
 
   defmodule Store do
-    @behaviour Tet.Store
-
     def start_link(_opts) do
       Agent.start_link(fn -> [] end, name: __MODULE__)
     end
@@ -71,56 +69,40 @@ defmodule Tet.PromptLabRuntimeTest do
       Agent.get(__MODULE__, &Enum.reverse/1)
     end
 
-    @impl true
     def boundary, do: %{application: :test, adapter: __MODULE__, status: :ok}
 
-    @impl true
     def health(_opts), do: {:ok, %{application: :test, adapter: __MODULE__, status: :ok}}
 
-    @impl true
     def save_prompt_history(history, _opts) do
       record({:save_prompt_history, history})
       {:ok, history}
     end
 
-    @impl true
     def list_prompt_history(_opts) do
       record(:list_prompt_history)
       {:ok, []}
     end
 
-    @impl true
     def fetch_prompt_history(history_id, _opts) do
       record({:fetch_prompt_history, history_id})
       {:error, :prompt_history_not_found}
     end
 
-    @impl true
     def save_message(_message, _opts), do: forbidden(:save_message)
 
-    @impl true
     def list_messages(_session_id, _opts), do: forbidden(:list_messages)
 
-    @impl true
     def list_sessions(_opts), do: forbidden(:list_sessions)
 
-    @impl true
     def fetch_session(_session_id, _opts), do: forbidden(:fetch_session)
 
-    @impl true
     def save_autosave(_autosave, _opts), do: forbidden(:save_autosave)
 
-    @impl true
     def load_autosave(_session_id, _opts), do: forbidden(:load_autosave)
 
-    @impl true
     def list_autosaves(_opts), do: forbidden(:list_autosaves)
 
-    @impl true
     def save_event(_event, _opts), do: forbidden(:save_event)
-
-    @impl true
-    def list_events(_session_id, _opts), do: forbidden(:list_events)
 
     defp forbidden(callback) do
       record({:forbidden, callback})
