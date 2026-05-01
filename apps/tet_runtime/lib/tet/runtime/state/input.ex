@@ -179,6 +179,8 @@ defmodule Tet.Runtime.State.Input do
          {:ok, blocked_by} <- fetch_status(request, :blocked_by, :idle, turn_statuses),
          {:ok, cache_policy} <- fetch_cache_policy(request),
          {:ok, metadata} <- fetch_map(request, :metadata, %{}) do
+      swap_id = fetch_optional_binary(request, :swap_id)
+
       normalized = %{
         from_profile: from_profile,
         to_profile: to_profile,
@@ -187,6 +189,12 @@ defmodule Tet.Runtime.State.Input do
         blocked_by: blocked_by,
         cache_policy: cache_policy
       }
+
+      normalized =
+        case swap_id do
+          {:ok, id} when is_binary(id) -> Map.put(normalized, :swap_id, id)
+          _ -> normalized
+        end
 
       {:ok, put_optional(normalized, :metadata, metadata, %{})}
     end

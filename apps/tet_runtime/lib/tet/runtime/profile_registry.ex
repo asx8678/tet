@@ -6,6 +6,20 @@ defmodule Tet.Runtime.ProfileRegistry do
   model registry for cross-reference checks, then delegate schema validation to
   `Tet.ProfileRegistry` in core. No provider calls, no tool execution, no sneaky
   runtime side effects. Good dog.
+
+  ## Profile resolution
+
+  Profiles are resolved by id from the registry JSON file. Each profile
+  descriptor includes its provider configuration, model assignment, tool
+  bindings, and overlay kind. Cross-reference validation against the model
+  registry ensures referenced models exist.
+
+  ## Path resolution order
+
+  1. `:profile_registry_path` option passed explicitly
+  2. `TET_PROFILE_REGISTRY_PATH` environment variable
+  3. `Application.get_env(:tet_runtime, :profile_registry_path)` app config
+  4. Bundled `priv/profile_registry.json` default
   """
 
   @env_path "TET_PROFILE_REGISTRY_PATH"
