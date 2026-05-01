@@ -104,27 +104,59 @@ defmodule Tet.Runtime.Subagent.ArtifactRouter do
   # ── Private helpers ──────────────────────────────────────────────────
 
   defp persist_artifact(store_adapter, store_opts, artifact_attrs) do
+    merged_attrs = apply_defaults(artifact_attrs)
+
     if function_exported?(store_adapter, :create_artifact, 2) do
-      store_adapter.create_artifact(artifact_attrs, store_opts)
+      case Tet.ShellPolicy.Artifact.new(merged_attrs) do
+        {:ok, artifact} -> store_adapter.create_artifact(artifact, store_opts)
+        {:error, reason} -> {:error, reason}
+      end
     else
       {:error, {:store_adapter_missing_callback, :create_artifact}}
     end
   end
 
+  defp apply_defaults(attrs) do
+    Map.merge(
+      %{
+        command: Map.get(attrs, :command, Map.get(attrs, "command", ["unknown"])),
+        risk: Map.get(attrs, :risk, Map.get(attrs, "risk", :medium)),
+        exit_code: Map.get(attrs, :exit_code, Map.get(attrs, "exit_code", 0)),
+        stdout: Map.get(attrs, :stdout, Map.get(attrs, "stdout", "")),
+        cwd: Map.get(attrs, :cwd, Map.get(attrs, "cwd", "/")),
+        duration_ms: Map.get(attrs, :duration_ms, Map.get(attrs, "duration_ms", 0)),
+        tool_call_id:
+          Map.get(attrs, :tool_call_id, Map.get(attrs, "tool_call_id", generate_artifact_id()))
+      },
+      attrs
+    )
+  end
+
+  @known_keys %{
+    "id" => :id,
+    "kind" => :kind,
+    "content" => :content,
+    "sha256" => :sha256,
+    "session_id" => :session_id,
+    "task_id" => :task_id,
+    "metadata" => :metadata,
+    "created_at" => :created_at,
+    "command" => :command,
+    "risk" => :risk,
+    "exit_code" => :exit_code,
+    "stdout" => :stdout,
+    "cwd" => :cwd,
+    "duration_ms" => :duration_ms,
+    "tool_call_id" => :tool_call_id,
+    "sha_256" => :sha256
+  }
+
+  defp normalize_key(key) when is_binary(key), do: Map.get(@known_keys, key, key)
+  defp normalize_key(key), do: key
+
   defp normalize_artifact_keys(artifact) when is_map(artifact) do
     Enum.reduce(artifact, %{}, fn {key, val}, acc ->
-      normalized_key = if is_binary(key), do: String.to_atom(key), else: key
-
-      # Map known string-keyed artifacts to expected atom keys
-      key =
-        case normalized_key do
-          :created_at -> :created_at
-          :sha256 -> :sha256
-          :sha_256 -> :sha256
-          other -> other
-        end
-
-      Map.put(acc, key, val)
+      Map.put(acc, normalize_key(key), val)
     end)
   end
 

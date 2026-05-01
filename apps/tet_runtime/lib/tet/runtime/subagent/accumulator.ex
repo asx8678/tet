@@ -95,6 +95,7 @@ defmodule Tet.Runtime.Subagent.Accumulator do
 
     state = %{
       initial_state: initial_state,
+      opts: opts,
       current_state: initial_state,
       collected: [],
       collected_count: 0,
@@ -108,19 +109,18 @@ defmodule Tet.Runtime.Subagent.Accumulator do
 
   @impl true
   def handle_cast({:collect, result}, state) do
-    case do_collect(result, state) do
-      {:ok, updated_state} ->
-        {:noreply, updated_state}
-
-      {:error, _reason} ->
-        # Log error but don't crash — collect errors are non-fatal
-        {:noreply, state}
-    end
+    # Store raw results; sorting & merging happens in finalize
+    {:noreply,
+     %{
+       state
+       | collected: [result | state.collected],
+         collected_count: state.collected_count + 1
+     }}
   end
 
   @impl true
-  def handle_cast(:reset, _state) do
-    {:ok, new_state} = init({%{}, []})
+  def handle_cast(:reset, state) do
+    {:ok, new_state} = init({state.initial_state, state.opts})
     {:noreply, new_state}
   end
 
@@ -129,9 +129,23 @@ defmodule Tet.Runtime.Subagent.Accumulator do
     if state.finalized do
       {:reply, {:ok, state.current_state}, state}
     else
-      case ResultMerge.validate(state.current_state) do
-        :ok ->
-          {:reply, {:ok, state.current_state}, %{state | finalized: true}}
+      merge_opts = [
+        strategy: state.merge_strategy,
+        on_scalar_conflict: state.on_scalar_conflict
+      ]
+
+      # Sort collected results by sequence/created_at, then merge sequentially
+      results = Enum.reverse(state.collected)
+
+      case ResultMerge.merge_list(state.initial_state, results, merge_opts) do
+        {:ok, merged} ->
+          case ResultMerge.validate(merged) do
+            :ok ->
+              {:reply, {:ok, merged}, %{state | current_state: merged, finalized: true}}
+
+            {:error, reason} ->
+              {:reply, {:error, reason}, state}
+          end
 
         {:error, reason} ->
           {:reply, {:error, reason}, state}
@@ -149,28 +163,5 @@ defmodule Tet.Runtime.Subagent.Accumulator do
     }
 
     {:reply, {:ok, status_map}, state}
-  end
-
-  # ── Private helpers ──────────────────────────────────────────────────
-
-  defp do_collect(result, state) do
-    merge_opts = [
-      strategy: state.merge_strategy,
-      on_scalar_conflict: state.on_scalar_conflict
-    ]
-
-    case ResultMerge.merge(state.current_state, result, merge_opts) do
-      {:ok, merged} ->
-        {:ok,
-         %{
-           state
-           | current_state: merged,
-             collected: [result | state.collected],
-             collected_count: state.collected_count + 1
-         }}
-
-      {:error, _reason} = error ->
-        error
-    end
   end
 end

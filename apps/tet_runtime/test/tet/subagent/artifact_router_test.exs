@@ -229,4 +229,79 @@ defmodule Tet.Runtime.Subagent.ArtifactRouterTest do
       assert {:error, :invalid_result} = ArtifactRouter.route(TestStore, [], "not_a_map")
     end
   end
+
+  describe "route/3 with real Tet.Store.Memory" do
+    setup do
+      {:ok, _started} = Application.ensure_all_started(:tet_store_memory)
+      Tet.Store.Memory.reset()
+      :ok
+    end
+
+    test "routes artifacts and stores them as proper Artifact structs" do
+      result = %{
+        "id" => "res_real_001",
+        "task_id" => "task_real_001",
+        "session_id" => "ses_real_001",
+        "output" => %{},
+        "status" => "success",
+        "artifacts" => [
+          %{"kind" => "stdout", "content" => "hello from real store"}
+        ]
+      }
+
+      assert {:ok, [artifact]} = ArtifactRouter.route(Tet.Store.Memory, [], result)
+
+      # Should be a proper Artifact struct
+      assert %Tet.ShellPolicy.Artifact{} = artifact
+      assert artifact.session_id == "ses_real_001"
+      assert artifact.task_id == "task_real_001"
+      assert artifact.command == ["unknown"]
+      assert artifact.risk == :medium
+      assert artifact.exit_code == 0
+      assert artifact.stdout == ""
+      assert artifact.cwd == "/"
+      assert artifact.duration_ms == 0
+      assert is_binary(artifact.tool_call_id)
+      assert artifact.metadata[:routed_from_subagent] == "res_real_001"
+    end
+
+    test "routes artifacts from Result struct through real store" do
+      {:ok, result} =
+        Result.new(%{
+          id: "res_real_002",
+          task_id: "task_real_002",
+          session_id: "ses_real_002",
+          output: %{},
+          status: :success,
+          created_at: ~U[2025-05-15 10:00:00Z],
+          artifacts: [
+            %{kind: "stdout", command: ["echo", "hi"], risk: :low, stdout: "hello output"}
+          ]
+        })
+
+      assert {:ok, [artifact]} = ArtifactRouter.route(Tet.Store.Memory, [], result)
+
+      assert %Tet.ShellPolicy.Artifact{} = artifact
+      assert artifact.command == ["echo", "hi"]
+      assert artifact.risk == :low
+      assert artifact.session_id == "ses_real_002"
+      assert artifact.stdout == "hello output"
+    end
+
+    test "returns error for artifact with invalid required fields" do
+      result = %{
+        "id" => "res_real_003",
+        "task_id" => "task_real_003",
+        "session_id" => "ses_real_003",
+        "output" => %{},
+        "status" => "success",
+        "artifacts" => [
+          %{"kind" => "bad", "command" => "not_a_list"}
+        ]
+      }
+
+      assert {:error, {:invalid_artifact_field, :command}} =
+               ArtifactRouter.route(Tet.Store.Memory, [], result)
+    end
+  end
 end

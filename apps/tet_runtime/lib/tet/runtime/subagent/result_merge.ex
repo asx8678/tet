@@ -28,6 +28,7 @@ defmodule Tet.Runtime.Subagent.ResultMerge do
       `:merge_maps` (default: `:first_wins`)
     * `:on_scalar_conflict` — when using `:merge_maps`, how to resolve scalar
       conflicts: `:first_wins` or `:last_wins` (default: `:first_wins`)
+    * `:sequence` — ordering hint for deterministic merge (default: 0)
 
   Returns `{:ok, merged_state}` or `{:error, reason}`.
   """
@@ -40,7 +41,8 @@ defmodule Tet.Runtime.Subagent.ResultMerge do
 
     with :ok <- validate_strategy(strategy),
          :ok <- validate_scalar_conflict(on_scalar_conflict),
-         {:ok, result_map} <- normalize_result(result) do
+         {:ok, result_map} <- normalize_result(result),
+         :ok <- validate_result_status(result_map) do
       merged =
         parent_state
         |> merge_output(result_map, strategy, on_scalar_conflict)
@@ -50,6 +52,50 @@ defmodule Tet.Runtime.Subagent.ResultMerge do
 
       {:ok, merged}
     end
+  end
+
+  @doc """
+  Merge a list of results into a parent state with deterministic ordering.
+
+  Results are sorted by `metadata.sequence` (ascending), then by
+  `metadata.created_at` (ascending) before merging. This ensures the same
+  set of results always produces the same final output regardless of
+  arrival order.
+
+  ## Options
+
+    Same as `merge/3`, plus:
+    * `:default_sequence` — default sequence value if missing (default: 0)
+
+  Returns `{:ok, merged_state}` or `{:error, reason}`.
+  """
+  @spec merge_list(map(), [map()], keyword()) :: {:ok, map()} | {:error, term()}
+  def merge_list(parent_state, results, opts \\ [])
+
+  def merge_list(parent_state, results, opts) when is_list(results) do
+    default_seq = Keyword.get(opts, :default_sequence, 0)
+
+    sorted =
+      results
+      |> Enum.with_index()
+      |> Enum.sort_by(fn {result, idx} ->
+        meta = result_key(result, :metadata, %{})
+        seq = Map.get(meta, :sequence, Map.get(meta, "sequence", default_seq))
+        created_at = Map.get(meta, :created_at, Map.get(meta, "created_at", idx))
+        {seq, created_at}
+      end)
+      |> Enum.map(fn {result, _idx} -> result end)
+
+    Enum.reduce_while(sorted, {:ok, parent_state}, fn result, {:ok, acc} ->
+      case merge(acc, result, opts) do
+        {:ok, merged} -> {:cont, {:ok, merged}}
+        {:error, _} = error -> {:halt, error}
+      end
+    end)
+  end
+
+  def merge_list(_parent_state, _results, _opts) do
+    {:error, :invalid_results_list}
   end
 
   @doc """
@@ -85,6 +131,19 @@ defmodule Tet.Runtime.Subagent.ResultMerge do
 
   defp validate_scalar_conflict(invalid),
     do: {:error, {:invalid_scalar_conflict_strategy, invalid}}
+
+  defp validate_result_status(result_map) do
+    case result_key(result_map, :status) do
+      nil ->
+        :ok
+
+      status ->
+        case normalize_status(status) do
+          :invalid -> {:error, {:invalid_status, status}}
+          _ -> :ok
+        end
+    end
+  end
 
   defp normalize_result(%Tet.Subagent.Result{} = result),
     do: {:ok, Tet.Subagent.Result.to_map(result)}
@@ -138,22 +197,27 @@ defmodule Tet.Runtime.Subagent.ResultMerge do
     current_status = Map.get(parent, :status) |> normalize_status()
     resolved = normalize_status(result_status)
 
-    if not is_nil(resolved) do
-      new_status =
-        case {current_status, resolved} do
-          {nil, status} -> status
-          {:failure, _} -> :failure
-          {:partial, :success} -> :partial
-          {:partial, :partial} -> :partial
-          {_, :failure} -> :failure
-          {_, :partial} -> :partial
-          {_, :success} -> :success
-          _ -> current_status
-        end
+    case resolved do
+      nil ->
+        parent
 
-      Map.put(parent, :status, new_status)
-    else
-      parent
+      :invalid ->
+        parent
+
+      status ->
+        new_status =
+          case {current_status, status} do
+            {nil, s} -> s
+            {:failure, _} -> :failure
+            {:partial, :success} -> :partial
+            {:partial, :partial} -> :partial
+            {_, :failure} -> :failure
+            {_, :partial} -> :partial
+            {_, :success} -> :success
+            _ -> current_status
+          end
+
+        Map.put(parent, :status, new_status)
     end
   end
 
@@ -175,10 +239,11 @@ defmodule Tet.Runtime.Subagent.ResultMerge do
 
   defp normalize_status(status) when is_atom(status), do: status
 
-  defp normalize_status(status) when is_binary(status),
-    do: String.to_existing_atom(status)
+  defp normalize_status("success"), do: :success
+  defp normalize_status("failure"), do: :failure
+  defp normalize_status("partial"), do: :partial
 
-  defp normalize_status(_status), do: nil
+  defp normalize_status(_status), do: :invalid
 
   # deep_merge_maps(left, right, on_scalar_conflict)
   # left = parent (earlier), right = result (later)
@@ -206,17 +271,37 @@ defmodule Tet.Runtime.Subagent.ResultMerge do
 
   defp normalize_output_keys(output) when is_map(output) do
     Enum.reduce(output, %{}, fn {key, val}, acc ->
-      normalized_key = if is_binary(key), do: String.to_existing_atom(key), else: key
+      normalized_key = normalize_output_key(key)
 
       case normalized_key do
         atom when is_atom(atom) -> Map.put(acc, atom, val)
         _ -> Map.put(acc, key, val)
       end
     end)
-  rescue
-    ArgumentError ->
-      output
   end
+
+  defp normalize_output_key(key) when is_binary(key) do
+    case key do
+      "id" -> :id
+      "kind" -> :kind
+      "content" -> :content
+      "sha256" -> :sha256
+      "session_id" -> :session_id
+      "task_id" -> :task_id
+      "metadata" -> :metadata
+      "created_at" -> :created_at
+      "command" -> :command
+      "risk" -> :risk
+      "exit_code" -> :exit_code
+      "stdout" -> :stdout
+      "cwd" -> :cwd
+      "duration_ms" -> :duration_ms
+      "tool_call_id" -> :tool_call_id
+      _ -> key
+    end
+  end
+
+  defp normalize_output_key(key), do: key
 
   defp validate_output(state) do
     case Map.get(state, :output) do
