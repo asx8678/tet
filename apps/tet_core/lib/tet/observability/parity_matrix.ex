@@ -39,7 +39,7 @@ defmodule Tet.Observability.ParityMatrix do
     %{
       domain: :session,
       web_view: "SessionLive.Show",
-      cli_command: "tet session <id>",
+      cli_command: "tet session show <id>",
       data_source: Tet.Store,
       fields: [:id, :status, :created_at, :model, :provider, :message_count, :title],
       status: :implemented
@@ -55,7 +55,7 @@ defmodule Tet.Observability.ParityMatrix do
     %{
       domain: :task,
       web_view: "TaskLive.Show",
-      cli_command: "tet task <id>",
+      cli_command: "tet task show <id>",
       data_source: Tet.Store,
       fields: [:id, :session_id, :title, :status, :created_at, :updated_at],
       status: :planned
@@ -79,7 +79,7 @@ defmodule Tet.Observability.ParityMatrix do
     %{
       domain: :error_log,
       web_view: "ErrorLogLive.Show",
-      cli_command: "tet error <id>",
+      cli_command: "tet error show <id>",
       data_source: Tet.Store,
       fields: [:id, :session_id, :kind, :message, :status, :stacktrace, :created_at],
       status: :planned
@@ -95,7 +95,7 @@ defmodule Tet.Observability.ParityMatrix do
     %{
       domain: :repair,
       web_view: "RepairLive.Show",
-      cli_command: "tet repair <id>",
+      cli_command: "tet repair show <id>",
       data_source: Tet.Store,
       fields: [:id, :error_log_id, :strategy, :status, :params, :result, :created_at],
       status: :planned

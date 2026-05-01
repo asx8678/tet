@@ -70,6 +70,15 @@ defmodule Tet.Observability.ParityMatrixTest do
     test "returns at least 12 entries per the parity spec" do
       assert length(ParityMatrix.entries()) >= 12
     end
+
+    test "implemented commands match real CLI syntax" do
+      implemented = ParityMatrix.entries() |> Enum.filter(&(&1.status == :implemented))
+      commands = Enum.map(implemented, & &1.cli_command)
+
+      assert "tet sessions" in commands
+      assert "tet session show <id>" in commands
+      assert "tet doctor" in commands
+    end
   end
 
   describe "coverage/0" do
