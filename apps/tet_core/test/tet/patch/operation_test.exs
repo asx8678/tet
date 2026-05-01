@@ -146,6 +146,110 @@ defmodule Tet.Patch.OperationTest do
 
       assert op.expected_hash == hash
     end
+
+    test "rejects expected_hash that is not 64-char hex" do
+      assert {:error, {:invalid_operation, :invalid_expected_hash}} =
+               Operation.new(%{
+                 kind: :modify,
+                 file_path: "lib/file.ex",
+                 old_str: "foo",
+                 new_str: "bar",
+                 expected_hash: "short"
+               })
+
+      assert {:error, {:invalid_operation, :invalid_expected_hash}} =
+               Operation.new(%{
+                 kind: :modify,
+                 file_path: "lib/file.ex",
+                 old_str: "foo",
+                 new_str: "bar",
+                 expected_hash: "nothex!" |> String.pad_trailing(64, "0")
+               })
+
+      assert {:error, {:invalid_operation, :invalid_expected_hash}} =
+               Operation.new(%{
+                 kind: :modify,
+                 file_path: "lib/file.ex",
+                 old_str: "foo",
+                 new_str: "bar",
+                 expected_hash: 12345
+               })
+
+      assert {:error, {:invalid_operation, :invalid_expected_hash}} =
+               Operation.new(%{
+                 kind: :delete,
+                 file_path: "lib/file.ex",
+                 expected_hash: "ggg"
+               })
+    end
+
+    test "rejects expected_hash on create with invalid format" do
+      assert {:error, {:invalid_operation, :invalid_expected_hash}} =
+               Operation.new(%{
+                 kind: :create,
+                 file_path: "lib/file.ex",
+                 content: "data",
+                 expected_hash: "bad"
+               })
+    end
+
+    test "allows create with empty string content" do
+      assert {:ok, op} =
+               Operation.new(%{
+                 kind: :create,
+                 file_path: "lib/empty.ex",
+                 content: ""
+               })
+
+      assert op.content == ""
+    end
+
+    test "allows modify with empty string content" do
+      assert {:ok, op} =
+               Operation.new(%{
+                 kind: :modify,
+                 file_path: "lib/empty.ex",
+                 content: ""
+               })
+
+      assert op.content == ""
+    end
+
+    test "allows modify with empty new_str in replacements" do
+      assert {:ok, _op} =
+               Operation.new(%{
+                 kind: :modify,
+                 file_path: "lib/file.ex",
+                 replacements: [%{old_str: "foo", new_str: ""}]
+               })
+    end
+
+    test "rejects replacement with non-binary new_str" do
+      assert {:error, {:invalid_operation, :invalid_replacements}} =
+               Operation.new(%{
+                 kind: :modify,
+                 file_path: "lib/file.ex",
+                 replacements: [%{old_str: "foo", new_str: 123}]
+               })
+    end
+
+    test "rejects replacement with empty old_str" do
+      assert {:error, {:invalid_operation, :invalid_replacements}} =
+               Operation.new(%{
+                 kind: :modify,
+                 file_path: "lib/file.ex",
+                 replacements: [%{old_str: "", new_str: "bar"}]
+               })
+    end
+
+    test "rejects replacement with non-binary old_str" do
+      assert {:error, {:invalid_operation, :invalid_replacements}} =
+               Operation.new(%{
+                 kind: :modify,
+                 file_path: "lib/file.ex",
+                 replacements: [%{old_str: 123, new_str: "bar"}]
+               })
+    end
   end
 
   describe "new!/1" do

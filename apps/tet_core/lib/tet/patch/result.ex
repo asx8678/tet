@@ -35,7 +35,8 @@ defmodule Tet.Patch.Result do
     applied: [],
     pre_snapshots: [],
     post_snapshots: [],
-    rolled_back: false
+    rolled_back: false,
+    errors: []
   ]
 
   @type t :: %__MODULE__{
@@ -49,7 +50,8 @@ defmodule Tet.Patch.Result do
           rolled_back: boolean(),
           rollback_output: map() | nil,
           error: String.t() | nil,
-          ok: boolean()
+          ok: boolean(),
+          errors: [tuple()]
         }
 
   @doc """
@@ -87,6 +89,7 @@ defmodule Tet.Patch.Result do
       rolled_back: Keyword.get(opts, :rolled_back, false),
       rollback_output: Keyword.get(opts, :rollback_output),
       error: Keyword.get(opts, :error, "Unknown error"),
+      errors: Keyword.get(opts, :errors, []),
       ok: false
     }
   end

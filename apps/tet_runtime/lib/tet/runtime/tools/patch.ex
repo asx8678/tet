@@ -165,6 +165,24 @@ defmodule Tet.Runtime.Tools.Patch do
         return_envelope({:ok, result})
       end
     else
+      {:hash_mismatch, path, expected, actual, applied_so_far, pre_snapshots, _pre_existing} ->
+        result =
+          Result.error(
+            tool_call_id: tool_call_id,
+            task_id: task_id,
+            approval_id: approval_id,
+            applied: applied_so_far,
+            pre_snapshots: pre_snapshots,
+            post_snapshots: [],
+            error: "Hash mismatch for #{path}: expected #{expected}, actual #{actual}",
+            errors: [
+              {:hash_mismatch, path, expected, actual}
+            ],
+            rolled_back: false
+          )
+
+        return_envelope({:ok, result})
+
       {:error, denial, applied_so_far, pre_snapshots, pre_existing} ->
         # Issue 1 — Partial apply rollback: if operations were applied before
         # failure, roll them back
@@ -316,6 +334,8 @@ defmodule Tet.Runtime.Tools.Patch do
   @spec execute_operations(Tet.Patch.t(), Path.t(), pos_integer()) ::
           {:ok, [map()]}
           | {:error, map(), [map()], [Snapshot.t()], [String.t()]}
+          | {:hash_mismatch, String.t(), String.t(), String.t(), [map()], [Snapshot.t()],
+             [String.t()]}
   def execute_operations(%Tet.Patch{} = patch, workspace_root, timeout_ms \\ 10_000) do
     # Re-capture pre-existing state so rollback info is available on failure
     pre_existing = find_pre_existing(patch, workspace_root)
@@ -349,6 +369,11 @@ defmodule Tet.Runtime.Tools.Patch do
               {:ok, applied_info} ->
                 {:cont, {:ok, [applied_info | acc]}}
 
+              {:error, {:hash_mismatch, path, expected, actual}} ->
+                {:halt,
+                 {:hash_mismatch, path, expected, actual, Enum.reverse(acc), pre_snapshots,
+                  pre_existing}}
+
               {:error, reason} ->
                 {:halt,
                  {:error, denial_map(:apply_error, reason, op.file_path), Enum.reverse(acc),
@@ -363,6 +388,7 @@ defmodule Tet.Runtime.Tools.Patch do
     case result do
       {:ok, applied} -> {:ok, Enum.reverse(applied)}
       {:error, _, _, _, _} = error -> error
+      {:hash_mismatch, _, _, _, _, _, _} = hm -> hm
     end
   end
 
@@ -537,13 +563,15 @@ defmodule Tet.Runtime.Tools.Patch do
            file_path: rel_path,
            content: content,
            replacements: nil,
-           old_str: nil
+           old_str: nil,
+           expected_hash: expected_hash
          },
          resolved_path,
          _timeout_ms
        )
        when is_binary(content) do
-    with :ok <- File.write(resolved_path, content) do
+    with :ok <- check_expected_hash(resolved_path, rel_path, expected_hash),
+         :ok <- File.write(resolved_path, content) do
       {:ok,
        %{
          kind: :modify,
@@ -552,6 +580,7 @@ defmodule Tet.Runtime.Tools.Patch do
          method: :full_content
        }}
     else
+      {:error, {:hash_mismatch, _, _, _}} = error -> error
       {:error, reason} -> {:error, "Modify failed: #{inspect(reason)}"}
     end
   end
@@ -562,13 +591,15 @@ defmodule Tet.Runtime.Tools.Patch do
            file_path: rel_path,
            old_str: old_str,
            new_str: new_str,
-           replacements: nil
+           replacements: nil,
+           expected_hash: expected_hash
          },
          resolved_path,
          _timeout_ms
        )
        when is_binary(old_str) and is_binary(new_str) do
     with {:ok, original} <- read_file_safe(resolved_path),
+         :ok <- check_expected_hash(resolved_path, rel_path, expected_hash, original),
          true <- String.contains?(original, old_str) do
       modified = String.replace(original, old_str, new_str, global: false)
 
@@ -584,17 +615,24 @@ defmodule Tet.Runtime.Tools.Patch do
         {:error, reason} -> {:error, "Modify failed: #{inspect(reason)}"}
       end
     else
+      {:error, {:hash_mismatch, _, _, _}} = error -> error
       {:error, _} = error -> error
       false -> {:error, "old_str not found in file"}
     end
   end
 
   defp execute_single_operation(
-         %Operation{kind: :modify, file_path: rel_path, replacements: replacements},
+         %Operation{
+           kind: :modify,
+           file_path: rel_path,
+           replacements: replacements,
+           expected_hash: expected_hash
+         },
          resolved_path,
          _timeout_ms
        ) do
-    with {:ok, original} <- read_file_safe(resolved_path) do
+    with {:ok, original} <- read_file_safe(resolved_path),
+         :ok <- check_expected_hash(resolved_path, rel_path, expected_hash, original) do
       modified =
         Enum.reduce(replacements, original, fn rep, acc ->
           old = Map.get(rep, :old_str, Map.get(rep, "old_str", ""))
@@ -618,24 +656,21 @@ defmodule Tet.Runtime.Tools.Patch do
         end
       end
     else
+      {:error, {:hash_mismatch, _, _, _}} = error -> error
       {:error, _} = error -> error
     end
   end
 
   defp execute_single_operation(
-         %Operation{kind: :delete, file_path: rel_path},
+         %Operation{kind: :delete, file_path: rel_path, expected_hash: expected_hash},
          resolved_path,
          _timeout_ms
        ) do
-    case File.rm(resolved_path) do
-      :ok ->
-        {:ok, %{kind: :delete, file_path: rel_path}}
-
-      {:error, :enoent} ->
-        {:ok, %{kind: :delete, file_path: rel_path, status: :already_absent}}
-
-      {:error, reason} ->
-        {:error, "Delete failed: #{inspect(reason)}"}
+    with :ok <- check_expected_hash(resolved_path, rel_path, expected_hash) do
+      do_delete(resolved_path, rel_path)
+    else
+      {:error, {:hash_mismatch, _, _, _}} = error -> error
+      {:error, _} = error -> error
     end
   end
 
@@ -662,6 +697,50 @@ defmodule Tet.Runtime.Tools.Patch do
   defp verifier_passed?(%{ok: false}), do: false
   defp verifier_passed?(%{"ok" => false}), do: false
   defp verifier_passed?(_), do: true
+
+  # -- Hash helpers --
+
+  defp file_hash(path) do
+    {:ok, content} = File.read(path)
+    :crypto.hash(:sha256, content) |> Base.encode16(case: :lower)
+  end
+
+  defp check_expected_hash(_resolved_path, _rel_path, nil), do: :ok
+
+  defp check_expected_hash(resolved_path, rel_path, expected_hash) do
+    actual_hash = file_hash(resolved_path)
+
+    if actual_hash == expected_hash do
+      :ok
+    else
+      {:error, {:hash_mismatch, rel_path, expected_hash, actual_hash}}
+    end
+  end
+
+  defp check_expected_hash(_resolved_path, _rel_path, nil, _content), do: :ok
+
+  defp check_expected_hash(_resolved_path, rel_path, expected_hash, content) do
+    actual_hash = :crypto.hash(:sha256, content) |> Base.encode16(case: :lower)
+
+    if actual_hash == expected_hash do
+      :ok
+    else
+      {:error, {:hash_mismatch, rel_path, expected_hash, actual_hash}}
+    end
+  end
+
+  defp do_delete(resolved_path, rel_path) do
+    case File.rm(resolved_path) do
+      :ok ->
+        {:ok, %{kind: :delete, file_path: rel_path}}
+
+      {:error, :enoent} ->
+        {:ok, %{kind: :delete, file_path: rel_path, status: :already_absent}}
+
+      {:error, reason} ->
+        {:error, "Delete failed: #{inspect(reason)}"}
+    end
+  end
 
   defp denial_map(code, message, path) do
     %{

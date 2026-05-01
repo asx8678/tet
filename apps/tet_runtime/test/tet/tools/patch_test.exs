@@ -641,6 +641,219 @@ defmodule Tet.Runtime.Tools.PatchTest do
     end
   end
 
+  describe "expected_hash enforcement" do
+    test "modify rejects hash mismatch", %{workspace_root: root} do
+      path = touch(Path.join(root, "lib/hash_check.ex"), "original content\n")
+      _ = path
+
+      wrong_hash = String.duplicate("a", 64)
+
+      patch =
+        Patch.propose!(%{
+          operations: [
+            %{
+              kind: :modify,
+              file_path: "lib/hash_check.ex",
+              content: "new content\n",
+              expected_hash: wrong_hash
+            }
+          ],
+          workspace_path: root
+        })
+
+      assert {:ok, result} =
+               PatchExecutor.apply(patch,
+                 approved: :approved,
+                 tool_call_id: "call_hash_mismatch",
+                 workspace_root: root
+               )
+
+      assert result.ok == false
+      assert result.errors != []
+      assert elem(hd(result.errors), 0) == :hash_mismatch
+
+      # File must NOT be mutated
+      assert File.read!(Path.join(root, "lib/hash_check.ex")) == "original content\n"
+    end
+
+    test "modify with matching expected_hash succeeds", %{workspace_root: root} do
+      path = touch(Path.join(root, "lib/hash_ok.ex"), "content\n")
+      content = File.read!(path)
+      actual_hash = :crypto.hash(:sha256, content) |> Base.encode16(case: :lower)
+
+      patch =
+        Patch.propose!(%{
+          operations: [
+            %{
+              kind: :modify,
+              file_path: "lib/hash_ok.ex",
+              content: "updated\n",
+              expected_hash: actual_hash
+            }
+          ],
+          workspace_path: root
+        })
+
+      assert {:ok, result} =
+               PatchExecutor.apply(patch,
+                 approved: :approved,
+                 tool_call_id: "call_hash_ok",
+                 workspace_root: root
+               )
+
+      assert result.ok == true
+      assert File.read!(Path.join(root, "lib/hash_ok.ex")) == "updated\n"
+    end
+
+    test "modify with old_str rejects hash mismatch", %{workspace_root: root} do
+      path = touch(Path.join(root, "lib/hash_oldstr.ex"), "Hello World\n")
+      _ = path
+
+      patch =
+        Patch.propose!(%{
+          operations: [
+            %{
+              kind: :modify,
+              file_path: "lib/hash_oldstr.ex",
+              old_str: "World",
+              new_str: "Elixir",
+              expected_hash: String.duplicate("b", 64)
+            }
+          ],
+          workspace_path: root
+        })
+
+      assert {:ok, result} =
+               PatchExecutor.apply(patch,
+                 approved: :approved,
+                 tool_call_id: "call_hash_oldstr",
+                 workspace_root: root
+               )
+
+      assert result.ok == false
+      assert File.read!(Path.join(root, "lib/hash_oldstr.ex")) == "Hello World\n"
+    end
+
+    test "modify with replacements rejects hash mismatch", %{workspace_root: root} do
+      path = touch(Path.join(root, "lib/hash_repl.ex"), "aaa bbb\n")
+      _ = path
+
+      patch =
+        Patch.propose!(%{
+          operations: [
+            %{
+              kind: :modify,
+              file_path: "lib/hash_repl.ex",
+              replacements: [%{old_str: "aaa", new_str: "AAA"}],
+              expected_hash: String.duplicate("c", 64)
+            }
+          ],
+          workspace_path: root
+        })
+
+      assert {:ok, result} =
+               PatchExecutor.apply(patch,
+                 approved: :approved,
+                 tool_call_id: "call_hash_repl",
+                 workspace_root: root
+               )
+
+      assert result.ok == false
+      assert File.read!(Path.join(root, "lib/hash_repl.ex")) == "aaa bbb\n"
+    end
+
+    test "delete rejects hash mismatch", %{workspace_root: root} do
+      path = touch(Path.join(root, "lib/hash_delete.ex"), "delete me\n")
+      _ = path
+
+      patch =
+        Patch.propose!(%{
+          operations: [
+            %{
+              kind: :delete,
+              file_path: "lib/hash_delete.ex",
+              expected_hash: String.duplicate("d", 64)
+            }
+          ],
+          workspace_path: root
+        })
+
+      assert {:ok, result} =
+               PatchExecutor.apply(patch,
+                 approved: :approved,
+                 tool_call_id: "call_hash_del",
+                 workspace_root: root
+               )
+
+      assert result.ok == false
+      # File must NOT be deleted
+      assert File.exists?(Path.join(root, "lib/hash_delete.ex"))
+    end
+
+    test "delete with matching expected_hash succeeds", %{workspace_root: root} do
+      path = touch(Path.join(root, "lib/hash_del_ok.ex"), "delete me\n")
+      content = File.read!(path)
+      actual_hash = :crypto.hash(:sha256, content) |> Base.encode16(case: :lower)
+
+      patch =
+        Patch.propose!(%{
+          operations: [
+            %{
+              kind: :delete,
+              file_path: "lib/hash_del_ok.ex",
+              expected_hash: actual_hash
+            }
+          ],
+          workspace_path: root
+        })
+
+      assert {:ok, _result} =
+               PatchExecutor.apply(patch,
+                 approved: :approved,
+                 tool_call_id: "call_hash_del_ok",
+                 workspace_root: root
+               )
+
+      refute File.exists?(Path.join(root, "lib/hash_del_ok.ex"))
+    end
+
+    test "hash mismatch in first op stops patch without rolling back", %{workspace_root: root} do
+      path = touch(Path.join(root, "lib/hash_first.ex"), "first\n")
+      _ = path
+      touch(Path.join(root, "lib/hash_second.ex"), "second\n")
+
+      patch =
+        Patch.propose!(%{
+          operations: [
+            %{
+              kind: :modify,
+              file_path: "lib/hash_first.ex",
+              content: "modified first\n",
+              expected_hash: String.duplicate("e", 64)
+            },
+            %{
+              kind: :modify,
+              file_path: "lib/hash_second.ex",
+              content: "modified second\n"
+            }
+          ],
+          workspace_path: root
+        })
+
+      assert {:ok, result} =
+               PatchExecutor.apply(patch,
+                 approved: :approved,
+                 tool_call_id: "call_hash_first",
+                 workspace_root: root
+               )
+
+      assert result.ok == false
+      # First op failed due to hash mismatch, so nothing was modified
+      assert File.read!(Path.join(root, "lib/hash_first.ex")) == "first\n"
+      assert File.read!(Path.join(root, "lib/hash_second.ex")) == "second\n"
+    end
+  end
+
   describe "run_verifier/4" do
     test "returns nil when no verifier given" do
       assert PatchExecutor.run_verifier(nil, [], "call_1", "task_1") == nil

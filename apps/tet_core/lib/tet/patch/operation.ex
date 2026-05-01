@@ -183,9 +183,10 @@ defmodule Tet.Patch.Operation do
     content = Map.get(attrs, :content)
     replacements = Map.get(attrs, :replacements)
     old_str = Map.get(attrs, :old_str)
+    expected_hash = Map.get(attrs, :expected_hash)
 
     cond do
-      not is_binary(content) or content == "" ->
+      not is_binary(content) ->
         {:error, {:invalid_operation, :create_requires_content}}
 
       not is_nil(replacements) ->
@@ -193,6 +194,9 @@ defmodule Tet.Patch.Operation do
 
       not is_nil(old_str) ->
         {:error, {:invalid_operation, :create_with_old_str}}
+
+      not is_nil(expected_hash) and not valid_hash?(expected_hash) ->
+        {:error, {:invalid_operation, :invalid_expected_hash}}
 
       true ->
         :ok
@@ -204,11 +208,12 @@ defmodule Tet.Patch.Operation do
     replacements = Map.get(attrs, :replacements)
     old_str = Map.get(attrs, :old_str)
     new_str = Map.get(attrs, :new_str)
+    expected_hash = Map.get(attrs, :expected_hash)
 
-    has_content = is_binary(content) and content != ""
+    has_content = is_binary(content)
     has_replacements = is_list(replacements) and replacements != []
     has_old_str = is_binary(old_str) and old_str != ""
-    has_new_str = is_binary(new_str) and new_str != ""
+    has_new_str = is_binary(new_str)
 
     cond do
       not has_content and not has_replacements and not has_old_str ->
@@ -219,6 +224,9 @@ defmodule Tet.Patch.Operation do
 
       has_old_str and not has_new_str ->
         {:error, {:invalid_operation, :modify_requires_new_str}}
+
+      not is_nil(expected_hash) and not valid_hash?(expected_hash) ->
+        {:error, {:invalid_operation, :invalid_expected_hash}}
 
       has_replacements and not valid_replacements?(replacements) ->
         {:error, {:invalid_operation, :invalid_replacements}}
@@ -232,12 +240,23 @@ defmodule Tet.Patch.Operation do
     content = Map.get(attrs, :content)
     replacements = Map.get(attrs, :replacements)
     old_str = Map.get(attrs, :old_str)
+    expected_hash = Map.get(attrs, :expected_hash)
 
     cond do
-      not is_nil(content) -> {:error, {:invalid_operation, :delete_with_content}}
-      not is_nil(replacements) -> {:error, {:invalid_operation, :delete_with_replacements}}
-      not is_nil(old_str) -> {:error, {:invalid_operation, :delete_with_old_str}}
-      true -> :ok
+      not is_nil(content) ->
+        {:error, {:invalid_operation, :delete_with_content}}
+
+      not is_nil(replacements) ->
+        {:error, {:invalid_operation, :delete_with_replacements}}
+
+      not is_nil(old_str) ->
+        {:error, {:invalid_operation, :delete_with_old_str}}
+
+      not is_nil(expected_hash) and not valid_hash?(expected_hash) ->
+        {:error, {:invalid_operation, :invalid_expected_hash}}
+
+      true ->
+        :ok
     end
   end
 
@@ -247,10 +266,17 @@ defmodule Tet.Patch.Operation do
 
   defp valid_replacements?(replacements) when is_list(replacements) do
     Enum.all?(replacements, fn r ->
-      is_map(r) and is_binary(Map.get(r, :old_str, Map.get(r, "old_str", ""))) and
-        Map.get(r, :old_str, Map.get(r, "old_str", "")) != ""
+      old_str = Map.get(r, :old_str, Map.get(r, "old_str", ""))
+      new_str = Map.get(r, :new_str, Map.get(r, "new_str", ""))
+      is_map(r) and is_binary(old_str) and old_str != "" and is_binary(new_str)
     end)
   end
 
   defp valid_replacements?(_), do: false
+
+  defp valid_hash?(hash) when is_binary(hash) do
+    String.match?(hash, ~r/^[0-9a-f]{64}$/)
+  end
+
+  defp valid_hash?(_), do: false
 end
