@@ -80,6 +80,27 @@ defmodule Tet.Runtime.GuidanceLoop do
   end
 
   @doc """
+  Returns active guidance messages for a specific session.
+
+  Convenience for renderers that only need one session's guidance.
+  """
+  @spec get_active_guidance_for_session(pid(), binary()) :: [GuidanceMessage.t()]
+  def get_active_guidance_for_session(pid, session_id)
+      when is_pid(pid) and is_binary(session_id) do
+    GenServer.call(pid, {:get_active_guidance_for_session, session_id})
+  end
+
+  @doc """
+  Blocks until all previously sent messages have been processed.
+
+  Used in tests to avoid flaky Process.sleep calls.
+  """
+  @spec sync(pid()) :: :ok
+  def sync(pid) when is_pid(pid) do
+    GenServer.call(pid, :sync)
+  end
+
+  @doc """
   Injects a steering decision into the loop for processing.
 
   Used when a caller has already evaluated a steering decision and wants
@@ -87,7 +108,8 @@ defmodule Tet.Runtime.GuidanceLoop do
   for "extracting focus/guide decisions from steering evaluator output."
   """
   @spec ingest_decision(pid(), map(), keyword()) :: :ok
-  def ingest_decision(pid, decision_attrs, opts \\ []) when is_pid(pid) and is_map(decision_attrs) and is_list(opts) do
+  def ingest_decision(pid, decision_attrs, opts \\ [])
+      when is_pid(pid) and is_map(decision_attrs) and is_list(opts) do
     GenServer.cast(pid, {:ingest_decision, decision_attrs, opts})
   end
 
@@ -127,9 +149,24 @@ defmodule Tet.Runtime.GuidanceLoop do
   end
 
   @impl true
+  def handle_call({:get_active_guidance_for_session, session_id}, _from, %{store: store} = state) do
+    active =
+      store
+      |> GuidanceStore.active_by_session(session_id)
+      |> sort_by_event_seq()
+
+    {:reply, active, state}
+  end
+
+  @impl true
+  def handle_call(:sync, _from, state) do
+    {:reply, :ok, state}
+  end
+
+  @impl true
   def handle_cast({:ingest_decision, decision_attrs, opts}, %{store: store} = state) do
-    # Expire all active guidance first, then process the new decision
-    store = GuidanceStore.expire_all(store)
+    session_id = Keyword.get(opts, :session_id, "")
+    store = GuidanceStore.expire_by_session(store, session_id)
     new_store = process_decision(decision_attrs, opts, store)
     {:noreply, %{state | store: new_store}}
   end
@@ -137,13 +174,16 @@ defmodule Tet.Runtime.GuidanceLoop do
   # ── Event processing ────────────────────────────────────────────────
 
   defp handle_task_tool_event(%Tet.Event{} = event, store) do
-    # 1. Expire all active guidance (new event supersedes old guidance)
-    store = GuidanceStore.expire_all(store)
+    session_id = event.session_id || ""
+
+    # Expire only this session's active guidance
+    store = GuidanceStore.expire_by_session(store, session_id)
 
     # 2. Extract steering decision from event payload if present
     case event.payload do
       %{decision: decision_map} when is_map(decision_map) ->
-        process_decision(decision_map,
+        process_decision(
+          decision_map,
           [
             session_id: event.session_id,
             event_seq: event.seq || event.sequence,

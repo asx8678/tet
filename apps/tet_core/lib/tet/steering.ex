@@ -99,7 +99,8 @@ defmodule Tet.Steering do
   defdelegate new_guidance_message!(attrs), to: GuidanceMessage, as: :new!
 
   @doc "Builds a guidance message from a steering decision."
-  @spec guidance_from_decision(Decision.t(), keyword()) :: {:ok, GuidanceMessage.t()} | {:error, term()}
+  @spec guidance_from_decision(Decision.t(), keyword()) ::
+          {:ok, GuidanceMessage.t()} | {:error, term()}
   defdelegate guidance_from_decision(decision, opts), to: GuidanceMessage, as: :from_decision
 
   @doc "True when the guidance message is active."
@@ -124,9 +125,11 @@ defmodule Tet.Steering do
   @spec guidance_store_add(GuidanceStore.store(), GuidanceMessage.t()) :: GuidanceStore.store()
   defdelegate guidance_store_add(store, msg), to: GuidanceStore, as: :add
 
-  @doc "Expires all active guidance messages in the store."
-  @spec guidance_store_expire_all(GuidanceStore.store()) :: GuidanceStore.store()
-  defdelegate guidance_store_expire_all(store), to: GuidanceStore, as: :expire_all
+  @doc "Expires all active guidance messages for the given session in the store."
+  @spec guidance_store_expire_by_session(GuidanceStore.store(), binary()) :: GuidanceStore.store()
+  defdelegate guidance_store_expire_by_session(store, session_id),
+    to: GuidanceStore,
+    as: :expire_by_session
 
   @doc "Returns active (non-expired) guidance messages."
   @spec guidance_store_active(GuidanceStore.store()) :: [GuidanceMessage.t()]
@@ -134,7 +137,9 @@ defmodule Tet.Steering do
 
   @doc "Returns active guidance messages for a session."
   @spec guidance_store_active_by_session(GuidanceStore.store(), binary()) :: [GuidanceMessage.t()]
-  defdelegate guidance_store_active_by_session(store, session_id), to: GuidanceStore, as: :active_by_session
+  defdelegate guidance_store_active_by_session(store, session_id),
+    to: GuidanceStore,
+    as: :active_by_session
 
   @doc "Converts the store to a JSON-friendly list."
   @spec guidance_store_to_list(GuidanceStore.store()) :: [map()]

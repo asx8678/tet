@@ -3,14 +3,15 @@ defmodule Tet.Steering.GuidanceStore do
   In-memory collection management for guidance messages — BD-0033.
 
   Pure functions over a map of `Tet.Steering.GuidanceMessage` structs keyed
-  by id. Supports adding, expiring, querying, and serializing messages. No
-  side effects, no GenServer calls, no filesystem access.
+  by id. Supports adding, expiring (session-scoped), querying, and
+  serializing messages. No side effects, no GenServer calls, no filesystem
+  access.
 
   ## Lifecycle
 
   1. A guidance message is added via `add/2` as active (`expired: false`).
-  2. When a new task/tool event arrives, `expire_all/1` marks all active
-     messages as expired.
+  2. When a new task/tool event arrives, `expire_by_session/2` marks all
+     active messages for that session as expired.
   3. `active/1` returns only non-expired messages for rendering.
   4. Expired messages remain in the store for audit trails.
 
@@ -40,10 +41,16 @@ defmodule Tet.Steering.GuidanceStore do
     Map.put(store, id, msg)
   end
 
+  @doc """
+  Expires all active guidance messages for a given session.
 
-  def expire_all(store) when is_map(store) do
+  Other sessions' active guidance is left untouched. Returns the updated
+  store.
+  """
+  @spec expire_by_session(store(), binary()) :: store()
+  def expire_by_session(store, session_id) when is_map(store) and is_binary(session_id) do
     Map.new(store, fn {id, msg} ->
-      if GuidanceMessage.active?(msg) do
+      if msg.session_id == session_id and GuidanceMessage.active?(msg) do
         {id, GuidanceMessage.expire(msg)}
       else
         {id, msg}
@@ -62,7 +69,7 @@ defmodule Tet.Steering.GuidanceStore do
   end
 
   @doc """
-  Returns all guidance messages in insertion order.
+  Returns all guidance messages.
   """
   @spec all(store()) :: [GuidanceMessage.t()]
   def all(store) when is_map(store) do

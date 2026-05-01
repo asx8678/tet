@@ -36,34 +36,30 @@ defmodule Tet.Steering.GuidanceStoreTest do
     end
   end
 
-  describe "expire_all/1" do
-    test "marks all active messages as expired" do
-      msg1 = build_msg(id: "m1", message: "First")
-      msg2 = build_msg(id: "m2", message: "Second")
+  describe "expire_by_session/2" do
+    test "expires only messages for the given session" do
+      msg_ses_a = build_msg(id: "m1", session_id: "ses_a", message: "Session A")
+      msg_ses_b = build_msg(id: "m2", session_id: "ses_b", message: "Session B")
 
       store =
         GuidanceStore.new()
-        |> GuidanceStore.add(msg1)
-        |> GuidanceStore.add(msg2)
-        |> GuidanceStore.expire_all()
+        |> GuidanceStore.add(msg_ses_a)
+        |> GuidanceStore.add(msg_ses_b)
+        |> GuidanceStore.expire_by_session("ses_a")
 
-      assert GuidanceStore.active_count(store) == 0
-      assert GuidanceStore.count(store) == 2
-
-      [m1, m2] = GuidanceStore.all(store) |> Enum.sort_by(& &1.id)
-      assert m1.expired == true
-      assert m2.expired == true
+      assert GuidanceStore.active(store) |> length() == 1
+      assert hd(GuidanceStore.active(store)).id == "m2"
     end
 
     test "leaves already-expired messages unchanged" do
-      msg1 = build_msg(id: "m1", message: "Active")
-      msg2 = build_msg(id: "m2", message: "Already expired", expired: true)
+      msg1 = build_msg(id: "m1", session_id: "ses_a", message: "Active")
+      msg2 = build_msg(id: "m2", session_id: "ses_a", message: "Already expired", expired: true)
 
       store =
         GuidanceStore.new()
         |> GuidanceStore.add(msg1)
         |> GuidanceStore.add(msg2)
-        |> GuidanceStore.expire_all()
+        |> GuidanceStore.expire_by_session("ses_a")
 
       assert GuidanceStore.active_count(store) == 0
 
@@ -73,14 +69,34 @@ defmodule Tet.Steering.GuidanceStoreTest do
     end
 
     test "is idempotent" do
-      msg = build_msg(id: "m1")
+      msg = build_msg(id: "m1", session_id: "ses_a")
+
       store =
         GuidanceStore.new()
         |> GuidanceStore.add(msg)
-        |> GuidanceStore.expire_all()
-        |> GuidanceStore.expire_all()
+        |> GuidanceStore.expire_by_session("ses_a")
+        |> GuidanceStore.expire_by_session("ses_a")
 
       assert GuidanceStore.active_count(store) == 0
+    end
+
+    test "session isolation: other sessions are not expired" do
+      ses_a = build_msg(id: "a1", session_id: "ses_a", message: "A active")
+      ses_b = build_msg(id: "b1", session_id: "ses_b", message: "B active")
+      ses_c = build_msg(id: "c1", session_id: "ses_c", message: "C active")
+
+      store =
+        GuidanceStore.new()
+        |> GuidanceStore.add(ses_a)
+        |> GuidanceStore.add(ses_b)
+        |> GuidanceStore.add(ses_c)
+        |> GuidanceStore.expire_by_session("ses_b")
+
+      # Only ses_b got expired
+      active = GuidanceStore.active(store)
+      assert length(active) == 2
+      active_ids = Enum.map(active, & &1.id) |> Enum.sort()
+      assert active_ids == ["a1", "c1"]
     end
   end
 

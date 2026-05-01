@@ -231,11 +231,30 @@ defmodule Tet.Steering.GuidanceMessage do
   end
 
   defp fetch_optional_atom(attrs, key) do
+    known = Tet.Event.known_types()
+
     case Map.get(attrs, key, Map.get(attrs, Atom.to_string(key))) do
-      nil -> {:ok, nil}
-      value when is_atom(value) -> {:ok, value}
-      value when is_binary(value) -> {:ok, String.to_existing_atom(value)}
-      _ -> {:error, {:invalid_guidance_field, key}}
+      nil ->
+        {:ok, nil}
+
+      value when is_atom(value) ->
+        if Enum.member?(known, value) do
+          {:ok, value}
+        else
+          {:error, {:invalid_guidance_field, key, value}}
+        end
+
+      value when is_binary(value) ->
+        type_atom = String.to_existing_atom(value)
+
+        if Enum.member?(known, type_atom) do
+          {:ok, type_atom}
+        else
+          {:error, {:invalid_guidance_field, key, value}}
+        end
+
+      _ ->
+        {:error, {:invalid_guidance_field, key}}
     end
   end
 
@@ -248,14 +267,20 @@ defmodule Tet.Steering.GuidanceMessage do
 
   defp fetch_optional_datetime(attrs, key) do
     case Map.get(attrs, key, Map.get(attrs, Atom.to_string(key))) do
-      nil -> {:ok, nil}
-      %DateTime{} = dt -> {:ok, dt}
+      nil ->
+        {:ok, nil}
+
+      %DateTime{} = dt ->
+        {:ok, dt}
+
       value when is_binary(value) ->
         case DateTime.from_iso8601(value) do
           {:ok, dt, _offset} -> {:ok, dt}
           _ -> {:ok, nil}
         end
-      _ -> {:ok, nil}
+
+      _ ->
+        {:ok, nil}
     end
   end
 

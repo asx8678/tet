@@ -110,11 +110,12 @@ defmodule Tet.Steering.GuidanceMessageTest do
 
   describe "from_decision/2" do
     test "builds a guidance message from a steering decision" do
-      decision = Tet.Steering.new_decision!(%{
-        type: :focus,
-        guidance_message: "Focus on auth.",
-        reason: "narrowing scope"
-      })
+      decision =
+        Tet.Steering.new_decision!(%{
+          type: :focus,
+          guidance_message: "Focus on auth.",
+          reason: "narrowing scope"
+        })
 
       assert {:ok, msg} =
                GuidanceMessage.from_decision(decision,
