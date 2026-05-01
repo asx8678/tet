@@ -19,6 +19,7 @@ defmodule Tet.Runtime.DiagnosticTask do
   """
 
   @diagnostic_tools [:read, :search, :list, :doctor, :error_log_inspect]
+  @diagnostic_tool_strings Enum.map(@diagnostic_tools, &Atom.to_string/1)
   @blocked_tools [:patch, :write, :shell, :deploy]
 
   @enforce_keys [:id, :session_id, :error_log_entry]
@@ -121,10 +122,13 @@ defmodule Tet.Runtime.DiagnosticTask do
   @spec allowed_tool?(t(), tool_name() | binary()) :: boolean()
   def allowed_tool?(%__MODULE__{mode: :repair}, _tool), do: true
 
-  def allowed_tool?(%__MODULE__{mode: :diagnostic}, tool) do
-    normalized = normalize_tool(tool)
-    normalized in @diagnostic_tools
-  end
+  def allowed_tool?(%__MODULE__{mode: :diagnostic}, tool) when is_atom(tool),
+    do: tool in @diagnostic_tools
+
+  def allowed_tool?(%__MODULE__{mode: :diagnostic}, tool) when is_binary(tool),
+    do: tool in @diagnostic_tool_strings
+
+  def allowed_tool?(%__MODULE__{mode: :diagnostic}, _tool), do: false
 
   # ── State transitions ──────────────────────────────────────────────────
 
@@ -184,6 +188,11 @@ defmodule Tet.Runtime.DiagnosticTask do
     {:ok, %__MODULE__{task | mode: :repair, metadata: merged}}
   end
 
+  def promote_to_repair(%__MODULE__{approval_status: :approved}, repair_meta)
+      when not is_map(repair_meta) do
+    {:error, :invalid_repair_metadata}
+  end
+
   def promote_to_repair(%__MODULE__{}, _repair_meta), do: {:error, :approval_required}
 
   # ── Prompt generation ──────────────────────────────────────────────────
@@ -209,7 +218,10 @@ defmodule Tet.Runtime.DiagnosticTask do
     ### Error Context
     - **Error ID:** #{error.id}
     - **Kind:** #{error.kind}
-    - **Message:** #{error.message}
+    - **Message:**
+      ```
+      #{error.message}
+      ```
     #{stacktrace_section(error.stacktrace)}
     ### Allowed Actions
     #{format_tool_list(@diagnostic_tools)}
@@ -230,9 +242,6 @@ defmodule Tet.Runtime.DiagnosticTask do
     unique = System.unique_integer([:positive, :monotonic]) |> Integer.to_string(36)
     "diag_#{time}_#{unique}"
   end
-
-  defp normalize_tool(tool) when is_atom(tool), do: tool
-  defp normalize_tool(tool) when is_binary(tool), do: String.to_existing_atom(tool)
 
   defp stacktrace_section(nil), do: ""
 

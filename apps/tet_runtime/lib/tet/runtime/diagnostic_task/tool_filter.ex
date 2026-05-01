@@ -12,7 +12,9 @@ defmodule Tet.Runtime.DiagnosticTask.ToolFilter do
   alias Tet.Runtime.DiagnosticTask
 
   @diagnostic_tools DiagnosticTask.diagnostic_tools()
+  @diagnostic_tool_strings Enum.map(@diagnostic_tools, &Atom.to_string/1)
   @blocked_tools DiagnosticTask.blocked_tools()
+  @blocked_tool_strings Enum.map(@blocked_tools, &Atom.to_string/1)
 
   @type tool_name :: atom() | binary()
   @type category :: :diagnostic | :mutating | :neutral
@@ -84,15 +86,23 @@ defmodule Tet.Runtime.DiagnosticTask.ToolFilter do
       :neutral
   """
   @spec tool_category(tool_name()) :: category()
-  def tool_category(tool) do
-    normalized = normalize_tool(tool)
-
+  def tool_category(tool) when is_atom(tool) do
     cond do
-      normalized in @diagnostic_tools -> :diagnostic
-      normalized in @blocked_tools -> :mutating
+      tool in @diagnostic_tools -> :diagnostic
+      tool in @blocked_tools -> :mutating
       true -> :neutral
     end
   end
+
+  def tool_category(tool) when is_binary(tool) do
+    cond do
+      tool in @diagnostic_tool_strings -> :diagnostic
+      tool in @blocked_tool_strings -> :mutating
+      true -> :neutral
+    end
+  end
+
+  def tool_category(_tool), do: :neutral
 
   # ── Private helpers ─────────────────────────────────────────────────────
 
@@ -118,7 +128,4 @@ defmodule Tet.Runtime.DiagnosticTask.ToolFilter do
         "`#{tool_str}` is allowed in repair mode."
     end
   end
-
-  defp normalize_tool(tool) when is_atom(tool), do: tool
-  defp normalize_tool(tool) when is_binary(tool), do: String.to_existing_atom(tool)
 end

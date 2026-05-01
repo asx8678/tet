@@ -98,6 +98,11 @@ defmodule Tet.Runtime.DiagnosticTask.ToolFilterTest do
       assert ToolFilter.filter_tools([], task) == []
     end
 
+    test "filters out unknown string tool names without crashing" do
+      task = build_diagnostic_task()
+      assert ToolFilter.filter_tools(["read", "unknown_tool_xyz", "patch"], task) == ["read"]
+    end
+
     test "preserves order of allowed tools" do
       task = build_diagnostic_task()
       tools = [:search, :patch, :read, :write, :list]
@@ -201,6 +206,10 @@ defmodule Tet.Runtime.DiagnosticTask.ToolFilterTest do
     test "handles string tool names" do
       assert ToolFilter.tool_category("read") == :diagnostic
       assert ToolFilter.tool_category("patch") == :mutating
+    end
+
+    test "returns :neutral for unknown string tool names without crashing" do
+      assert ToolFilter.tool_category("unknown_tool_xyz") == :neutral
     end
 
     test "is consistent with DiagnosticTask tool lists" do
