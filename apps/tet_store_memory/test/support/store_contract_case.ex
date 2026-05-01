@@ -229,6 +229,18 @@ defmodule StoreContractCase do
         test "returns error when resolving non-existent error", %{opts: opts} do
           assert {:error, :error_not_found} = @adapter.resolve_error("missing_err", opts)
         end
+
+        test "auto-populates created_at when omitted", %{opts: opts} do
+          attrs = %{
+            id: "err_auto_ca",
+            session_id: "ses_auto_ca",
+            kind: :exception,
+            message: "No timestamp"
+          }
+
+          assert {:ok, error_entry} = @adapter.log_error(attrs, opts)
+          assert error_entry.created_at != nil
+        end
       end
 
       # -- Repair Queue (round-trip) --
@@ -282,6 +294,96 @@ defmodule StoreContractCase do
         test "returns error for non-existent repair update", %{opts: opts} do
           assert {:error, :repair_not_found} =
                    @adapter.update_repair("missing_rep", %{status: :succeeded}, opts)
+        end
+
+        test "update_repair protects identity fields from mutation", %{opts: opts} do
+          attrs = %{
+            id: "rep_protect_001",
+            error_log_id: "err_protect",
+            session_id: "ses_protect",
+            strategy: :retry
+          }
+
+          assert {:ok, repair} = @adapter.enqueue_repair(attrs, opts)
+          original_created_at = repair.created_at
+
+          # Try to mutate identity/correlation fields
+          assert {:ok, updated} =
+                   @adapter.update_repair(
+                     "rep_protect_001",
+                     %{
+                       status: :succeeded,
+                       id: "hacked_id",
+                       error_log_id: "hacked_eid",
+                       session_id: "hacked_sid",
+                       strategy: :human,
+                       created_at: ~U[2099-01-01 00:00:00Z]
+                     },
+                     opts
+                   )
+
+          # Mutable field changed
+          assert updated.status == :succeeded
+          # Identity/correlation fields unchanged
+          assert updated.id == "rep_protect_001"
+          assert updated.error_log_id == "err_protect"
+          assert updated.session_id == "ses_protect"
+          assert updated.strategy == :retry
+          assert updated.created_at == original_created_at
+        end
+
+        test "update_repair returns error tuple for invalid status", %{opts: opts} do
+          attrs = %{
+            id: "rep_inv_st",
+            error_log_id: "err_inv_st",
+            strategy: :retry
+          }
+
+          assert {:ok, _repair} = @adapter.enqueue_repair(attrs, opts)
+
+          assert {:error, {:invalid_repair_field, :status}} =
+                   @adapter.update_repair("rep_inv_st", %{"status" => "bogus"}, opts)
+        end
+
+        test "enqueue_repair auto-populates created_at when omitted", %{opts: opts} do
+          attrs = %{
+            id: "rep_auto_ca",
+            error_log_id: "err_auto_ca",
+            strategy: :retry
+          }
+
+          assert {:ok, repair} = @adapter.enqueue_repair(attrs, opts)
+          assert repair.created_at != nil
+        end
+
+        test "dequeue returns repairs in FIFO order by created_at", %{opts: opts} do
+          early = DateTime.utc_now() |> DateTime.add(-10, :second)
+          middle = DateTime.utc_now() |> DateTime.add(-5, :second)
+          late = DateTime.utc_now()
+
+          @adapter.enqueue_repair(
+            %{id: "rep_fifo_m", error_log_id: "err_fifo", strategy: :retry, created_at: middle},
+            opts
+          )
+
+          @adapter.enqueue_repair(
+            %{id: "rep_fifo_e", error_log_id: "err_fifo", strategy: :retry, created_at: early},
+            opts
+          )
+
+          @adapter.enqueue_repair(
+            %{id: "rep_fifo_l", error_log_id: "err_fifo", strategy: :retry, created_at: late},
+            opts
+          )
+
+          assert {:ok, r1} = @adapter.dequeue_repair(opts)
+          assert r1.id == "rep_fifo_e"
+
+          assert {:ok, r2} = @adapter.dequeue_repair(opts)
+          assert r2.id == "rep_fifo_m"
+
+          assert {:ok, r3} = @adapter.dequeue_repair(opts)
+          assert r3.id == "rep_fifo_l"
         end
       end
     end
