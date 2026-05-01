@@ -237,10 +237,9 @@ defmodule StoreContractCase do
         test "full repair lifecycle with round-trip", %{opts: opts} do
           attrs = %{
             id: "rep_rtt_001",
-            error_id: "err_001",
+            error_log_id: "err_rtt_001",
             session_id: "ses_repairs",
-            strategy: :retry,
-            description: "Retry after rate limit"
+            strategy: :retry
           }
 
           assert {:ok, repair} = @adapter.enqueue_repair(attrs, opts)
@@ -250,20 +249,20 @@ defmodule StoreContractCase do
           # Dequeue picks up the pending repair
           assert {:ok, dequeued} = @adapter.dequeue_repair(opts)
           assert dequeued.id == "rep_rtt_001"
-          assert dequeued.status == :in_progress
+          assert dequeued.status == :running
 
           # Dequeue again returns nil (no more pending)
           assert {:ok, nil} = @adapter.dequeue_repair(opts)
 
-          # Update the repair to completed
-          assert {:ok, completed} =
+          # Update the repair to succeeded
+          assert {:ok, succeeded} =
                    @adapter.update_repair(
                      "rep_rtt_001",
-                     %{status: :completed, result: %{success: true}},
+                     %{status: :succeeded, result: %{success: true}},
                      opts
                    )
 
-          assert completed.status == :completed
+          assert succeeded.status == :succeeded
 
           # List repairs
           assert {:ok, repairs} = @adapter.list_repairs(opts)
@@ -275,14 +274,14 @@ defmodule StoreContractCase do
           assert length(session_repairs) >= 1
 
           # List by status
-          filtered_opts = Keyword.merge(opts, status: :completed)
-          assert {:ok, completed_repairs} = @adapter.list_repairs(filtered_opts)
-          assert length(completed_repairs) >= 1
+          filtered_opts = Keyword.merge(opts, status: :succeeded)
+          assert {:ok, succeeded_repairs} = @adapter.list_repairs(filtered_opts)
+          assert length(succeeded_repairs) >= 1
         end
 
         test "returns error for non-existent repair update", %{opts: opts} do
           assert {:error, :repair_not_found} =
-                   @adapter.update_repair("missing_rep", %{status: :completed}, opts)
+                   @adapter.update_repair("missing_rep", %{status: :succeeded}, opts)
         end
       end
     end

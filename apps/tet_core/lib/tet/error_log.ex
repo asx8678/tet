@@ -1,16 +1,22 @@
 defmodule Tet.ErrorLog do
   @moduledoc """
-  Error log entry struct for persistent error tracking — BD-0034.
+  Error log entry struct for persistent error tracking — BD-0034, BD-0057.
 
   Errors are persisted to the store for audit, diagnosis, and repair
   coordination (§04, §12). Each entry records the error kind, a human-readable
-  message, optional context metadata, and a resolution status.
+  message, optional stacktrace and context metadata, and a resolution status.
+
+  BD-0057 extends the schema with all trigger classes (`:exception`, `:crash`,
+  `:compile_failure`, `:smoke_failure`, `:remote_failure`), a `:dismissed`
+  status, and an optional `stacktrace` field for runtime diagnostics.
 
   This module is pure data and pure functions. It does not dispatch tools,
   touch the filesystem, or persist events.
   """
 
-  @statuses [:open, :resolved]
+  alias Tet.Entity
+
+  @statuses [:open, :resolved, :dismissed]
 
   @enforce_keys [:id, :session_id, :kind, :message]
   defstruct [
@@ -19,6 +25,7 @@ defmodule Tet.ErrorLog do
     :task_id,
     :kind,
     :message,
+    :stacktrace,
     :context,
     :resolved_at,
     status: :open,
@@ -26,7 +33,7 @@ defmodule Tet.ErrorLog do
     metadata: %{}
   ]
 
-  @type status :: :open | :resolved
+  @type status :: :open | :resolved | :dismissed
   @type kind :: atom()
   @type t :: %__MODULE__{
           id: binary(),
@@ -34,10 +41,11 @@ defmodule Tet.ErrorLog do
           task_id: binary() | nil,
           kind: kind(),
           message: binary(),
+          stacktrace: binary() | nil,
           context: map() | nil,
-          resolved_at: binary() | nil,
+          resolved_at: DateTime.t() | nil,
           status: status(),
-          created_at: binary() | nil,
+          created_at: DateTime.t() | nil,
           metadata: map()
         }
 
@@ -48,16 +56,17 @@ defmodule Tet.ErrorLog do
   @doc "Builds a validated error log entry from atom or string keyed attrs."
   @spec new(map()) :: {:ok, t()} | {:error, term()}
   def new(attrs) when is_map(attrs) do
-    with {:ok, id} <- fetch_binary(attrs, :id),
-         {:ok, session_id} <- fetch_binary(attrs, :session_id),
-         {:ok, task_id} <- fetch_optional_binary(attrs, :task_id),
+    with {:ok, id} <- Entity.fetch_required_binary(attrs, :id, :error_log),
+         {:ok, session_id} <- Entity.fetch_required_binary(attrs, :session_id, :error_log),
+         {:ok, task_id} <- Entity.fetch_optional_binary(attrs, :task_id, :error_log),
          {:ok, kind} <- fetch_kind(attrs),
-         {:ok, message} <- fetch_binary(attrs, :message),
+         {:ok, message} <- Entity.fetch_required_binary(attrs, :message, :error_log),
+         {:ok, stacktrace} <- Entity.fetch_optional_binary(attrs, :stacktrace, :error_log),
          {:ok, context} <- fetch_optional_map(attrs, :context),
          {:ok, status} <- fetch_status(attrs, :status, :open),
-         {:ok, resolved_at} <- fetch_optional_binary(attrs, :resolved_at),
-         {:ok, created_at} <- fetch_optional_binary(attrs, :created_at),
-         {:ok, metadata} <- fetch_map(attrs, :metadata, %{}) do
+         {:ok, resolved_at} <- Entity.fetch_optional_datetime(attrs, :resolved_at, :error_log),
+         {:ok, created_at} <- Entity.fetch_optional_datetime(attrs, :created_at, :error_log),
+         {:ok, metadata} <- Entity.fetch_map(attrs, :metadata, :error_log) do
       {:ok,
        %__MODULE__{
          id: id,
@@ -65,6 +74,7 @@ defmodule Tet.ErrorLog do
          task_id: task_id,
          kind: kind,
          message: message,
+         stacktrace: stacktrace,
          context: context,
          status: status,
          resolved_at: resolved_at,
@@ -74,9 +84,11 @@ defmodule Tet.ErrorLog do
     end
   end
 
+  def new(_attrs), do: {:error, :invalid_error_log}
+
   @doc "Resolves an open error, setting status to :resolved and recording the time."
-  @spec resolve(t(), binary()) :: t()
-  def resolve(%__MODULE__{} = error, resolved_at) when is_binary(resolved_at) do
+  @spec resolve(t(), DateTime.t()) :: t()
+  def resolve(%__MODULE__{} = error, %DateTime{} = resolved_at) do
     %__MODULE__{error | status: :resolved, resolved_at: resolved_at}
   end
 
@@ -86,14 +98,15 @@ defmodule Tet.ErrorLog do
     %{
       id: error.id,
       session_id: error.session_id,
-      kind: atom_to_string(error.kind),
+      kind: Entity.atom_to_map(error.kind),
       message: error.message,
       status: Atom.to_string(error.status)
     }
     |> maybe_put(:task_id, error.task_id)
+    |> maybe_put(:stacktrace, error.stacktrace)
     |> maybe_put(:context, error.context)
-    |> maybe_put(:resolved_at, error.resolved_at)
-    |> maybe_put(:created_at, error.created_at)
+    |> maybe_put(:resolved_at, Entity.datetime_to_map(error.resolved_at))
+    |> maybe_put(:created_at, Entity.datetime_to_map(error.created_at))
     |> Map.put(:metadata, error.metadata)
   end
 
@@ -106,24 +119,14 @@ defmodule Tet.ErrorLog do
 
   # -- Private helpers --
 
-  defp fetch_binary(attrs, key) do
-    case fetch_value(attrs, key) do
-      value when is_binary(value) and value != "" -> {:ok, value}
-      _ -> {:error, {:invalid_error_log_field, key}}
-    end
-  end
-
-  defp fetch_optional_binary(attrs, key) do
-    case fetch_value(attrs, key) do
-      nil -> {:ok, nil}
-      :null -> {:ok, nil}
-      "" -> {:ok, nil}
-      value when is_binary(value) -> {:ok, value}
-      _ -> {:error, {:invalid_error_log_field, key}}
-    end
-  end
-
   @allowed_kinds [
+    # Runtime trigger classes (BD-0057)
+    :exception,
+    :crash,
+    :compile_failure,
+    :smoke_failure,
+    :remote_failure,
+    # Existing error kinds (BD-0034)
     :provider_error,
     :tool_error,
     :verification_error,
@@ -137,7 +140,7 @@ defmodule Tet.ErrorLog do
   ]
 
   defp fetch_kind(attrs) do
-    case fetch_value(attrs, :kind) do
+    case Entity.fetch_value(attrs, :kind) do
       kind when kind in @allowed_kinds ->
         {:ok, kind}
 
@@ -156,7 +159,7 @@ defmodule Tet.ErrorLog do
   end
 
   defp fetch_optional_map(attrs, key) do
-    case fetch_value(attrs, key) do
+    case Entity.fetch_value(attrs, key) do
       nil -> {:ok, nil}
       :null -> {:ok, nil}
       value when is_map(value) -> {:ok, value}
@@ -165,7 +168,7 @@ defmodule Tet.ErrorLog do
   end
 
   defp fetch_status(attrs, key, default) do
-    case fetch_value(attrs, key, default) do
+    case Entity.fetch_value(attrs, key, default) do
       status when status in @statuses -> {:ok, status}
       status when is_atom(status) -> {:error, {:invalid_error_log_field, key}}
       status when is_binary(status) -> parse_status(status)
@@ -179,20 +182,4 @@ defmodule Tet.ErrorLog do
       atom -> {:ok, atom}
     end
   end
-
-  defp fetch_map(attrs, key, default) do
-    case fetch_value(attrs, key, default) do
-      nil -> {:ok, default}
-      :null -> {:ok, default}
-      value when is_map(value) -> {:ok, value}
-      _ -> {:error, {:invalid_error_log_field, key}}
-    end
-  end
-
-  defp fetch_value(attrs, key, default \\ nil) do
-    Map.get(attrs, key, Map.get(attrs, Atom.to_string(key), default))
-  end
-
-  defp atom_to_string(nil), do: nil
-  defp atom_to_string(value), do: Atom.to_string(value)
 end

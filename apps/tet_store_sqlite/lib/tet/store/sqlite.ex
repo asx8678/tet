@@ -381,7 +381,7 @@ defmodule Tet.Store.SQLite do
           {:error, :error_not_found}
 
         error_entry ->
-          resolved_at = DateTime.utc_now() |> DateTime.to_iso8601()
+          resolved_at = DateTime.utc_now()
           resolved = Tet.ErrorLog.resolve(error_entry, resolved_at)
           remaining = Enum.reject(errors, &(&1.id == error_id)) ++ [resolved]
 
@@ -419,12 +419,12 @@ defmodule Tet.Store.SQLite do
           {:ok, nil}
 
         %Tet.Repair{} = repair ->
-          updated_at = DateTime.utc_now() |> DateTime.to_iso8601()
-          in_progress = %{repair | status: :in_progress, updated_at: updated_at}
-          remaining = Enum.reject(repairs, &(&1.id == repair.id)) ++ [in_progress]
+          now = DateTime.utc_now()
+          running = %{repair | status: :running, started_at: now}
+          remaining = Enum.reject(repairs, &(&1.id == repair.id)) ++ [running]
 
           with {:ok, :ok} <- rewrite_jsonl(path, remaining, &Tet.Repair.to_map/1) do
-            {:ok, in_progress}
+            {:ok, running}
           end
       end
     end
@@ -674,15 +674,15 @@ defmodule Tet.Store.SQLite do
     Enum.filter(repairs, &(&1.status == status))
   end
 
-  defp merge_repair_attrs(%Tet.Repair{} = repair, attrs, updated_at) do
+  defp merge_repair_attrs(%Tet.Repair{} = repair, attrs, _updated_at) do
     %{
       repair
       | status: Map.get(attrs, :status, Map.get(attrs, "status", repair.status)),
         result: Map.get(attrs, :result, Map.get(attrs, "result", repair.result)),
-        description:
-          Map.get(attrs, :description, Map.get(attrs, "description", repair.description)),
-        context: Map.get(attrs, :context, Map.get(attrs, "context", repair.context)),
-        updated_at: updated_at
+        params: Map.get(attrs, :params, Map.get(attrs, "params", repair.params)),
+        started_at: Map.get(attrs, :started_at, Map.get(attrs, "started_at", repair.started_at)),
+        completed_at:
+          Map.get(attrs, :completed_at, Map.get(attrs, "completed_at", repair.completed_at))
     }
   end
 

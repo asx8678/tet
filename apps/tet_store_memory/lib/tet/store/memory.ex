@@ -475,7 +475,7 @@ defmodule Tet.Store.Memory do
           {{:error, :error_not_found}, state}
 
         error_entry ->
-          resolved_at = DateTime.utc_now() |> DateTime.to_iso8601()
+          resolved_at = DateTime.utc_now()
           resolved = Tet.ErrorLog.resolve(error_entry, resolved_at)
           new_state = put_in(state, [:errors, error_id], resolved)
           {{:ok, resolved}, new_state}
@@ -510,10 +510,10 @@ defmodule Tet.Store.Memory do
           {{:ok, nil}, state}
 
         [%Tet.Repair{} = repair | _rest] ->
-          updated_at = DateTime.utc_now() |> DateTime.to_iso8601()
-          in_progress = %{repair | status: :in_progress, updated_at: updated_at}
-          new_state = put_in(state, [:repairs, repair.id], in_progress)
-          {{:ok, in_progress}, new_state}
+          now = DateTime.utc_now()
+          running = %{repair | status: :running, started_at: now}
+          new_state = put_in(state, [:repairs, repair.id], running)
+          {{:ok, running}, new_state}
       end
     end)
   end
@@ -672,15 +672,15 @@ defmodule Tet.Store.Memory do
     Enum.filter(repairs, &(&1.status == status))
   end
 
-  defp merge_repair_attrs(%Tet.Repair{} = repair, attrs, updated_at) do
+  defp merge_repair_attrs(%Tet.Repair{} = repair, attrs, _updated_at) do
     %{
       repair
       | status: Map.get(attrs, :status, Map.get(attrs, "status", repair.status)),
         result: Map.get(attrs, :result, Map.get(attrs, "result", repair.result)),
-        description:
-          Map.get(attrs, :description, Map.get(attrs, "description", repair.description)),
-        context: Map.get(attrs, :context, Map.get(attrs, "context", repair.context)),
-        updated_at: updated_at
+        params: Map.get(attrs, :params, Map.get(attrs, "params", repair.params)),
+        started_at: Map.get(attrs, :started_at, Map.get(attrs, "started_at", repair.started_at)),
+        completed_at:
+          Map.get(attrs, :completed_at, Map.get(attrs, "completed_at", repair.completed_at))
     }
   end
 

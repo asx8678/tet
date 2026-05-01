@@ -98,6 +98,55 @@ defmodule Tet.EntitiesRoundTripTest do
       committed_at: nil,
       attempt: 2,
       metadata: %{"provider" => "mock"}
+    },
+    %Tet.ErrorLog{
+      id: "err_prefixed_ok",
+      session_id: "ses_prefixed_ok",
+      task_id: "task_prefixed_ok",
+      kind: :exception,
+      message: "Runtime crash in provider call",
+      stacktrace: "** (RuntimeError) boom\n  provider.ex:42",
+      context: %{attempt: 2},
+      status: :open,
+      resolved_at: nil,
+      created_at: @now,
+      metadata: %{"origin" => "provider"}
+    },
+    %Tet.ErrorLog{
+      id: "err_resolved_prefixed_ok",
+      session_id: "ses_prefixed_ok",
+      kind: :smoke_failure,
+      message: "Smoke test assertion failed",
+      status: :resolved,
+      resolved_at: @later,
+      created_at: @now,
+      metadata: %{}
+    },
+    %Tet.Repair{
+      id: "rep_prefixed_ok",
+      error_log_id: "err_prefixed_ok",
+      session_id: "ses_prefixed_ok",
+      strategy: :retry,
+      params: %{max_attempts: 3, delay_ms: 1000},
+      result: nil,
+      status: :pending,
+      created_at: @now,
+      started_at: nil,
+      completed_at: nil,
+      metadata: %{"source" => "auto"}
+    },
+    %Tet.Repair{
+      id: "rep_succeeded_prefixed_ok",
+      error_log_id: "err_resolved_prefixed_ok",
+      session_id: "ses_prefixed_ok",
+      strategy: :patch,
+      params: %{file: "test/smoke.exs", fix: "fix_assertion"},
+      result: %{patched: true, test_passed: true},
+      status: :succeeded,
+      created_at: @now,
+      started_at: @now,
+      completed_at: @later,
+      metadata: %{"source" => "auto"}
     }
   ]
 
