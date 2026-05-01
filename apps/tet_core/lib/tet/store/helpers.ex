@@ -93,4 +93,66 @@ defmodule Tet.Store.Helpers do
   def maybe_filter_by_status(repairs, status) when is_atom(status) do
     Enum.filter(repairs, &(&1.status == status))
   end
+
+  # -- BD-0036: Finding merge helper --
+
+  # Fields that are safe to update on a Finding entry.
+  # Identity fields (id, session_id, source, title, created_at) are immutable
+  # after creation.
+  @finding_mutable_fields [
+    :task_id,
+    :description,
+    :severity,
+    :evidence_refs,
+    :promoted_to,
+    :promoted_at,
+    :status,
+    :metadata
+  ]
+
+  @doc """
+  Strips finding update attrs to only the explicitly mutable fields.
+
+  Prevents callers from mutating identity fields (`id`, `session_id`,
+  `source`, `title`, `created_at`) through `update_finding/3`.
+  """
+  @spec sanitize_finding_update_attrs(map()) :: map()
+  def sanitize_finding_update_attrs(attrs) when is_map(attrs) do
+    attrs
+    |> stringify_keys()
+    |> Map.take(Enum.map(@finding_mutable_fields, &Atom.to_string/1))
+  end
+
+  @doc """
+  Merges finding update attrs into an existing finding, validating the result.
+
+  Returns `{:ok, Tet.Finding.t()}` on success, `{:error, reason}` on failure.
+  **Never raises** — safe to call inside GenServer/Agent callbacks.
+  """
+  @spec merge_finding_attrs(Tet.Finding.t(), map()) ::
+          {:ok, Tet.Finding.t()} | {:error, term()}
+  def merge_finding_attrs(%Tet.Finding{} = finding, attrs) when is_map(attrs) do
+    sanitized = sanitize_finding_update_attrs(attrs)
+
+    finding
+    |> Tet.Finding.to_map()
+    |> stringify_keys()
+    |> Map.merge(sanitized)
+    |> Tet.Finding.new()
+    |> case do
+      {:ok, updated} -> {:ok, updated}
+      {:error, reason} -> {:error, reason}
+    end
+  end
+
+  @doc """
+  Filters project lessons by category (optional).
+  """
+  @spec maybe_filter_lessons_by_category([Tet.ProjectLesson.t()], atom() | nil) ::
+          [Tet.ProjectLesson.t()]
+  def maybe_filter_lessons_by_category(lessons, nil), do: lessons
+
+  def maybe_filter_lessons_by_category(lessons, category) when is_atom(category) do
+    Enum.filter(lessons, &(&1.category == category))
+  end
 end

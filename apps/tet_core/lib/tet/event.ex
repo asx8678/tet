@@ -74,6 +74,13 @@ defmodule Tet.Event do
     :"error.recorded"
   ]
 
+  @finding_store_types [
+    :"finding.created",
+    :"finding.promoted_to_persistent_memory",
+    :"finding.promoted_to_project_lesson",
+    :"finding.dismissed"
+  ]
+
   @blocked_action_types [
     :"blocked_action.created"
   ]
@@ -88,7 +95,8 @@ defmodule Tet.Event do
                  @provider_route_types ++
                  @profile_swap_types ++
                  @swap_types ++
-                 @steering_types ++ @read_tool_types ++ @v03_types ++ @blocked_action_types
+                 @steering_types ++
+                 @read_tool_types ++ @v03_types ++ @finding_store_types ++ @blocked_action_types
 
   @enforce_keys [:type]
   defstruct [:id, :type, :session_id, :sequence, :seq, :created_at, payload: %{}, metadata: %{}]
@@ -152,6 +160,9 @@ defmodule Tet.Event do
 
   @doc "Returns artifact event types (created)."
   def artifact_types, do: @artifact_types
+
+  @doc "Returns finding store event types (created/promoted/dismissed)."
+  def finding_store_types, do: @finding_store_types
 
   @doc "Returns blocked-action event types."
   def blocked_action_types, do: @blocked_action_types
@@ -230,6 +241,67 @@ defmodule Tet.Event do
   def artifact_created(payload \\ %{}, opts \\ [])
       when is_map(payload) and is_list(opts) do
     artifact_event(:"artifact.created", payload, opts)
+  end
+
+  @doc """
+  Builds a finding.created event.
+
+  Payload should include:
+    - `finding_id` — the finding row ID
+    - `source` — the finding source atom
+    - `severity` — the finding severity atom
+    - `title` — short title of the finding
+
+  Opts: `:session_id`, `:seq`, `:metadata`.
+  """
+  def finding_created(payload \\ %{}, opts \\ [])
+      when is_map(payload) and is_list(opts) do
+    finding_event(:"finding.created", payload, opts)
+  end
+
+  @doc """
+  Builds a finding.promoted_to_persistent_memory event.
+
+  Payload should include:
+    - `finding_id` — the finding row ID
+    - `persistent_memory_id` — the newly created persistent memory entry ID
+    - `title` — short title of the finding
+
+  Opts: `:session_id`, `:seq`, `:metadata`.
+  """
+  def finding_promoted_to_persistent_memory(payload \\ %{}, opts \\ [])
+      when is_map(payload) and is_list(opts) do
+    finding_event(:"finding.promoted_to_persistent_memory", payload, opts)
+  end
+
+  @doc """
+  Builds a finding.promoted_to_project_lesson event.
+
+  Payload should include:
+    - `finding_id` — the finding row ID
+    - `project_lesson_id` — the newly created project lesson ID
+    - `category` — the lesson category atom
+    - `title` — short title of the finding
+
+  Opts: `:session_id`, `:seq`, `:metadata`.
+  """
+  def finding_promoted_to_project_lesson(payload \\ %{}, opts \\ [])
+      when is_map(payload) and is_list(opts) do
+    finding_event(:"finding.promoted_to_project_lesson", payload, opts)
+  end
+
+  @doc """
+  Builds a finding.dismissed event.
+
+  Payload should include:
+    - `finding_id` — the finding row ID
+    - `title` — short title of the finding
+
+  Opts: `:session_id`, `:seq`, `:metadata`.
+  """
+  def finding_dismissed(payload \\ %{}, opts \\ [])
+      when is_map(payload) and is_list(opts) do
+    finding_event(:"finding.dismissed", payload, opts)
   end
 
   @doc """
@@ -460,6 +532,19 @@ defmodule Tet.Event do
   end
 
   defp blocked_action_event(type, payload, opts) do
+    %__MODULE__{
+      id: Keyword.get(opts, :id),
+      type: type,
+      session_id: Keyword.get(opts, :session_id),
+      sequence: Keyword.get(opts, :sequence),
+      seq: Keyword.get(opts, :seq),
+      payload: payload,
+      metadata: Keyword.get(opts, :metadata, %{}),
+      created_at: Keyword.get(opts, :created_at)
+    }
+  end
+
+  defp finding_event(type, payload, opts) do
     %__MODULE__{
       id: Keyword.get(opts, :id),
       type: type,
