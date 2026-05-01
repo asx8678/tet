@@ -35,15 +35,17 @@ defmodule Tet.Runtime.Subagent.ArtifactRouterTest do
     end
   end
 
-  setup do
-    case Process.whereis(TestStore) do
-      nil ->
-        {:ok, _pid} = TestStore.start_link([])
-
-      _pid ->
-        TestStore.clear()
+  setup_all do
+    case TestStore.start_link([]) do
+      {:ok, _pid} -> :ok
+      {:error, {:already_started, _pid}} -> :ok
     end
 
+    :ok
+  end
+
+  setup do
+    TestStore.clear()
     :ok
   end
 
