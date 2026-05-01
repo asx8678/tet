@@ -26,8 +26,10 @@ defmodule Tet.Runtime.Tools.EventCaptureTest do
   describe "run/3 with read tool" do
     test "emits started and completed events on success", %{workspace: ws} do
       {:ok, result, [started, completed]} =
-        EventCapture.run("read", %{"path" => "hello.txt"}, workspace_root: ws,
-          session_id: "ses_test_read")
+        EventCapture.run("read", %{"path" => "hello.txt"},
+          workspace_root: ws,
+          session_id: "ses_test_read"
+        )
 
       assert result.ok == true
 
@@ -57,15 +59,18 @@ defmodule Tet.Runtime.Tools.EventCaptureTest do
         |> Enum.join("\n")
 
       assert byte_size(large_content) > 102_400,
-        "large_content is only #{byte_size(large_content)} bytes"
+             "large_content is only #{byte_size(large_content)} bytes"
 
       File.write!(large_path, large_content)
 
       {:ok, _result, [_started, completed]} =
-        EventCapture.run("read", %{"path" => "large_result.txt"}, workspace_root: ws,
-          session_id: "ses_large")
+        EventCapture.run("read", %{"path" => "large_result.txt"},
+          workspace_root: ws,
+          session_id: "ses_large"
+        )
 
       assert completed.payload.ok == true
+
       assert %{
                content_sha256: sha256,
                content_bytes: content_bytes,
@@ -79,8 +84,10 @@ defmodule Tet.Runtime.Tools.EventCaptureTest do
 
     test "emits error event when tool fails", %{workspace: ws} do
       {:error, result, [_started, completed]} =
-        EventCapture.run("read", %{"path" => "nonexistent.txt"}, workspace_root: ws,
-          session_id: "ses_test_err")
+        EventCapture.run("read", %{"path" => "nonexistent.txt"},
+          workspace_root: ws,
+          session_id: "ses_test_err"
+        )
 
       assert result.ok == false
 
@@ -91,10 +98,12 @@ defmodule Tet.Runtime.Tools.EventCaptureTest do
 
     test "includes correlation metadata", %{workspace: ws} do
       {:ok, _result, [started, completed]} =
-        EventCapture.run("read", %{"path" => "hello.txt"}, workspace_root: ws,
+        EventCapture.run("read", %{"path" => "hello.txt"},
+          workspace_root: ws,
           session_id: "ses_corr",
           task_id: "task_1",
-          tool_call_id: "call_1")
+          tool_call_id: "call_1"
+        )
 
       assert started.metadata.correlation.session_id == "ses_corr"
       assert started.metadata.correlation.task_id == "task_1"
@@ -107,9 +116,11 @@ defmodule Tet.Runtime.Tools.EventCaptureTest do
 
     test "includes optional redaction class", %{workspace: ws} do
       {:ok, _result, [_started, completed]} =
-        EventCapture.run("list", %{"path" => "."}, workspace_root: ws,
+        EventCapture.run("list", %{"path" => "."},
+          workspace_root: ws,
           session_id: "ses_redact",
-          redaction_class: :workspace_metadata)
+          redaction_class: :workspace_metadata
+        )
 
       assert completed.payload.redaction_class == :workspace_metadata
     end
@@ -118,8 +129,10 @@ defmodule Tet.Runtime.Tools.EventCaptureTest do
   describe "run/3 with list tool" do
     test "emits events with entry summary", %{workspace: ws} do
       {:ok, result, [_started, completed]} =
-        EventCapture.run("list", %{"path" => "."}, workspace_root: ws,
-          session_id: "ses_list")
+        EventCapture.run("list", %{"path" => "."},
+          workspace_root: ws,
+          session_id: "ses_list"
+        )
 
       assert result.ok == true
 
@@ -134,8 +147,10 @@ defmodule Tet.Runtime.Tools.EventCaptureTest do
   describe "run/3 with search tool" do
     test "emits events with match summary", %{workspace: ws} do
       {:ok, result, [_started, completed]} =
-        EventCapture.run("search", %{"path" => ".", "query" => "hello"}, workspace_root: ws,
-          session_id: "ses_search")
+        EventCapture.run("search", %{"path" => ".", "query" => "hello"},
+          workspace_root: ws,
+          session_id: "ses_search"
+        )
 
       assert result.ok == true
 
@@ -149,14 +164,15 @@ defmodule Tet.Runtime.Tools.EventCaptureTest do
 
   describe "summary_args/1" do
     test "extracts known keys" do
-      result = EventCapture.summary_args(%{
-        "path" => "/some/path",
-        "query" => "search term",
-        "start_line" => 1,
-        "line_count" => 100,
-        "recursive" => true,
-        "some_extra" => "should be filtered"
-      })
+      result =
+        EventCapture.summary_args(%{
+          "path" => "/some/path",
+          "query" => "search term",
+          "start_line" => 1,
+          "line_count" => 100,
+          "recursive" => true,
+          "some_extra" => "should be filtered"
+        })
 
       assert result["path"] == "/some/path"
       assert result["query"] == "search term"

@@ -1,0 +1,74 @@
+%% Crash recovery — v0.3
+%% Runs once at boot via Tet.Runtime.WorkflowRecovery, after store is up
+%% and before WorkflowSupervisor accepts new workflows.
+%% Decision tree per step name; rollback for torn patches is conservative.
+
+flowchart TD
+  Boot([BEAM startup]):::user
+  Boot --> StoreUp[Tet.Store.Supervisor up]:::store
+  StoreUp --> Recover
+
+  Recover["WorkflowRecovery.recover_pending<br/>list_pending_workflows"]:::pure
+  Recover --> ForEach{For each workflow}:::decision
+
+  ForEach -->|status :cancelled| Skip([Skip — already terminal]):::done
+  ForEach -->|status :running| FindStep["find latest step<br/>where status :started<br/>and committed_at IS NULL"]:::pure
+
+  FindStep -->|no such step| Resume([Resume cleanly<br/>start executor]):::done
+  FindStep -->|step found| Classify{step_name?}:::decision
+
+  Classify -->|compose_prompt| Idem1["pure step<br/>re-run, commit"]:::pure
+  Idem1 --> Resume
+
+  Classify -->|provider_call:attempt:N| ProvCheck{retry budget?}:::decision
+  ProvCheck -->|yes| ProvRetry["fail_step current<br/>start :attempt:N+1<br/>emit error.recorded if<br/>uncommitted attempt suspected"]:::store
+  ProvRetry --> Resume
+  ProvCheck -->|no| FailWf["mark workflow :failed"]:::store
+  FailWf --> Skip
+
+  Classify -->|tool_run:&lt;read&gt;| ReadIdem["idempotent on stable FS<br/>re-run, commit"]:::pure
+  ReadIdem --> Resume
+
+  Classify -->|tool_run:propose_patch| ProposeCheck{diff artifact<br/>exists with<br/>matching sha?}:::decision
+  ProposeCheck -->|yes| ProposeReuse["look up approval<br/>by diff_sha256<br/>commit step with existing id"]:::store
+  ProposeReuse --> Resume
+  ProposeCheck -->|no| ProposeFail["fail_step<br/>let agent retry"]:::store
+  ProposeFail --> Resume
+
+  Classify -->|patch_apply| PatchTree
+  Classify -->|patch_rollback| RollIdem["idempotent<br/>re-run, commit"]:::pure
+  RollIdem --> Resume
+
+  Classify -->|verifier_run:&lt;name&gt;| VerIdem["idempotent on<br/>stable workspace<br/>re-run, commit"]:::pure
+  VerIdem --> Resume
+
+  Classify -->|emit_event| EmitMark["mark :committed<br/>subscribers must dedupe<br/>by event.id"]:::store
+  EmitMark --> Resume
+
+  subgraph PT["patch_apply recovery"]
+    direction TB
+    PatchTree{"&lt;approval_id&gt;/<br/>manifest.json<br/>exists?"}:::decision
+    PatchTree -->|no| NoFiles["snapshot incomplete<br/>no files touched<br/>fail_step"]:::store
+    PatchTree -->|yes| Conservative["status of git apply<br/>unknown from journal alone"]:::pure
+    Conservative --> RunRollback["run patch_rollback unconditionally<br/>(idempotent)"]:::side
+    RunRollback --> RestoreOk{"workspace<br/>matches snapshot<br/>pre-state hash?"}:::decision
+    RestoreOk -->|yes| MarkTorn["mark workflow :failed<br/>reason :patch_torn_recovered"]:::store
+    RestoreOk -->|no| MarkInconsistent["mark workflow :failed<br/>reason :workspace_inconsistent<br/>operator alert"]:::store
+  end
+
+  NoFiles --> Skip
+  MarkTorn --> Skip
+  MarkInconsistent --> Skip
+
+  ForEach -->|stuck > 600s,<br/>no journal updates| Stuck["mark :failed<br/>reason :stuck_after_restart"]:::store
+  Stuck --> Skip
+
+  Skip --> Done([Recovery complete<br/>WorkflowSupervisor accepts new starts]):::done
+  Resume --> Done
+
+  classDef user fill:#dbeafe,stroke:#1e40af,color:#0b1727;
+  classDef store fill:#fef3c7,stroke:#b45309,color:#0b1727;
+  classDef side fill:#fce7f3,stroke:#9d174d,color:#0b1727;
+  classDef pure fill:#dcfce7,stroke:#15803d,color:#0b1727;
+  classDef decision fill:#fef9c3,stroke:#854d0e,color:#0b1727;
+  classDef done fill:#d1fae5,stroke:#065f46,color:#0b1727;

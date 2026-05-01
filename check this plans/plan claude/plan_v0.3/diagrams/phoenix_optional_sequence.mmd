@@ -1,0 +1,25 @@
+sequenceDiagram
+  participant Browser
+  participant LV as TetWeb.SessionLive
+  participant API as Tet facade
+  participant Runtime as tet_runtime
+  participant Bus as Tet.EventBus
+  participant Store as Tet.Store adapter
+
+  Browser->>LV: open /sessions/:id
+  LV->>API: Tet.get_session(id)
+  API->>Runtime: get_session
+  Runtime->>Store: load session
+  Store-->>Runtime: %Tet.Session{}
+  Runtime-->>API: session
+  API-->>LV: session
+  LV->>API: Tet.list_events(id)
+  LV->>API: Tet.subscribe(id)
+  Browser->>LV: approve patch
+  LV->>API: Tet.approve_patch(session_id, approval_id)
+  API->>Runtime: dispatch PatchDecision
+  Runtime->>Bus: publish approval/patch/verifier events
+  Bus-->>LV: %Tet.Event{}
+  LV-->>Browser: render updated state
+
+  Note over LV,Runtime: LiveView renders and calls Tet.* only. No domain logic here.

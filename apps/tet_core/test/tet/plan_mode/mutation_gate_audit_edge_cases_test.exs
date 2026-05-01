@@ -68,13 +68,14 @@ defmodule Tet.PlanMode.MutationGateAuditEdgeCasesTest do
     test "nil safe_modes + nil acting_categories policy never allows mutation" do
       # Use a policy with both nil safe_modes AND nil acting_categories
       # so that execute/acting also fails closed
-      policy = struct(Policy, %{
-        plan_mode: :plan,
-        safe_modes: nil,
-        plan_safe_categories: [:researching, :planning],
-        acting_categories: nil,
-        require_active_task: true
-      })
+      policy =
+        struct(Policy, %{
+          plan_mode: :plan,
+          safe_modes: nil,
+          plan_safe_categories: [:researching, :planning],
+          acting_categories: nil,
+          require_active_task: true
+        })
 
       for mode <- [:plan, :explore, :execute],
           category <- [:researching, :planning, :acting],
@@ -88,13 +89,14 @@ defmodule Tet.PlanMode.MutationGateAuditEdgeCasesTest do
     end
 
     test "nil acting_categories policy restricts mutation in execute mode" do
-      policy = struct(Policy, %{
-        plan_mode: :plan,
-        safe_modes: [:plan, :explore],
-        plan_safe_categories: [:researching, :planning],
-        acting_categories: nil,
-        require_active_task: true
-      })
+      policy =
+        struct(Policy, %{
+          plan_mode: :plan,
+          safe_modes: [:plan, :explore],
+          plan_safe_categories: [:researching, :planning],
+          acting_categories: nil,
+          require_active_task: true
+        })
 
       ctx = %{mode: :execute, task_category: :acting, task_id: "t_nil_act"}
       decision = Gate.evaluate(write_contract(), policy, ctx)
@@ -102,13 +104,14 @@ defmodule Tet.PlanMode.MutationGateAuditEdgeCasesTest do
     end
 
     test "fully corrupted policy (all nils) blocks all mutations" do
-      policy = struct(Policy, %{
-        plan_mode: nil,
-        safe_modes: nil,
-        plan_safe_categories: nil,
-        acting_categories: nil,
-        require_active_task: true
-      })
+      policy =
+        struct(Policy, %{
+          plan_mode: nil,
+          safe_modes: nil,
+          plan_safe_categories: nil,
+          acting_categories: nil,
+          require_active_task: true
+        })
 
       for contract <- [write_contract(), shell_contract()] do
         ctx = %{mode: :execute, task_category: :acting, task_id: "t_full_corrupt"}
@@ -120,13 +123,14 @@ defmodule Tet.PlanMode.MutationGateAuditEdgeCasesTest do
     end
 
     test "corrupted policy blocked decisions are still persistable as events" do
-      policy = struct(Policy, %{
-        plan_mode: nil,
-        safe_modes: nil,
-        plan_safe_categories: nil,
-        acting_categories: nil,
-        require_active_task: true
-      })
+      policy =
+        struct(Policy, %{
+          plan_mode: nil,
+          safe_modes: nil,
+          plan_safe_categories: nil,
+          acting_categories: nil,
+          require_active_task: true
+        })
 
       ctx = %{mode: :execute, task_category: :acting, task_id: "t_persist_corrupt"}
       decision = Gate.evaluate(write_contract(), policy, ctx)

@@ -34,15 +34,18 @@ defmodule Tet.TaskManager.TaskTest do
     end
 
     test "rejects empty id" do
-      assert {:error, {:invalid_task_field, :id}} = Task.new(%{id: "", title: "Test", category: :researching})
+      assert {:error, {:invalid_task_field, :id}} =
+               Task.new(%{id: "", title: "Test", category: :researching})
     end
 
     test "rejects missing title" do
-      assert {:error, {:invalid_task_field, :title}} = Task.new(%{id: "t1", category: :researching})
+      assert {:error, {:invalid_task_field, :title}} =
+               Task.new(%{id: "t1", category: :researching})
     end
 
     test "rejects invalid category" do
-      assert {:error, {:invalid_task_field, :category}} = Task.new(%{id: "t1", title: "Test", category: :invalid})
+      assert {:error, {:invalid_task_field, :category}} =
+               Task.new(%{id: "t1", title: "Test", category: :invalid})
     end
 
     test "accepts string category and normalizes to atom" do
@@ -167,13 +170,17 @@ defmodule Tet.TaskManager.TaskTest do
 
     test "rejects invalid category" do
       task = Task.new!(%{id: "t1", title: "Test", category: :researching})
-      assert {:error, {:invalid_task_category, :teleporting}} = Task.recategorize(task, :teleporting)
+
+      assert {:error, {:invalid_task_category, :teleporting}} =
+               Task.recategorize(task, :teleporting)
     end
 
     test "rejects recategorize of terminal task" do
       for status <- [:completed, :failed, :cancelled] do
         task = Task.new!(%{id: "t1", title: "Test", category: :acting, status: status})
-        assert {:error, {:terminal_task_recategorize, ^status}} = Task.recategorize(task, :researching)
+
+        assert {:error, {:terminal_task_recategorize, ^status}} =
+                 Task.recategorize(task, :researching)
       end
     end
   end
@@ -209,7 +216,9 @@ defmodule Tet.TaskManager.TaskTest do
     end
 
     test "removes a dependency" do
-      task = Task.new!(%{id: "t1", title: "Test", category: :acting, dependencies: ["dep1", "dep2"]})
+      task =
+        Task.new!(%{id: "t1", title: "Test", category: :acting, dependencies: ["dep1", "dep2"]})
+
       assert {:ok, updated} = Task.remove_dependency(task, "dep1")
       assert updated.dependencies == ["dep2"]
     end
@@ -229,7 +238,15 @@ defmodule Tet.TaskManager.TaskTest do
 
     test "rejects remove from terminal task" do
       for status <- [:completed, :failed, :cancelled] do
-        task = Task.new!(%{id: "t1", title: "Test", category: :acting, status: status, dependencies: ["dep1"]})
+        task =
+          Task.new!(%{
+            id: "t1",
+            title: "Test",
+            category: :acting,
+            status: status,
+            dependencies: ["dep1"]
+          })
+
         assert {:error, {:terminal_task_mutation, ^status}} = Task.remove_dependency(task, "dep1")
       end
     end
