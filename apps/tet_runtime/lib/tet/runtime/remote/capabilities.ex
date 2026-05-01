@@ -7,7 +7,7 @@ defmodule Tet.Runtime.Remote.Capabilities do
   disabled defaults.
   """
 
-  @capability_kinds [:commands, :verifiers, :artifacts, :cancel, :heartbeat]
+  @capability_kinds [:commands, :verifiers, :artifacts, :cancel, :heartbeat, :streaming]
   @named_capability_kinds [:commands, :verifiers]
 
   @doc "Returns supported capability kinds in stable order."
