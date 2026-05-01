@@ -4,18 +4,21 @@ defmodule Tet.Runtime.Tools.List do
 
   Implements:
   - Workspace path containment via `PathResolver`
+  - Realpath defense-in-depth check before I/O
   - Recursive listing with max depth
   - Entry size metadata
-  - Summary rollup
+  - Summary rollup with truncation propagation
   - Truncation at limits enforced at the I/O boundary
+  - Non-recursive listing reports truncated when >5000 entries
   - No mutation
   """
 
   alias Tet.Runtime.Tools.PathResolver
+  alias Tet.Runtime.Tools.Envelope
 
   @max_entries 5_000
   @max_depth_limit 12
-  @type result :: map()
+  @type result :: Envelope.t()
 
   @doc """
   Lists directory entries inside a workspace directory.
@@ -36,10 +39,31 @@ defmodule Tet.Runtime.Tools.List do
     max_depth = Map.get(args, "max_depth", if(recursive, do: @max_depth_limit, else: 0))
 
     with :ok <- validate_arg_types(args),
-         {:ok, resolved_path} <- PathResolver.resolve_directory(path_str, workspace_root) do
+         {:ok, resolved_path} <- PathResolver.resolve_directory(path_str, workspace_root),
+         :ok <- contain_realpath(resolved_path, workspace_root) do
       list_entries(resolved_path, path_str, recursive, max_depth, workspace_root)
     else
       {:error, denial} -> build_error(denial)
+    end
+  end
+
+  # Defense-in-depth: realpath check immediately before I/O
+  defp contain_realpath(resolved_path, workspace_root) do
+    root_canon = PathResolver.canonicalize_workspace_root(workspace_root)
+    resolved_exp = Path.expand(resolved_path)
+
+    if String.starts_with?(resolved_exp, root_canon <> "/") or
+         resolved_exp == root_canon do
+      :ok
+    else
+      {:error,
+       %{
+         code: "workspace_escape",
+         message: "Path escapes workspace containment boundary",
+         kind: "policy_denial",
+         retryable: false,
+         details: %{path: resolved_path}
+       }}
     end
   end
 
@@ -66,8 +90,11 @@ defmodule Tet.Runtime.Tools.List do
           if recursive and max_depth > 0 do
             collect_recursive(names, dir_path, rel_path, workspace_root, 0, max_depth, [])
           else
+            total_names = length(names)
+            truncated = total_names > @max_entries
             entries = build_entries(names, dir_path, rel_path, workspace_root, 0, 0, %{})
-            {entries, length(entries), false}
+            entries = if truncated, do: Enum.take(entries, @max_entries), else: entries
+            {entries, min(length(entries), @max_entries), truncated}
           end
 
         summary = %{
@@ -228,30 +255,27 @@ defmodule Tet.Runtime.Tools.List do
   end
 
   defp build_success(rel_path, entries, truncated, summary) do
-    %{
-      ok: true,
-      data: %{
-        directory: rel_path,
-        entries: entries,
-        summary: summary
-      },
+    data = %{
+      directory: rel_path,
+      entries: entries,
+      summary: summary
+    }
+
+    Envelope.success(data,
       truncated: truncated,
       limit_usage: %{
         paths: %{used: 1, max: @max_entries},
         results: %{used: length(entries), max: @max_entries}
       }
-    }
+    )
   end
 
   defp build_error(denial) do
-    %{
-      ok: false,
-      error: denial,
-      truncated: false,
+    Envelope.error(denial,
       limit_usage: %{
         paths: %{used: 0, max: @max_entries},
         results: %{used: 0, max: @max_entries}
       }
-    }
+    )
   end
 end

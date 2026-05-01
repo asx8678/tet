@@ -39,7 +39,11 @@ defmodule Tet.Runtime.ToolsTest do
       result = Tools.run_tool("delete", %{}, workspace_root: "/tmp")
 
       assert result.ok == false
+      assert result.data == nil
       assert result.error.code == "tool_unavailable"
+      assert result.correlation == nil
+      assert result.redactions == []
+      assert result.truncated == false
     end
 
     test "known_tool_names returns implemented tools" do
@@ -47,6 +51,56 @@ defmodule Tet.Runtime.ToolsTest do
       assert "read" in names
       assert "list" in names
       assert "search" in names
+    end
+  end
+
+  describe "envelope schema (BD-0020)" do
+    test "success envelope has all required keys", %{workspace: ws} do
+      result = Tools.run_tool("read", %{"path" => "test.txt"}, workspace_root: ws)
+
+      assert Map.has_key?(result, :ok)
+      assert Map.has_key?(result, :correlation)
+      assert Map.has_key?(result, :data)
+      assert Map.has_key?(result, :error)
+      assert Map.has_key?(result, :redactions)
+      assert Map.has_key?(result, :truncated)
+      assert Map.has_key?(result, :limit_usage)
+      assert result.ok == true
+      assert result.error == nil
+      assert result.redactions == []
+    end
+
+    test "error envelope has all required keys with data nil" do
+      result = Tools.run_tool("read", %{"path" => "../etc"}, workspace_root: "/tmp")
+
+      assert Map.has_key?(result, :ok)
+      assert Map.has_key?(result, :correlation)
+      assert Map.has_key?(result, :data)
+      assert Map.has_key?(result, :error)
+      assert Map.has_key?(result, :redactions)
+      assert Map.has_key?(result, :truncated)
+      assert Map.has_key?(result, :limit_usage)
+      assert result.ok == false
+      assert result.data == nil
+      assert result.error != nil
+      assert result.redactions == []
+    end
+
+    test "unknown tool envelope has BD-0020 shape" do
+      result = Tools.run_tool("delete", %{}, workspace_root: "/tmp")
+
+      assert Map.has_key?(result, :ok)
+      assert Map.has_key?(result, :correlation)
+      assert Map.has_key?(result, :data)
+      assert Map.has_key?(result, :error)
+      assert Map.has_key?(result, :redactions)
+      assert Map.has_key?(result, :truncated)
+      assert Map.has_key?(result, :limit_usage)
+      assert result.ok == false
+      assert result.data == nil
+      assert result.error.code == "tool_unavailable"
+      assert result.redactions == []
+      assert result.truncated == false
     end
   end
 end

@@ -4,27 +4,23 @@ defmodule Tet.Runtime.Tools.Read do
 
   Implements:
   - Workspace path containment via `PathResolver`
+  - Realpath defense-in-depth check before I/O
   - Bounded line ranges (start_line / line_count)
   - Truncation at byte limit (max_read_bytes from contract)
   - Binary file detection
-  - Structured denial reasons
+  - Structured denial reasons (BD-0020 envelope)
   - No mutation
   - Bounded file reads at the I/O boundary
   """
 
   alias Tet.Runtime.Tools.PathResolver
+  alias Tet.Runtime.Tools.Envelope
 
   @default_max_bytes 1_000_000
   @default_max_lines 5_000
   @read_chunk_size 65_536
 
-  @type result :: %{
-          required(:ok) => boolean(),
-          optional(:data) => map(),
-          optional(:error) => map(),
-          optional(:truncated) => boolean(),
-          optional(:limit_usage) => map()
-        }
+  @type result :: Envelope.t()
 
   @doc """
   Reads a bounded text range from one workspace file.
@@ -48,10 +44,33 @@ defmodule Tet.Runtime.Tools.Read do
     with :ok <- validate_arg_types(args),
          {:ok, resolved_path} <- PathResolver.resolve_file(path_str, workspace_root),
          :ok <- validate_line_range(start_line, line_count, max_lines),
+         :ok <- contain_realpath(resolved_path, workspace_root),
          {:ok, content, meta} <- read_file_range(resolved_path, start_line, line_count, max_bytes) do
       build_success(path_str, content, meta)
     else
       {:error, denial} -> build_error(denial)
+    end
+  end
+
+  # Defense-in-depth: realpath check immediately before I/O
+  defp contain_realpath(resolved_path, workspace_root) do
+    root_canon = PathResolver.canonicalize_workspace_root(workspace_root)
+
+    # Check if the path is under workspace root without symlink following
+    resolved_exp = Path.expand(resolved_path)
+
+    if String.starts_with?(resolved_exp, root_canon <> "/") or
+         resolved_exp == root_canon do
+      :ok
+    else
+      {:error,
+       %{
+         code: "workspace_escape",
+         message: "Path escapes workspace containment boundary",
+         kind: "policy_denial",
+         retryable: false,
+         details: %{path: resolved_path}
+       }}
     end
   end
 
@@ -249,37 +268,34 @@ defmodule Tet.Runtime.Tools.Read do
   defp build_success(path_str, content, meta) do
     truncated = meta[:truncated] || false
 
-    %{
-      ok: true,
-      data: %{
-        path: path_str,
-        content: content,
-        encoding: "utf-8",
-        start_line: meta.start_line,
-        line_count: meta.line_count,
-        total_lines: meta.total_lines,
-        bytes_read: meta.bytes_read || byte_size(content),
-        binary: meta.binary || false
-      },
+    data = %{
+      path: path_str,
+      content: content,
+      encoding: "utf-8",
+      start_line: meta.start_line,
+      line_count: meta.line_count,
+      total_lines: meta.total_lines,
+      bytes_read: meta.bytes_read || byte_size(content),
+      binary: meta.binary || false
+    }
+
+    Envelope.success(data,
       truncated: truncated,
       limit_usage: %{
         paths: %{used: 1, max: 1},
         bytes: %{used: meta.bytes_read || byte_size(content)},
         lines: %{used: meta.line_count}
       }
-    }
+    )
   end
 
   defp build_error(denial) do
-    %{
-      ok: false,
-      error: denial,
-      truncated: false,
+    Envelope.error(denial,
       limit_usage: %{
         paths: %{used: 0, max: 1},
         bytes: %{used: 0},
         lines: %{used: 0}
       }
-    }
+    )
   end
 end

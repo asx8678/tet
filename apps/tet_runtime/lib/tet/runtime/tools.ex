@@ -3,8 +3,11 @@ defmodule Tet.Runtime.Tools do
   Facade for the BD-0021 path-safe read-only tool executors.
 
   Dispatches to the correct tool implementation by name, applies
-  workspace containment, enforces limits, and returns structured results.
+  workspace containment, enforces limits, and returns structured results
+  matching the BD-0020 envelope schema.
   """
+
+  alias Tet.Runtime.Tools.Envelope
 
   @known_tools %{
     "list" => Tet.Runtime.Tools.List,
@@ -19,8 +22,8 @@ defmodule Tet.Runtime.Tools do
   @doc """
   Runs a named tool with the given arguments and workspace context.
 
-  Returns a structured result map with `ok`, `data`/`error`, `truncated`,
-  and `limit_usage` keys.
+  Returns a BD-0020 envelope with `ok`, `correlation`, `data`, `error`,
+  `redactions`, `truncated`, and `limit_usage` keys.
   """
   @spec run_tool(String.t(), map(), keyword()) :: map()
   def run_tool(tool_name, args, opts \\ []) when is_binary(tool_name) and is_map(args) do
@@ -29,17 +32,7 @@ defmodule Tet.Runtime.Tools do
     if module do
       module.run(args, opts)
     else
-      %{
-        ok: false,
-        error: %{
-          code: "tool_unavailable",
-          message: "Unknown tool: #{tool_name}",
-          kind: "unavailable",
-          retryable: false,
-          details: %{}
-        },
-        truncated: false
-      }
+      Envelope.unknown_tool(tool_name)
     end
   end
 end

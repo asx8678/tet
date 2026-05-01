@@ -49,7 +49,7 @@ defmodule Tet.Runtime.Tools.PathResolver do
          :ok <- reject_absolute(path_str),
          :ok <- reject_traversal(path_str),
          {:ok, joined} <- join_relative(path_str, workspace_root),
-         :ok <- reject_symlink_chain_escape(joined, workspace_root) do
+         :ok <- reject_symlink_escape_by_realpath(joined, workspace_root) do
       {:ok, joined}
     end
   end
@@ -135,104 +135,49 @@ defmodule Tet.Runtime.Tools.PathResolver do
     end
   end
 
-  defp canonicalize_workspace_root(workspace_root) do
-    case File.lstat(workspace_root) do
-      {:ok, stat} ->
-        if stat.type == :symlink do
-          case File.read_link(workspace_root) do
-            {:ok, target} ->
-              absolute_target =
-                Path.absname(target, Path.dirname(workspace_root)) |> Path.expand()
+  @doc """
+  Canonicalizes a workspace root by resolving all symlink components.
 
-              absolute_target
-
-            {:error, _reason} ->
-              Path.expand(workspace_root)
-          end
-        else
-          Path.expand(workspace_root)
-        end
-
-      {:error, _reason} ->
-        Path.expand(workspace_root)
+  Returns the real filesystem path of the workspace root.
+  """
+  @spec canonicalize_workspace_root(Path.t()) :: Path.t()
+  def canonicalize_workspace_root(workspace_root) do
+    # Resolve symlinks manually (realpath not available in this Erlang/OTP)
+    case resolve_all_symlinks(workspace_root) do
+      {:ok, real} -> real
+      {:error, _reason} -> Path.expand(workspace_root)
     end
   end
 
-  defp join_relative(path_str, workspace_root) do
-    joined = Path.join(workspace_root, path_str) |> Path.expand()
+  defp resolve_all_symlinks(path) do
+    abs_path = Path.expand(path)
+    # Walk each component resolving symlinks
+    parts = String.split(abs_path, "/", trim: true)
+    initial = if String.starts_with?(abs_path, "/"), do: "/", else: ""
 
-    if String.starts_with?(joined, workspace_root <> "/") or
-         joined == workspace_root do
-      {:ok, joined}
-    else
-      {:error, workspace_escape_denial("Resolved path escapes workspace")}
-    end
-  end
+    result =
+      Enum.reduce_while(parts, initial, fn part, acc ->
+        candidate = Path.join(acc, part)
 
-  @doc false
-  def reject_symlink_chain_escape(resolved_path, workspace_root) do
-    # Walk each path component and check for intermediate symlink escapes
-    # Use the already-canonicalized workspace_root here
-    root = canonicalize_workspace_root(workspace_root)
-    components = path_components(resolved_path, root)
-
-    check_components_for_symlink_escape(components, root)
-  end
-
-  defp path_components(resolved_path, root) do
-    # Build list of component paths from root down to resolved_path
-    relative =
-      case String.starts_with?(resolved_path, root <> "/") do
-        true ->
-          String.replace_prefix(resolved_path, root <> "/", "")
-
-        false ->
-          if resolved_path == root do
-            ""
-          else
-            resolved_path
-          end
-      end
-
-    if relative == "" do
-      []
-    else
-      parts = String.split(relative, "/")
-
-      Enum.reduce(parts, [], fn part, acc ->
-        prev = if acc == [], do: root, else: List.last(acc)
-        [prev <> "/" <> part | acc]
-      end)
-      |> Enum.reverse()
-    end
-  end
-
-  defp check_components_for_symlink_escape([], _root), do: :ok
-
-  defp check_components_for_symlink_escape([component | rest], root) do
-    case File.lstat(component) do
-      {:ok, stat} ->
-        if stat.type == :symlink do
-          case resolve_symlink_chain(component) do
-            {:ok, final_target} ->
-              if String.starts_with?(final_target, root <> "/") or
-                   final_target == root do
-                check_components_for_symlink_escape(rest, root)
-              else
-                {:error,
-                 workspace_escape_denial("Symlink chain from '#{component}' escapes workspace")}
+        case File.lstat(candidate) do
+          {:ok, stat} ->
+            if stat.type == :symlink do
+              case resolve_symlink_chain(candidate) do
+                {:ok, target} -> {:cont, target}
+                {:error, reason} -> {:halt, {:error, reason}}
               end
+            else
+              {:cont, candidate}
+            end
 
-            {:error, _reason} ->
-              check_components_for_symlink_escape(rest, root)
-          end
-        else
-          check_components_for_symlink_escape(rest, root)
+          {:error, reason} ->
+            {:halt, {:error, reason}}
         end
+      end)
 
-      {:error, _reason} ->
-        # Component doesn't exist yet (path might point to non-existent file)
-        check_components_for_symlink_escape(rest, root)
+    case result do
+      resolved when is_binary(resolved) -> {:ok, resolved}
+      {:error, _} = error -> error
     end
   end
 
@@ -259,6 +204,97 @@ defmodule Tet.Runtime.Tools.PathResolver do
         {:error, _reason} ->
           {:ok, path}
       end
+    end
+  end
+
+  defp join_relative(path_str, workspace_root) do
+    joined = Path.join(workspace_root, path_str) |> Path.expand()
+
+    if String.starts_with?(joined, workspace_root <> "/") or
+         joined == workspace_root do
+      {:ok, joined}
+    else
+      {:error, workspace_escape_denial("Resolved path escapes workspace")}
+    end
+  end
+
+  @doc false
+  def reject_symlink_escape_by_realpath(resolved_path, workspace_root) do
+    root = canonicalize_workspace_root(workspace_root)
+
+    # If the path exists, resolve all symlinks and compare
+    case resolve_all_symlinks(resolved_path) do
+      {:ok, real_path} ->
+        if String.starts_with?(real_path, root <> "/") or real_path == root do
+          :ok
+        else
+          {:error,
+           workspace_escape_denial(
+             "Symlink resolve: '#{resolved_path}' escapes workspace (real: #{real_path})"
+           )}
+        end
+
+      {:error, :enoent} ->
+        # Path doesn't exist yet — walk components with realpath to catch
+        # intermediate symlink escapes
+        walk_components_with_realpath(resolved_path, root)
+
+      {:error, :eloop} ->
+        {:error, workspace_escape_denial("Symlink loop detected resolving: '#{resolved_path}'")}
+
+      {:error, _reason} ->
+        # Fail closed on other resolution errors (eaccess, etc.)
+        {:error, workspace_escape_denial("Cannot resolve symlink path: '#{resolved_path}'")}
+    end
+  end
+
+  defp walk_components_with_realpath(resolved_path, root) do
+    # Walk components from root downward, using realpath on each existing
+    # ancestor to catch intermediate symlink escapes
+    relative =
+      case String.starts_with?(resolved_path, root <> "/") do
+        true ->
+          String.replace_prefix(resolved_path, root <> "/", "")
+
+        false ->
+          if resolved_path == root, do: "", else: resolved_path
+      end
+
+    parts = if relative == "", do: [], else: String.split(relative, "/")
+
+    walk_result =
+      Enum.reduce_while(parts, {:ok, root}, fn part, {:ok, current_dir} ->
+        candidate = Path.join(current_dir, part)
+
+        case resolve_all_symlinks(candidate) do
+          {:ok, real_candidate} ->
+            if String.starts_with?(real_candidate, root <> "/") or
+                 real_candidate == root do
+              {:cont, {:ok, real_candidate}}
+            else
+              {:halt,
+               {:error,
+                workspace_escape_denial(
+                  "Symlink component '#{candidate}' escapes workspace (real: #{real_candidate})"
+                )}}
+            end
+
+          {:error, :enoent} ->
+            # Component doesn't exist yet — stop walking
+            {:halt, {:ok, current_dir}}
+
+          {:error, :eloop} ->
+            {:halt,
+             {:error, workspace_escape_denial("Symlink loop detected in path: '#{candidate}'")}}
+
+          {:error, _reason} ->
+            {:halt, {:error, workspace_escape_denial("Cannot resolve component: '#{candidate}'")}}
+        end
+      end)
+
+    case walk_result do
+      {:ok, _} -> :ok
+      {:error, denial} -> {:error, denial}
     end
   end
 
@@ -398,6 +434,7 @@ defmodule Tet.Runtime.Tools.PathResolver do
 
   @doc """
   Validates that a value is a list of strings (globs).
+  Rejects NUL bytes, excessive length, and excessive count.
   """
   @spec validate_glob_list(any(), String.t()) :: :ok | {:error, denial()}
   def validate_glob_list(value, field_name) do
@@ -412,6 +449,16 @@ defmodule Tet.Runtime.Tools.PathResolver do
            details: %{field: field_name, value: value}
          }}
 
+      length(value) > 100 ->
+        {:error,
+         %{
+           code: "invalid_arguments",
+           message: "#{field_name} must have at most 100 entries, got: #{length(value)}",
+           kind: "invalid_input",
+           retryable: false,
+           details: %{field: field_name, count: length(value), max: 100}
+         }}
+
       Enum.any?(value, fn item -> not is_binary(item) end) ->
         {:error,
          %{
@@ -420,6 +467,26 @@ defmodule Tet.Runtime.Tools.PathResolver do
            kind: "invalid_input",
            retryable: false,
            details: %{field: field_name}
+         }}
+
+      Enum.any?(value, fn item -> String.contains?(item, <<0>>) end) ->
+        {:error,
+         %{
+           code: "invalid_arguments",
+           message: "#{field_name} globs must not contain null bytes",
+           kind: "invalid_input",
+           retryable: false,
+           details: %{field: field_name}
+         }}
+
+      Enum.any?(value, fn item -> byte_size(item) > 4_096 end) ->
+        {:error,
+         %{
+           code: "invalid_arguments",
+           message: "#{field_name} glob exceeds maximum length of 4096 bytes",
+           kind: "invalid_input",
+           retryable: false,
+           details: %{field: field_name, max_bytes: 4_096}
          }}
 
       true ->

@@ -30,6 +30,10 @@ defmodule Tet.Runtime.Tools.ReadTest do
       assert result.data.total_lines == 1
       assert result.data.binary == false
       assert result.truncated == false
+      # BD-0020 envelope keys
+      assert result.error == nil
+      assert result.correlation == nil
+      assert result.redactions == []
     end
 
     test "reads a multiline file", %{workspace: ws} do
@@ -66,7 +70,12 @@ defmodule Tet.Runtime.Tools.ReadTest do
       result = Read.run(%{"path" => "../etc/passwd"}, workspace_root: ws)
 
       assert result.ok == false
+      assert result.data == nil
       assert result.error.code == "workspace_escape"
+      # BD-0020 envelope keys
+      assert result.correlation == nil
+      assert result.redactions == []
+      assert result.truncated == false
     end
 
     test "rejects absolute paths" do
@@ -203,6 +212,52 @@ defmodule Tet.Runtime.Tools.ReadTest do
 
       assert result.ok == true
       assert result.data.content == "hello world"
+    end
+  end
+
+  describe "run/2 — rootlink/out/secret.txt ancestor escape" do
+    test "rejects rootlink/out/secret.txt via ancestor symlinks", %{workspace: ws} do
+      outside = "/tmp/tet_test_read_ancestor_#{System.unique_integer([:positive])}"
+      File.mkdir_p!(outside)
+      File.write!(Path.join(outside, "secret.txt"), "EVIL")
+      on_exit(fn -> File.rm_rf!(outside) end)
+
+      rootlink = Path.join(ws, "rootlink")
+      File.ln_s!(".", rootlink)
+      out_link = Path.join(ws, "out")
+      File.ln_s!("../outside", out_link)
+
+      result = Read.run(%{"path" => "rootlink/out/secret.txt"}, workspace_root: ws)
+
+      assert result.ok == false
+      assert result.error.code == "workspace_escape"
+      assert result.data == nil
+    end
+  end
+
+  describe "run/2 — envelope schema" do
+    test "success envelope has all BD-0020 keys", %{workspace: ws} do
+      result = Read.run(%{"path" => "hello.txt"}, workspace_root: ws)
+
+      assert Map.has_key?(result, :ok)
+      assert Map.has_key?(result, :correlation)
+      assert Map.has_key?(result, :data)
+      assert Map.has_key?(result, :error)
+      assert Map.has_key?(result, :redactions)
+      assert Map.has_key?(result, :truncated)
+      assert Map.has_key?(result, :limit_usage)
+      assert result.error == nil
+      assert result.redactions == []
+    end
+
+    test "error envelope has all BD-0020 keys with data nil", %{workspace: ws} do
+      result = Read.run(%{"path" => "../etc"}, workspace_root: ws)
+
+      assert result.ok == false
+      assert result.data == nil
+      assert result.error != nil
+      assert result.correlation == nil
+      assert result.redactions == []
     end
   end
 end

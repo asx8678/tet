@@ -33,6 +33,10 @@ defmodule Tet.Runtime.Tools.SearchTest do
 
       assert result.ok == true
       assert result.data.summary.match_count >= 2
+      # BD-0020 envelope
+      assert result.error == nil
+      assert result.correlation == nil
+      assert result.redactions == []
     end
 
     test "finds matches in subdirectories", %{workspace: ws} do
@@ -100,6 +104,7 @@ defmodule Tet.Runtime.Tools.SearchTest do
 
       assert result.ok == false
       assert result.error.code == "invalid_arguments"
+      assert result.data == nil
     end
 
     test "rejects nil query" do
@@ -122,6 +127,125 @@ defmodule Tet.Runtime.Tools.SearchTest do
 
       assert result.ok == false
       assert result.error.code == "invalid_arguments"
+    end
+  end
+
+  describe "run/2 — missing/nonexistent path" do
+    test "returns not_found for nonexistent path", %{workspace: ws} do
+      result =
+        Search.run(%{"path" => "nonexistent_dir", "query" => "hello"}, workspace_root: ws)
+
+      assert result.ok == false
+      assert result.error.code == "not_found"
+      assert result.data == nil
+    end
+
+    test "returns not_found for nonexistent nested path", %{workspace: ws} do
+      result =
+        Search.run(%{"path" => "sub/missing", "query" => "hello"}, workspace_root: ws)
+
+      assert result.ok == false
+      assert result.error.code == "not_found"
+    end
+  end
+
+  describe "run/2 — invalid regex handling" do
+    test "returns invalid_arguments for invalid regex", %{workspace: ws} do
+      skip_without_rg()
+
+      result =
+        Search.run(%{"path" => ".", "query" => "[invalid", "regex" => true},
+          workspace_root: ws
+        )
+
+      assert result.ok == false
+      assert result.error.code == "invalid_arguments"
+    end
+
+    test "returns invalid_arguments for unbalanced parens regex", %{workspace: ws} do
+      skip_without_rg()
+
+      result =
+        Search.run(%{"path" => ".", "query" => "(hello", "regex" => true},
+          workspace_root: ws
+        )
+
+      assert result.ok == false
+      assert result.error.code == "invalid_arguments"
+    end
+  end
+
+  describe "run/2 — NUL byte rejection" do
+    test "rejects NUL bytes in query", %{workspace: ws} do
+      result =
+        Search.run(%{"path" => ".", "query" => "hello\0world"}, workspace_root: ws)
+
+      assert result.ok == false
+      assert result.error.code == "invalid_arguments"
+      assert result.data == nil
+    end
+
+    test "rejects NUL bytes in include_globs", %{workspace: ws} do
+      result =
+        Search.run(%{"path" => ".", "query" => "hello", "include_globs" => ["*.txt\0evil"]},
+          workspace_root: ws
+        )
+
+      assert result.ok == false
+      assert result.error.code == "invalid_arguments"
+    end
+
+    test "rejects NUL bytes in exclude_globs", %{workspace: ws} do
+      result =
+        Search.run(%{"path" => ".", "query" => "hello", "exclude_globs" => ["*.txt\0evil"]},
+          workspace_root: ws
+        )
+
+      assert result.ok == false
+      assert result.error.code == "invalid_arguments"
+    end
+  end
+
+  describe "run/2 — RIPGREP_CONFIG_PATH isolation" do
+    test "outside files not seen when RIPGREP_CONFIG_PATH has --follow", %{workspace: ws} do
+      skip_without_rg()
+
+      # Create an outside dir with a file that would match if followed
+      outside = "/tmp/tet_test_rg_config_#{System.unique_integer([:positive])}"
+      File.mkdir_p!(outside)
+      File.write!(Path.join(outside, "outside_secret.txt"), "SECRET_DATA")
+      on_exit(fn -> File.rm_rf!(outside) end)
+
+      # Create a symlink from inside workspace to outside
+      link_path = Path.join(ws, "evil_link")
+      File.ln_s!(outside, link_path)
+
+      # Create a ripgrep config file that has --follow
+      config_dir = "/tmp/tet_test_rg_config_dir_#{System.unique_integer([:positive])}"
+      File.mkdir_p!(config_dir)
+      config_path = Path.join(config_dir, ".ripgreprc")
+      File.write!(config_path, "--follow\n")
+      on_exit(fn -> File.rm_rf!(config_dir) end)
+
+      # Search with RIPGREP_CONFIG_PATH set — should not see outside files
+      original_config = System.get_env("RIPGREP_CONFIG_PATH")
+      System.put_env("RIPGREP_CONFIG_PATH", config_path)
+
+      try do
+        result =
+          Search.run(%{"path" => ".", "query" => "SECRET_DATA"}, workspace_root: ws)
+
+        assert result.ok == true
+
+        assert result.data.summary.match_count == 0,
+               "RIPGREP_CONFIG_PATH with --follow should not expose outside files"
+      after
+        if original_config do
+          System.put_env("RIPGREP_CONFIG_PATH", original_config)
+        else
+          System.delete_env("RIPGREP_CONFIG_PATH")
+        end
+      end
     end
   end
 
@@ -213,6 +337,151 @@ defmodule Tet.Runtime.Tools.SearchTest do
 
       assert result.ok == false
       assert result.error.code == "invalid_arguments"
+    end
+  end
+
+  describe "run/2 — envelope schema (BD-0020)" do
+    test "success response has correct envelope keys", %{workspace: ws} do
+      skip_without_rg()
+
+      result = Search.run(%{"path" => ".", "query" => "hello"}, workspace_root: ws)
+
+      assert Map.has_key?(result, :ok)
+      assert Map.has_key?(result, :correlation)
+      assert Map.has_key?(result, :data)
+      assert Map.has_key?(result, :error)
+      assert Map.has_key?(result, :redactions)
+      assert Map.has_key?(result, :truncated)
+      assert Map.has_key?(result, :limit_usage)
+      assert result.error == nil
+      assert result.redactions == []
+    end
+
+    test "error response has correct envelope keys" do
+      result = Search.run(%{"path" => "../etc", "query" => "hello"}, workspace_root: "/tmp")
+
+      assert Map.has_key?(result, :ok)
+      assert Map.has_key?(result, :correlation)
+      assert Map.has_key?(result, :data)
+      assert Map.has_key?(result, :error)
+      assert Map.has_key?(result, :redactions)
+      assert Map.has_key?(result, :truncated)
+      assert Map.has_key?(result, :limit_usage)
+      assert result.data == nil
+      assert result.redactions == []
+    end
+  end
+
+  describe "run/2 — rootlink/out/secret.txt ancestor escape" do
+    test "rejects rootlink/out/secret.txt via ancestor symlinks", %{workspace: ws} do
+      skip_without_rg()
+
+      outside = "/tmp/tet_test_search_ancestor_#{System.unique_integer([:positive])}"
+      File.mkdir_p!(outside)
+      File.write!(Path.join(outside, "secret.txt"), "EVIL_SEARCH_DATA")
+      on_exit(fn -> File.rm_rf!(outside) end)
+
+      rootlink = Path.join(ws, "rootlink")
+      File.ln_s!(".", rootlink)
+      out_link = Path.join(ws, "out")
+      File.ln_s!("../outside", out_link)
+
+      result =
+        Search.run(%{"path" => "rootlink/out", "query" => "EVIL_SEARCH_DATA"}, workspace_root: ws)
+
+      assert result.ok == false
+      assert result.error.code == "workspace_escape"
+      assert result.data == nil
+    end
+  end
+
+  describe "run/2 — RIPGREP_CONFIG_PATH adversarial with symlink" do
+    test "outside symlink content not found even with evil RIPGREP_CONFIG_PATH", %{workspace: ws} do
+      skip_without_rg()
+
+      outside = "/tmp/tet_test_rg_evil_#{System.unique_integer([:positive])}"
+      File.mkdir_p!(outside)
+      File.write!(Path.join(outside, "evil_secret.txt"), "EVIL_CONFIG_DATA")
+      on_exit(fn -> File.rm_rf!(outside) end)
+
+      symlink = Path.join(ws, "evil_symlink")
+      File.ln_s!(outside, symlink)
+
+      # Create a ripgreprc that enables --follow
+      config_dir = "/tmp/tet_test_rg_evil_conf_#{System.unique_integer([:positive])}"
+      File.mkdir_p!(config_dir)
+      config_path = Path.join(config_dir, ".ripgreprc")
+      File.write!(config_path, "--follow\n")
+      on_exit(fn -> File.rm_rf!(config_dir) end)
+
+      original_config = System.get_env("RIPGREP_CONFIG_PATH")
+      System.put_env("RIPGREP_CONFIG_PATH", config_path)
+
+      try do
+        result = Search.run(%{"path" => ".", "query" => "EVIL_CONFIG_DATA"}, workspace_root: ws)
+
+        assert result.ok == true,
+               "RIPGREP_CONFIG_PATH with --follow should not expose outside files"
+
+        assert result.data.summary.match_count == 0
+      after
+        if original_config,
+          do: System.put_env("RIPGREP_CONFIG_PATH", original_config),
+          else: System.delete_env("RIPGREP_CONFIG_PATH")
+      end
+    end
+  end
+
+  describe "run/2 — malformed search inputs" do
+    test "missing search path returns not_found before invoking rg" do
+      result =
+        Search.run(%{"path" => "nonexistent_path_xyzzy", "query" => "hello"},
+          workspace_root: "/tmp"
+        )
+
+      assert result.ok == false
+      assert result.error.code == "not_found"
+    end
+
+    test "invalid regex returns invalid_arguments", %{workspace: ws} do
+      skip_without_rg()
+
+      result =
+        Search.run(%{"path" => ".", "query" => "(unclosed", "regex" => true}, workspace_root: ws)
+
+      assert result.ok == false
+      assert result.error.code == "invalid_arguments"
+    end
+  end
+
+  describe "run/2 — truncation and resource bounds" do
+    test "truncated flagged when max matches exceeded", %{workspace: ws} do
+      skip_without_rg()
+
+      # Create a file with more than 200 matches
+      lines = Enum.map(1..300, &"match_line_#{&1}")
+      content = Enum.join(lines, "\n")
+      File.write!(Path.join(ws, "many_matches.txt"), content)
+
+      result = Search.run(%{"path" => ".", "query" => "match_line"}, workspace_root: ws)
+
+      assert result.ok == true
+      assert result.truncated == true
+      assert length(result.data.matches) <= 200
+    end
+
+    test "truncated flagged when max paths exceeded", %{workspace: ws} do
+      skip_without_rg()
+
+      # Create >100 files each with a match
+      for i <- 1..105 do
+        File.write!(Path.join(ws, "file_#{i}.txt"), "unique_match_line_#{i}")
+      end
+
+      result = Search.run(%{"path" => ".", "query" => "unique_match_line"}, workspace_root: ws)
+
+      assert result.ok == true
+      assert result.truncated == true
     end
   end
 end

@@ -15,21 +15,26 @@ defmodule Tet.Runtime.Tools.PathResolverTest do
     %{workspace: @workspace}
   end
 
+  defp canon(ws), do: elem(PathResolver.resolve(".", ws), 1)
+
   describe "resolve/2" do
     test "resolves a relative path inside workspace", %{workspace: ws} do
+      cws = canon(ws)
       assert {:ok, resolved} = PathResolver.resolve("hello.txt", ws)
-      assert resolved == Path.join(ws, "hello.txt")
-      assert String.starts_with?(resolved, ws)
+      assert resolved == Path.join(cws, "hello.txt")
+      assert String.starts_with?(resolved, cws)
     end
 
     test "resolves nested relative path", %{workspace: ws} do
+      cws = canon(ws)
       assert {:ok, resolved} = PathResolver.resolve("sub/nested.txt", ws)
-      assert resolved == Path.join(ws, "sub/nested.txt")
+      assert resolved == Path.join(cws, "sub/nested.txt")
     end
 
     test "resolves dot as workspace root", %{workspace: ws} do
+      cws = canon(ws)
       assert {:ok, resolved} = PathResolver.resolve(".", ws)
-      assert resolved == ws
+      assert resolved == cws
     end
 
     test "rejects absolute paths" do
@@ -71,8 +76,9 @@ defmodule Tet.Runtime.Tools.PathResolverTest do
 
   describe "resolve_file/2" do
     test "resolves an existing file", %{workspace: ws} do
+      cws = canon(ws)
       assert {:ok, resolved} = PathResolver.resolve_file("hello.txt", ws)
-      assert resolved == Path.join(ws, "hello.txt")
+      assert resolved == Path.join(cws, "hello.txt")
     end
 
     test "rejects a non-existent file", %{workspace: ws} do
@@ -88,8 +94,9 @@ defmodule Tet.Runtime.Tools.PathResolverTest do
 
   describe "resolve_directory/2" do
     test "resolves an existing directory", %{workspace: ws} do
+      cws = canon(ws)
       assert {:ok, resolved} = PathResolver.resolve_directory(".", ws)
-      assert resolved == ws
+      assert resolved == cws
     end
 
     test "rejects a file path when directory expected", %{workspace: ws} do
@@ -143,20 +150,22 @@ defmodule Tet.Runtime.Tools.PathResolverTest do
     end
 
     test "allows symlink that stays inside workspace", %{workspace: ws} do
-      inside_target = Path.join(ws, "hello.txt")
+      cws = canon(ws)
+      inside_target = Path.join(cws, "hello.txt")
       link_path = Path.join(ws, "inside_link")
       File.ln_s!(inside_target, link_path)
 
       assert {:ok, resolved} = PathResolver.resolve("inside_link", ws)
-      assert String.starts_with?(resolved, ws)
+      assert String.starts_with?(resolved, cws)
     end
 
     test "allows relative symlink inside workspace", %{workspace: ws} do
+      cws = canon(ws)
       link_path = Path.join(ws, "rel_link")
       File.ln_s!("hello.txt", link_path)
 
       assert {:ok, resolved} = PathResolver.resolve("rel_link", ws)
-      assert String.starts_with?(resolved, ws)
+      assert String.starts_with?(resolved, cws)
     end
 
     test "rejects nested symlink chain where intermediate escapes", %{workspace: ws} do
@@ -172,6 +181,40 @@ defmodule Tet.Runtime.Tools.PathResolverTest do
       File.ln_s!("escape_link", nested_link)
 
       assert {:error, denial} = PathResolver.resolve("sub/nested_link/target.txt", ws)
+      assert denial.code == "workspace_escape"
+    end
+
+    test "rejects rootlink/out/secret.txt escape via ancestor symlinks", %{workspace: ws} do
+      # Setup: rootlink -> "." and out -> "../outside"
+      # Path rootlink/out/secret.txt should resolve to workspace/../outside/secret.txt
+      outside = "/tmp/tet_test_ancestor_escape_#{System.unique_integer([:positive])}"
+      File.mkdir_p!(outside)
+      File.write!(Path.join(outside, "secret.txt"), "escaped content")
+      on_exit(fn -> File.rm_rf!(outside) end)
+
+      rootlink = Path.join(ws, "rootlink")
+      File.ln_s!(".", rootlink)
+
+      out_link = Path.join(ws, "out")
+      File.ln_s!("../outside", out_link)
+
+      # rootlink/out/secret.txt -> "./rootlink/out/secret.txt" -> "./../outside/secret.txt"
+      assert {:error, denial} = PathResolver.resolve("rootlink/out/secret.txt", ws)
+      assert denial.code == "workspace_escape"
+    end
+
+    test "rejects rootlink/out escape via ancestor symlinks (directory level)", %{workspace: ws} do
+      outside = "/tmp/tet_test_ancestor_escape_dir_#{System.unique_integer([:positive])}"
+      File.mkdir_p!(outside)
+      on_exit(fn -> File.rm_rf!(outside) end)
+
+      rootlink = Path.join(ws, "rootlink")
+      File.ln_s!(".", rootlink)
+
+      out_link = Path.join(ws, "out")
+      File.ln_s!("../outside", out_link)
+
+      assert {:error, denial} = PathResolver.resolve("rootlink/out", ws)
       assert denial.code == "workspace_escape"
     end
   end
@@ -221,6 +264,23 @@ defmodule Tet.Runtime.Tools.PathResolverTest do
 
       assert :ok = PathResolver.validate_glob_list([], "globs")
       assert :ok = PathResolver.validate_glob_list(["*.txt", "*.ex"], "globs")
+    end
+
+    test "validate_glob_list rejects NUL bytes in globs" do
+      assert {:error, d} = PathResolver.validate_glob_list(["*.txt\0evil"], "globs")
+      assert d.code == "invalid_arguments"
+    end
+
+    test "validate_glob_list rejects excessive glob count" do
+      globs = Enum.map(1..101, &"*.txt#{&1}")
+      assert {:error, d} = PathResolver.validate_glob_list(globs, "globs")
+      assert d.code == "invalid_arguments"
+    end
+
+    test "validate_glob_list rejects excessive glob length" do
+      long_glob = String.duplicate("x", 5_000) <> ".txt"
+      assert {:error, d} = PathResolver.validate_glob_list([long_glob], "globs")
+      assert d.code == "invalid_arguments"
     end
   end
 end
