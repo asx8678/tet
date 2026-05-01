@@ -128,6 +128,15 @@ defmodule Tet.Event do
   @doc "Returns read-tool event types (started/completed)."
   def read_tool_types, do: @read_tool_types
 
+  @approval_types [
+    :"approval.created",
+    :"approval.approved",
+    :"approval.rejected"
+  ]
+
+  @doc "Returns approval lifecycle event types (created/approved/rejected)."
+  def approval_types, do: @approval_types
+
   @doc """
   Builds a normalized steering decision event.
 
@@ -138,6 +147,53 @@ defmodule Tet.Event do
   def steering_decision(payload \\ %{}, opts \\ [])
       when is_map(payload) and is_list(opts) do
     steering_event(:steering_decision, payload, opts)
+  end
+
+  @doc """
+  Builds an approval.created event.
+
+  Payload should include:
+    - `approval_id` — the approval row ID
+    - `tool_call_id` — tool call that requires approval
+    - `status` — always `:pending` on creation
+
+  Opts: `:session_id`, `:seq`, `:metadata`.
+  """
+  def approval_created(payload \\ %{}, opts \\ [])
+      when is_map(payload) and is_list(opts) do
+    approval_event(:"approval.created", payload, opts)
+  end
+
+  @doc """
+  Builds an approval.approved event.
+
+  Payload should include:
+    - `approval_id` — the approval row ID
+    - `tool_call_id` — tool call that was approved
+    - `approver` — who approved
+    - `rationale` — why approved
+
+  Opts: `:session_id`, `:seq`, `:metadata`.
+  """
+  def approval_approved(payload \\ %{}, opts \\ [])
+      when is_map(payload) and is_list(opts) do
+    approval_event(:"approval.approved", payload, opts)
+  end
+
+  @doc """
+  Builds an approval.rejected event.
+
+  Payload should include:
+    - `approval_id` — the approval row ID
+    - `tool_call_id` — tool call that was rejected
+    - `approver` — who rejected
+    - `rationale` — why rejected
+
+  Opts: `:session_id`, `:seq`, `:metadata`.
+  """
+  def approval_rejected(payload \\ %{}, opts \\ [])
+      when is_map(payload) and is_list(opts) do
+    approval_event(:"approval.rejected", payload, opts)
   end
 
   @doc """
@@ -315,6 +371,19 @@ defmodule Tet.Event do
 
   defp steering_event(type, payload, opts) do
     %__MODULE__{
+      type: type,
+      session_id: Keyword.get(opts, :session_id),
+      sequence: Keyword.get(opts, :sequence),
+      seq: Keyword.get(opts, :seq),
+      payload: payload,
+      metadata: Keyword.get(opts, :metadata, %{}),
+      created_at: Keyword.get(opts, :created_at)
+    }
+  end
+
+  defp approval_event(type, payload, opts) do
+    %__MODULE__{
+      id: Keyword.get(opts, :id),
       type: type,
       session_id: Keyword.get(opts, :session_id),
       sequence: Keyword.get(opts, :sequence),
