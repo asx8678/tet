@@ -137,15 +137,15 @@ defmodule Tet.ErrorLog do
   ]
 
   defp fetch_kind(attrs) do
-    allowed = @allowed_kinds
-
     case fetch_value(attrs, :kind) do
       kind when is_atom(kind) and not is_nil(kind) ->
         {:ok, kind}
 
       kind when is_binary(kind) and kind != "" ->
-        atom = String.to_existing_atom(kind)
-        if atom in allowed, do: {:ok, atom}, else: {:error, {:invalid_error_log_field, :kind}}
+        case Enum.find(@allowed_kinds, &(Atom.to_string(&1) == kind)) do
+          nil -> {:error, {:invalid_error_log_field, :kind}}
+          atom -> {:ok, atom}
+        end
 
       _ ->
         {:error, {:invalid_error_log_field, :kind}}

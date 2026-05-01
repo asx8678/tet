@@ -22,6 +22,7 @@ defmodule TetStoreMemory.MixProject do
 
   def application do
     [
+      mod: {Tet.Store.Memory.Application, []},
       extra_applications: [:logger]
     ]
   end

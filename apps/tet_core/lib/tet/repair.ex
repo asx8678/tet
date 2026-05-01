@@ -130,15 +130,15 @@ defmodule Tet.Repair do
   @allowed_strategies [:retry, :rollback, :skip, :manual, :recreate, :purge, :notify]
 
   defp fetch_strategy(attrs) do
-    allowed = @allowed_strategies
-
     case fetch_value(attrs, :strategy) do
       strategy when is_atom(strategy) and not is_nil(strategy) ->
         {:ok, strategy}
 
       strategy when is_binary(strategy) and strategy != "" ->
-        atom = String.to_existing_atom(strategy)
-        if atom in allowed, do: {:ok, atom}, else: {:error, {:invalid_repair_field, :strategy}}
+        case Enum.find(@allowed_strategies, &(Atom.to_string(&1) == strategy)) do
+          nil -> {:error, {:invalid_repair_field, :strategy}}
+          atom -> {:ok, atom}
+        end
 
       _ ->
         {:error, {:invalid_repair_field, :strategy}}

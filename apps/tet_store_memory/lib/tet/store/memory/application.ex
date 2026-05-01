@@ -6,7 +6,13 @@ defmodule Tet.Store.Memory.Application do
   @impl true
   def start(_type, _args) do
     children = [
-      {Tet.Store.Memory, name: Tet.Store.Memory},
+      %{
+        id: Tet.Store.Memory,
+        start: {Tet.Store.Memory, :start_link, [[name: Tet.Store.Memory]]},
+        type: :worker,
+        restart: :permanent,
+        shutdown: 500
+      },
       {Tet.Store.Memory.Registry, []}
     ]
 
