@@ -36,12 +36,9 @@ defmodule Tet.Runtime.Subagent.ArtifactRouterTest do
   end
 
   setup_all do
-    case Process.whereis(TestStore) do
-      nil ->
-        {:ok, _pid} = TestStore.start_link([])
-
-      _pid ->
-        :ok
+    case TestStore.start_link([]) do
+      {:ok, _pid} -> :ok
+      {:error, {:already_started, _pid}} -> :ok
     end
 
     on_exit(fn ->
@@ -57,6 +54,7 @@ defmodule Tet.Runtime.Subagent.ArtifactRouterTest do
     TestStore.clear()
     :ok
   end
+
 
   describe "route/3 with Result struct" do
     test "routes artifacts from a Tet.Subagent.Result struct" do
@@ -242,10 +240,6 @@ defmodule Tet.Runtime.Subagent.ArtifactRouterTest do
   end
 
   describe "route/3 with real Tet.Store.Memory" do
-    setup do
-      {:ok, _started} = Application.ensure_all_started(:tet_store_memory)
-      Tet.Store.Memory.reset()
-      :ok
     end
 
     test "routes artifacts and stores them as proper Artifact structs" do
