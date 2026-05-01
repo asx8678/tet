@@ -7,7 +7,7 @@ defmodule Tet.Redactor.InboundTest do
   @anthropic_key "sk-ant-api03-abcdefghijklmnopqrstu"
   @bearer_token "Bearer eyJhbGciOiJSUzI1NiIsInR5cCI6IkpXVCJ9.payload.signature"
   @connection_string "postgres://admin:supersecret@prod.db.example.com:5432/myapp"
-  @private_key "-----BEGIN RSA PRIVATE KEY-----\nMIIE...content..."
+  @private_key "-----BEGIN RSA PRIVATE KEY-----\nMIIE...content...\n-----END RSA PRIVATE KEY-----"
 
   describe "redact_for_provider/1" do
     test "redacts OpenAI API keys from message content" do
@@ -170,6 +170,28 @@ defmodule Tet.Redactor.InboundTest do
       result = Inbound.redact_for_provider(payload)
 
       refute String.contains?(result, secret)
+    end
+  end
+
+  describe "BD-0068 round 2: PEM full block, env/JSON patterns" do
+    test "redacts full PEM block including body and footer" do
+      pem =
+        "-----BEGIN RSA PRIVATE KEY-----\nMIIEpAIBAAKCAQEAsecretbody\n-----END RSA PRIVATE KEY-----"
+
+      result = Inbound.redact_for_provider(pem)
+      refute String.contains?(result, "MIIE")
+      refute String.contains?(result, "END RSA PRIVATE KEY")
+    end
+
+    test "redacts env-style secret assignments" do
+      result = Inbound.redact_for_provider("MYAPP_TOKEN=abc123def456ghi789")
+      refute String.contains?(result, "abc123def456ghi789")
+    end
+
+    test "redacts JSON secret assignments" do
+      json = ~s({"api_key": "supersecret1234567890"})
+      result = Inbound.redact_for_provider(json)
+      refute String.contains?(result, "supersecret1234567890")
     end
   end
 

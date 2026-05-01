@@ -26,11 +26,20 @@ defmodule Tet.Secrets.PatternRegistry do
      :token},
     {:connection_string, ~r/(mongodb(\+srv)?|postgres(ql)?|mysql|redis|amqp|mssql):\/\/[^\s"']+/i,
      :connection_string},
-    {:private_key_block, ~r/-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----/, :private_key},
+    {:private_key_block,
+     ~r/-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----.*?-----END [A-Z0-9 ]*PRIVATE KEY-----/s,
+     :private_key},
+    {:private_key_header, ~r/-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----/, :private_key},
     {:github_token, ~r/\b(ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9_]{36,}/, :token},
     {:slack_token, ~r/\bxox[baprs]-[A-Za-z0-9-]{10,}/, :token},
     {:generic_secret_in_config,
-     ~r/(password|passwd|pwd|secret|token|api_key|apikey)\s*[=:]\s*["'][^"']{8,}["']/i, :password}
+     ~r/(password|passwd|pwd|secret|token|api_key|apikey)\s*[=:]\s*["'][^"']{8,}["']/i,
+     :password},
+    {:env_secret_assignment,
+     ~r/\b[A-Z_]*(?:API_KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL)[A-Z_]*\s*=\s*\S+/, :generic_secret},
+    {:json_secret_assignment,
+     ~r/["'][a-z_]*(?:api_key|token|secret|password|credential)[a-z_]*["']\s*[:=]\s*["'][^"']+["']/i,
+     :generic_secret}
   ]
 
   @doc """

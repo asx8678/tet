@@ -92,8 +92,11 @@ defmodule Tet.Secrets.PatternRegistryTest do
     end
 
     test "matches private key blocks" do
-      assert {:private_key_block, :private_key} =
+      # Header-only input matches the fallback header pattern
+      assert {name, :private_key} =
                PatternRegistry.match("-----BEGIN RSA PRIVATE KEY-----")
+
+      assert name in [:private_key_block, :private_key_header]
     end
 
     test "matches GitHub tokens" do
