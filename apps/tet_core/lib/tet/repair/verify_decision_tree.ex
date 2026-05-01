@@ -158,13 +158,10 @@ defmodule Tet.Repair.VerifyDecisionTree do
   end
 
   defp evaluate_modules(patch_result) do
-    if hot_reload_safe?(patch_result) do
-      choose_reload_strategy(patch_result)
-    else
-      :full_restart
+    cond do
+      hot_reload_safe?(patch_result) -> :hot_reload
+      Map.get(patch_result, :has_release_config, false) -> :release_handler
+      true -> :full_restart
     end
   end
-
-  defp choose_reload_strategy(%{has_release_config: true}), do: :release_handler
-  defp choose_reload_strategy(_patch_result), do: :hot_reload
 end

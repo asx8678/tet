@@ -42,10 +42,20 @@ defmodule Tet.Repair.VerifyDecisionTree.ModuleClassifier do
   """
   @spec classify(atom() | String.t()) :: classification()
   def classify(module) when is_atom(module) do
-    module
-    |> module_name_string()
-    |> classify_by_name()
-    |> maybe_refine_with_behaviours(module)
+    name_classification = module |> module_name_string() |> classify_by_name()
+
+    case get_behaviours(module) do
+      {:ok, behaviours} ->
+        cond do
+          has_unsafe_behaviour?(behaviours) -> :unsafe_reload
+          name_classification != :unknown -> name_classification
+          has_struct?(module) -> :safe_reload
+          true -> :unknown
+        end
+
+      :error ->
+        name_classification
+    end
   end
 
   def classify(module_or_path) when is_binary(module_or_path) do
@@ -132,32 +142,23 @@ defmodule Tet.Repair.VerifyDecisionTree.ModuleClassifier do
     end)
   end
 
-  defp maybe_refine_with_behaviours(:unknown, module) do
+  defp get_behaviours(module) do
     if Code.ensure_loaded?(module) do
-      behaviours = get_behaviours(module)
+      if function_exported?(module, :__info__, 1) do
+        behaviours =
+          module.__info__(:attributes)
+          |> Keyword.get_values(:behaviour)
+          |> List.flatten()
 
-      cond do
-        has_unsafe_behaviour?(behaviours) -> :unsafe_reload
-        has_struct?(module) -> :safe_reload
-        true -> :unknown
+        {:ok, behaviours}
+      else
+        {:ok, []}
       end
     else
-      :unknown
-    end
-  end
-
-  defp maybe_refine_with_behaviours(classification, _module), do: classification
-
-  defp get_behaviours(module) do
-    if function_exported?(module, :__info__, 1) do
-      module.__info__(:attributes)
-      |> Keyword.get_values(:behaviour)
-      |> List.flatten()
-    else
-      []
+      :error
     end
   rescue
-    _ -> []
+    _ -> :error
   end
 
   defp has_unsafe_behaviour?(behaviours) do

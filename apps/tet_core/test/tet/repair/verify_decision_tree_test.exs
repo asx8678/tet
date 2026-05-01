@@ -46,6 +46,17 @@ defmodule Tet.Repair.VerifyDecisionTreeTest do
       assert {:ok, :full_restart} = VerifyDecisionTree.decide(patch_result)
     end
 
+    test "unsafe modules with release config use release_handler" do
+      result = %{
+        compile_status: :pass,
+        smoke_status: :pass,
+        changed_modules: [GenServer],
+        has_release_config: true
+      }
+
+      assert {:ok, :release_handler} == VerifyDecisionTree.decide(result)
+    end
+
     test "returns :full_restart when modules are unknown" do
       patch_result = %{
         compile_status: :pass,

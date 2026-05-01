@@ -92,9 +92,26 @@ defmodule Tet.Repair.VerifyDecisionTree.ModuleClassifierTest do
   end
 
   describe "classify/1 with loaded modules and behaviours" do
+    # Define a GenServer with a safe-sounding name to test behaviour override
+    defmodule Helpers.CacheUtil do
+      use GenServer, restart: :temporary
+
+      def start_link(_) do
+        GenServer.start_link(__MODULE__, nil)
+      end
+
+      @impl true
+      def init(_), do: {:ok, %{}}
+    end
+
     test "classifies GenServer behaviour modules as unsafe" do
       # GenServer is a loaded module with known behaviours
       assert ModuleClassifier.classify(GenServer) == :unsafe_reload
+    end
+
+    test "GenServer named Helpers is classified as unsafe" do
+      # A GenServer with a safe-sounding name must still be unsafe
+      assert ModuleClassifier.classify(Helpers.CacheUtil) == :unsafe_reload
     end
 
     test "classifies struct modules as safe when name is unknown" do
