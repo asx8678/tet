@@ -9,6 +9,8 @@ defmodule Tet.Application do
       {Registry, keys: :duplicate, name: Tet.EventBus.Registry},
       {Registry, keys: :unique, name: Tet.Runtime.SessionRegistry.name()},
       {Registry, keys: :unique, name: Tet.Runtime.Plugin.Registry},
+      {Registry, keys: :unique, name: Tet.Runtime.Subagent.Registry},
+      Tet.Runtime.Subagent.Supervisor,
       Tet.Runtime.SessionSupervisor,
       Tet.Runtime.Plugin.Supervisor,
       Tet.Runtime.GuidanceLoop

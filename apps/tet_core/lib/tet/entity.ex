@@ -135,6 +135,20 @@ defmodule Tet.Entity do
     end
   end
 
+  @doc """
+  Like `fetch_positive_integer/3` but returns `{:ok, nil}` when the key is
+  absent, allowing truly optional positive integer fields.
+  """
+  @spec fetch_optional_positive_integer(attrs(), field(), atom()) ::
+          {:ok, pos_integer() | nil} | {:error, reason()}
+  def fetch_optional_positive_integer(attrs, key, entity) do
+    case fetch_value(attrs, key, nil) do
+      nil -> {:ok, nil}
+      value when is_integer(value) and value > 0 -> {:ok, value}
+      _value -> field_error(entity, key)
+    end
+  end
+
   @spec fetch_sha256(attrs(), field(), atom()) :: {:ok, binary()} | {:error, reason()}
   def fetch_sha256(attrs, key, entity) do
     with {:ok, value} <- fetch_required_binary(attrs, key, entity),
