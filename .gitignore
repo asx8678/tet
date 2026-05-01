@@ -10,3 +10,5 @@ deps/
 .dolt/
 *.db
 .beads-credential-key
+.tet/
+erl_crash.dump
