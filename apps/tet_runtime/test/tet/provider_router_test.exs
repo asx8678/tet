@@ -8,6 +8,9 @@ defmodule Tet.ProviderRouterTest do
     @behaviour Tet.Provider
 
     @impl true
+    def cache_capability, do: :none
+
+    @impl true
     def stream_chat(_messages, opts, _emit) do
       secret = Keyword.fetch!(opts, :test_secret)
 

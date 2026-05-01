@@ -23,6 +23,7 @@ defmodule Tet.Runtime.State do
   use `turn_status: :idle`.
   """
 
+  alias Tet.Runtime.Provider.CacheHandoff
   alias Tet.Runtime.State.Input
 
   @lifecycle_statuses [:new, :active, :paused, :completed, :failed, :cancelled]
@@ -56,6 +57,7 @@ defmodule Tet.Runtime.State do
     lifecycle: :new,
     turn_status: :idle,
     pending_profile_swap: nil,
+    cache_result: nil,
     metadata: %{}
   ]
 
@@ -76,6 +78,7 @@ defmodule Tet.Runtime.State do
           | :waiting_for_approval
           | :cancelling
   @type profile_swap_mode :: :queue_until_turn_boundary | :reject_mid_turn
+  @type cache_result :: :preserved | :summarized | :reset | nil
   @type cache_policy :: :preserve | :drop | {:replace, map()}
   @type profile_swap_request :: map()
   @type t :: %__MODULE__{
@@ -95,6 +98,7 @@ defmodule Tet.Runtime.State do
           lifecycle: lifecycle(),
           turn_status: turn_status(),
           pending_profile_swap: profile_swap_request() | nil,
+          cache_result: cache_result(),
           metadata: map()
         }
 
@@ -126,6 +130,7 @@ defmodule Tet.Runtime.State do
          {:ok, pending_profile_swap} <-
            Input.fetch_pending_profile_swap(attrs, @profile_swap_modes, @turn_statuses),
          :ok <- validate_terminal_pending_swap(lifecycle, pending_profile_swap),
+         {:ok, cache_result} <- Input.fetch_cache_result(attrs),
          {:ok, metadata} <- Input.fetch_map(attrs, :metadata, %{}) do
       {:ok,
        %__MODULE__{
@@ -145,6 +150,7 @@ defmodule Tet.Runtime.State do
          lifecycle: lifecycle,
          turn_status: turn_status,
          pending_profile_swap: pending_profile_swap,
+         cache_result: cache_result,
          metadata: metadata
        }}
     end
@@ -178,6 +184,7 @@ defmodule Tet.Runtime.State do
       lifecycle: Atom.to_string(state.lifecycle),
       turn_status: Atom.to_string(state.turn_status),
       pending_profile_swap: Input.pending_profile_swap_to_map(state.pending_profile_swap),
+      cache_result: Input.cache_result_to_string(state.cache_result),
       metadata: state.metadata
     }
   end
@@ -268,9 +275,18 @@ defmodule Tet.Runtime.State do
     with {:ok, to_profile} <- Input.normalize_profile(profile),
          {:ok, mode} <- Input.fetch_swap_mode(opts, @profile_swap_modes),
          {:ok, cache_policy} <- Input.fetch_cache_policy(opts),
+         {:ok, cache_capability} <- Input.fetch_cache_capability(opts),
          {:ok, metadata} <- Input.fetch_option_map(opts, :metadata, %{}) do
       request =
-        build_profile_swap_request(state, to_profile, mode, cache_policy, metadata, swap_id)
+        build_profile_swap_request(
+          state,
+          to_profile,
+          mode,
+          cache_policy,
+          cache_capability,
+          metadata,
+          swap_id
+        )
 
       cond do
         safe_to_swap?(state) ->
@@ -307,10 +323,16 @@ defmodule Tet.Runtime.State do
   end
 
   defp apply_profile_swap(%__MODULE__{} = state, request) do
+    policy_hints = apply_cache_policy(state.cache_hints, request.cache_policy)
+    cache_capability = Map.get(request, :cache_capability, :none)
+    cache_result = CacheHandoff.resolve(request.cache_policy, cache_capability)
+    cache_hints = align_cache_hints_with_result(policy_hints, cache_result)
+
     %__MODULE__{
       state
       | active_profile: request.to_profile,
-        cache_hints: apply_cache_policy(state.cache_hints, request.cache_policy),
+        cache_hints: cache_hints,
+        cache_result: cache_result,
         pending_profile_swap: nil
     }
   end
@@ -319,14 +341,31 @@ defmodule Tet.Runtime.State do
   defp apply_cache_policy(_cache_hints, :drop), do: %{}
   defp apply_cache_policy(_cache_hints, {:replace, cache_hints}), do: cache_hints
 
-  defp build_profile_swap_request(state, to_profile, mode, cache_policy, metadata, swap_id) do
+  # Active cache_hints must align with the resolved cache_result, not just the
+  # requested cache_policy. When the adapter cannot honour the policy, stale raw
+  # provider hints must be cleared so downstream consumers never see preserved
+  # hints that the adapter cannot actually use.
+  defp align_cache_hints_with_result(_cache_hints, :reset), do: %{}
+  defp align_cache_hints_with_result(_cache_hints, :summarized), do: %{}
+  defp align_cache_hints_with_result(cache_hints, :preserved), do: cache_hints
+
+  defp build_profile_swap_request(
+         state,
+         to_profile,
+         mode,
+         cache_policy,
+         cache_capability,
+         metadata,
+         swap_id
+       ) do
     request = %{
       from_profile: state.active_profile,
       to_profile: to_profile,
       mode: mode,
       requested_at_sequence: state.event_sequence,
       blocked_by: state.turn_status,
-      cache_policy: cache_policy
+      cache_policy: cache_policy,
+      cache_capability: cache_capability
     }
 
     request =
