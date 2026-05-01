@@ -97,6 +97,49 @@ defmodule Tet.Runtime.Command.GateTest do
 
       assert Gate.require_approval?(suggestion) == false
     end
+
+    test "catches forged suggestion with requires_gate: false on critical" do
+      # A forged suggestion created directly (bypassing Suggestion.new/1)
+      # with incorrect requires_gate — gate should derive from risk_level
+      forged = %Suggestion{
+        original_command: "rm -rf /",
+        risk_level: :critical,
+        reason: "forged",
+        requires_gate: false,
+        correction_type: :blocked
+      }
+
+      assert Gate.require_approval?(forged) == true
+      assert {:error, _} = Gate.execute_or_defer(forged)
+    end
+
+    test "catches forged suggestion with requires_gate: false on high" do
+      forged = %Suggestion{
+        original_command: "rm important.txt",
+        risk_level: :high,
+        reason: "forged",
+        requires_gate: false,
+        correction_type: :modified
+      }
+
+      assert Gate.require_approval?(forged) == true
+      assert {:error, _} = Gate.execute_or_defer(forged)
+    end
+
+    test "safe forged suggestion still works" do
+      forged = %Suggestion{
+        original_command: "ls",
+        risk_level: :none,
+        reason: "safe",
+        requires_gate: true,
+        correction_type: :safe
+      }
+
+      # Gate derives from risk_level, so even if forged says requires_gate: true,
+      # :none risk means no gate needed
+      assert Gate.require_approval?(forged) == false
+      assert {:ok, ^forged, :executed} = Gate.execute_or_defer(forged)
+    end
   end
 
   describe "execute_or_defer/2" do
@@ -118,10 +161,10 @@ defmodule Tet.Runtime.Command.GateTest do
       assert {:error, _} = Gate.execute_or_defer(suggestion)
     end
 
-    test "executes dangerous commands with force flag" do
+    test "blocks dangerous commands even with force flag" do
       {:ok, suggestion} = Gate.assess("rm -rf /", %{})
 
-      assert {:ok, ^suggestion, :executed} = Gate.execute_or_defer(suggestion, force: true)
+      assert {:error, _} = Gate.execute_or_defer(suggestion, force: true)
     end
 
     test "executes medium commands directly" do

@@ -82,34 +82,31 @@ defmodule Tet.Runtime.Command.Gate do
   """
   @spec require_approval?(Suggestion.t()) :: boolean()
   def require_approval?(%Suggestion{} = suggestion) do
-    suggestion.requires_gate
+    Risk.requires_gate?(suggestion.risk_level)
   end
 
   @doc """
   Routes a command based on its risk assessment.
 
   If `opts[:defer]` is true and the suggestion requires gate approval,
-  returns `{:deferred, suggestion}`. If `opts[:execute]` is true or the
-  suggestion is safe, returns `{:ok, suggestion, :executed}`.
+  returns `{:deferred, suggestion}`. Safe suggestions are executed
+  directly returning `{:ok, suggestion, :executed}`.
 
   Use this as the integration point — never bypass the gate for
-  dangerous commands.
+  dangerous commands. The `:force` option is intentionally ignored
+  for safety.
   """
   @spec execute_or_defer(Suggestion.t(), keyword()) ::
           {:ok, Suggestion.t(), :executed | :deferred} | {:error, term()}
   def execute_or_defer(%Suggestion{} = suggestion, opts \\ []) do
-    cond do
-      suggestion.requires_gate and Keyword.get(opts, :defer, false) ->
+    if require_approval?(suggestion) do
+      if Keyword.get(opts, :defer, false) do
         {:ok, suggestion, :deferred}
-
-      not suggestion.requires_gate ->
-        {:ok, suggestion, :executed}
-
-      Keyword.get(opts, :force, false) ->
-        {:ok, suggestion, :executed}
-
-      true ->
+      else
         {:error, {:requires_approval, "Command requires explicit approval before execution"}}
+      end
+    else
+      {:ok, suggestion, :executed}
     end
   end
 

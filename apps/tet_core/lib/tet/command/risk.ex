@@ -101,14 +101,14 @@ defmodule Tet.Command.Risk do
   defp high?(cmd) do
     String.match?(cmd, ~r/\brm\s+(?!-rf\b)/) or
       String.match?(cmd, ~r/\brmdir\s+/) or
-      String.match?(cmd, ~r/\bchmod\s+777\b/) or
-      String.match?(cmd, ~r/\bchmod\s+[0-7]77\b/) or
+      String.match?(cmd, ~r/\bchmod\s+(?:-\w+\s+)*777\b/) or
+      String.match?(cmd, ~r/\bchmod\s+(?:-\w+\s+)*[0-7]77\b/) or
       String.match?(cmd, ~r/\bchown\s+-R\b/) or
       String.match?(cmd, ~r/\bUPDATE\s+\w+\s+SET\s+(?!.*\bWHERE\b)/i) or
       String.match?(cmd, ~r/\bDELETE\s+FROM\s+\w+\s+WHERE\s+1\s*=\s*1\b/i) or
       String.match?(cmd, ~r/\bDELETE\s+FROM\s+\w+\s+WHERE\s+true\b/i) or
       String.match?(cmd, ~r/\bTRUNCATE\b/i) or
-      String.match?(cmd, ~r/\bDELETE\s+FROM\s+\w+(?:\s+(?!.*\bWHERE\b)|$)/i) or
+      String.match?(cmd, ~r/\bDELETE\s+FROM\s+\w+(?:\s+(?!.*\bWHERE\b)|[;\s]*$)/i) or
       String.match?(cmd, ~r/\bREINDEX\b/i) or
       String.match?(cmd, ~r/\bsudo\s+rm\b/) or
       String.match?(cmd, ~r/\bsudo\s+.*\b(DROP|DELETE|FORMAT)\b/i)
@@ -174,7 +174,7 @@ defmodule Tet.Command.Risk do
   defp mass_delete?(cmd) do
     String.match?(cmd, ~r/\bfind\s+.*\s+-delete\b/) or
       String.match?(cmd, ~r/\bfind\s+.*\s+-exec\s+rm\b/) or
-      String.match?(cmd, ~r/\bxargs\s+rm\b/) or
+      String.match?(cmd, ~r/\bxargs\s+(?:-\w+\s+)*rm\b/) or
       String.match?(cmd, ~r/\brm\s+-rf\s+[^*]*\*\s*/) or
       String.match?(cmd, ~r/\brm\s+-rf\s+\.\//) or
       String.match?(cmd, ~r/\brm\s+-rf\s+\~\//)

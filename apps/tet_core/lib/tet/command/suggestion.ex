@@ -10,7 +10,7 @@ defmodule Tet.Command.Suggestion do
   This module is pure data and pure functions — no side effects.
   """
 
-  @enforce_keys [:original_command, :risk_level, :reason, :requires_gate, :correction_type]
+  @enforce_keys [:original_command, :risk_level, :reason, :correction_type]
   defstruct [
     :original_command,
     :suggested_command,
@@ -39,9 +39,10 @@ defmodule Tet.Command.Suggestion do
   Builds a validated suggestion from attributes.
 
   Required fields: `:original_command`, `:risk_level`, `:reason`,
-  `:requires_gate`, `:correction_type`.
+  `:correction_type`.
 
   Optional field: `:suggested_command` (defaults to nil).
+  `:requires_gate` is derived automatically from `:risk_level`.
 
   Returns `{:ok, suggestion}` or `{:error, reason}`.
   """
@@ -51,8 +52,10 @@ defmodule Tet.Command.Suggestion do
          {:ok, suggested_command} <- fetch_optional_string(attrs, :suggested_command),
          {:ok, risk_level} <- fetch_risk_level(attrs),
          {:ok, reason} <- fetch_string(attrs, :reason),
-         {:ok, requires_gate} <- fetch_boolean(attrs, :requires_gate),
-         {:ok, correction_type} <- fetch_correction_type(attrs) do
+         {:ok, correction_type} <- fetch_correction_type(attrs),
+         :ok <- validate_requires_gate(attrs, risk_level) do
+      requires_gate = Tet.Command.Risk.requires_gate?(risk_level)
+
       {:ok,
        %__MODULE__{
          original_command: original_command,
@@ -159,13 +162,22 @@ defmodule Tet.Command.Suggestion do
     ArgumentError -> {:error, {:invalid_suggestion_field, :risk_level, "unknown atom"}}
   end
 
-  defp fetch_boolean(attrs, key) do
-    value = Map.get(attrs, key, Map.get(attrs, Atom.to_string(key)))
+  defp validate_requires_gate(attrs, risk_level) do
+    value = Map.get(attrs, :requires_gate, Map.get(attrs, "requires_gate"))
 
-    if is_boolean(value) do
-      {:ok, value}
-    else
-      {:error, {:invalid_suggestion_field, key, "must be a boolean"}}
+    cond do
+      is_nil(value) ->
+        :ok
+
+      is_boolean(value) and risk_level in [:high, :critical] and value == false ->
+        {:error,
+         {:invalid_suggestion_field, :requires_gate, "must be true for #{risk_level} risk level"}}
+
+      is_boolean(value) ->
+        :ok
+
+      true ->
+        {:error, {:invalid_suggestion_field, :requires_gate, "must be a boolean"}}
     end
   end
 
