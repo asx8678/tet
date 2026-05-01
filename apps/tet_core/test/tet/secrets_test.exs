@@ -96,6 +96,32 @@ defmodule Tet.SecretsTest do
     end
   end
 
+  describe "BD-0068 regression: short sk- keys" do
+    test "detects sk-proj style keys" do
+      assert Secrets.contains_secret?("sk-proj-abc123def456")
+    end
+
+    test "detects short sk-ant keys" do
+      assert Secrets.contains_secret?("sk-ant-api03-shortkey")
+    end
+
+    test "detects short sk- keys" do
+      assert Secrets.contains_secret?("sk-abcdef123456")
+    end
+
+    test "classifies sk-proj keys as api_key" do
+      assert {:secret, :api_key} = Secrets.classify("sk-proj-abc123def456")
+    end
+
+    test "classifies short sk-ant keys as api_key" do
+      assert {:secret, :api_key} = Secrets.classify("sk-ant-api03-shortkey")
+    end
+
+    test "classifies short sk- keys as api_key" do
+      assert {:secret, :api_key} = Secrets.classify("sk-abcdef123456")
+    end
+  end
+
   describe "fingerprint/1" do
     test "returns stable fingerprints" do
       value = "sk-secret123456789012345"

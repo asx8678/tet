@@ -15,8 +15,9 @@ defmodule Tet.Secrets.PatternRegistry do
   @type pattern :: {name :: atom(), regex :: Regex.t(), classification :: atom()}
 
   @builtin_patterns [
-    {:anthropic_api_key, ~r/\bsk-ant-[A-Za-z0-9_-]{20,}/, :api_key},
-    {:openai_api_key, ~r/\bsk-[A-Za-z0-9_-]{20,}/, :api_key},
+    {:anthropic_api_key, ~r/\bsk-ant-[A-Za-z0-9_-]{6,}/, :api_key},
+    {:openai_project_key, ~r/\bsk-proj-[A-Za-z0-9_-]{6,}/, :api_key},
+    {:openai_api_key, ~r/\bsk-[A-Za-z0-9_-]{6,}/, :api_key},
     {:aws_access_key, ~r/\b(AKIA[0-9A-Z]{16})\b/, :api_key},
     {:aws_secret_key, ~r/\b[A-Za-z0-9\/+=]{40}\b/, :api_key},
     {:bearer_token, ~r/\bBearer\s+[A-Za-z0-9._~+\/=:-]{10,}/i, :token},

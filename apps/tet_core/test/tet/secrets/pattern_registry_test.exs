@@ -23,6 +23,7 @@ defmodule Tet.Secrets.PatternRegistryTest do
     test "returns atom names of all patterns" do
       names = PatternRegistry.pattern_names()
       assert :openai_api_key in names
+      assert :openai_project_key in names
       assert :anthropic_api_key in names
       assert :aws_access_key in names
       assert :bearer_token in names
@@ -67,7 +68,7 @@ defmodule Tet.Secrets.PatternRegistryTest do
   describe "match/1" do
     test "matches OpenAI API keys" do
       assert {:openai_api_key, :api_key} =
-               PatternRegistry.match("my key is sk-proj-abcdefghijklmnopqrstu")
+               PatternRegistry.match("my key is sk-abcdefghijklmnopqrstuvwx")
     end
 
     test "matches Anthropic API keys" do
@@ -113,6 +114,34 @@ defmodule Tet.Secrets.PatternRegistryTest do
                PatternRegistry.match("key: MYAPP-ABCDEF1234", custom)
 
       assert nil == PatternRegistry.match("sk-proj-abcdefghijklmnopqrstu", custom)
+    end
+  end
+
+  describe "BD-0068 regression: short sk- keys" do
+    test "matches sk-proj- style OpenAI project keys" do
+      assert {:openai_project_key, :api_key} =
+               PatternRegistry.match("key: sk-proj-abc123def456")
+    end
+
+    test "matches short sk-ant- Anthropic keys" do
+      assert {:anthropic_api_key, :api_key} =
+               PatternRegistry.match("key: sk-ant-api03-shortkey")
+    end
+
+    test "matches short sk- OpenAI keys" do
+      assert {:openai_api_key, :api_key} =
+               PatternRegistry.match("key: sk-abcdef123456")
+    end
+
+    test "sk-proj- keys are classified before generic sk- pattern" do
+      # Ordering matters: specific patterns first
+      assert {:openai_project_key, :api_key} =
+               PatternRegistry.match("sk-proj-abc123def456")
+    end
+
+    test "sk-ant- keys are classified before generic sk- pattern" do
+      assert {:anthropic_api_key, :api_key} =
+               PatternRegistry.match("sk-ant-api03-shortkey")
     end
   end
 

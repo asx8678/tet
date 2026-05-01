@@ -139,6 +139,40 @@ defmodule Tet.Redactor.InboundTest do
     end
   end
 
+  describe "BD-0068 regression: short sk- keys redacted" do
+    test "sk-proj style keys are redacted" do
+      secret = "sk-proj-abc123def456"
+      msg = %{content: "prefix #{secret} suffix"}
+      result = Inbound.redact_for_provider(msg)
+
+      refute String.contains?(result.content, secret)
+    end
+
+    test "short sk-ant keys are redacted" do
+      secret = "sk-ant-api03-shortkey"
+      msg = %{content: "prefix #{secret} suffix"}
+      result = Inbound.redact_for_provider(msg)
+
+      refute String.contains?(result.content, secret)
+    end
+
+    test "short sk- keys are redacted" do
+      secret = "sk-abcdef123456"
+      msg = %{content: "prefix #{secret} suffix"}
+      result = Inbound.redact_for_provider(msg)
+
+      refute String.contains?(result.content, secret)
+    end
+
+    test "sk-proj keys are redacted via redact_for_provider/1 on plain string" do
+      secret = "sk-proj-abc123def456"
+      payload = "prefix #{secret} suffix"
+      result = Inbound.redact_for_provider(payload)
+
+      refute String.contains?(result, secret)
+    end
+  end
+
   describe "secrets never leak" do
     test "no secret survives deep nesting" do
       deep = %{

@@ -133,6 +133,48 @@ defmodule Tet.Redactor.DisplayTest do
     end
   end
 
+  describe "BD-0068 regression: short sk- keys redacted" do
+    test "sk-proj style keys are redacted for display" do
+      secret = "sk-proj-abc123def456"
+      data = %{content: "prefix #{secret} suffix"}
+      result = Display.redact_for_display(data)
+
+      refute String.contains?(result.content, secret)
+    end
+
+    test "short sk-ant keys are redacted for display" do
+      secret = "sk-ant-api03-shortkey"
+      data = %{content: "prefix #{secret} suffix"}
+      result = Display.redact_for_display(data)
+
+      refute String.contains?(result.content, secret)
+    end
+
+    test "short sk- keys are redacted for display" do
+      secret = "sk-abcdef123456"
+      data = %{content: "prefix #{secret} suffix"}
+      result = Display.redact_for_display(data)
+
+      refute String.contains?(result.content, secret)
+    end
+
+    test "sk-proj keys are redacted in log output" do
+      secret = "sk-proj-abc123def456"
+      msg = "prefix #{secret} suffix"
+      result = Display.redact_for_log(msg)
+
+      refute String.contains?(result, secret)
+    end
+
+    test "all 3 layers catch sk-proj keys" do
+      secret = "sk-proj-abc123def456"
+      payload = "prefix #{secret} suffix"
+
+      refute String.contains?(Display.redact_for_display(payload), secret)
+      refute String.contains?(Display.redact_for_log(payload), secret)
+    end
+  end
+
   describe "secrets never leak" do
     test "no secret visible in display output" do
       data = %{

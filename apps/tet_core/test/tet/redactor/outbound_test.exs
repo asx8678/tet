@@ -144,6 +144,40 @@ defmodule Tet.Redactor.OutboundTest do
     end
   end
 
+  describe "BD-0068 regression: short sk- keys redacted" do
+    test "sk-proj style keys are redacted in audit" do
+      secret = "sk-proj-abc123def456"
+      event = %{payload: "prefix #{secret} suffix"}
+      result = Outbound.redact_for_audit(event)
+
+      refute String.contains?(result.payload, secret)
+    end
+
+    test "short sk-ant keys are redacted in audit" do
+      secret = "sk-ant-api03-shortkey"
+      event = %{payload: "prefix #{secret} suffix"}
+      result = Outbound.redact_for_audit(event)
+
+      refute String.contains?(result.payload, secret)
+    end
+
+    test "short sk- keys are redacted in audit" do
+      secret = "sk-abcdef123456"
+      event = %{payload: "prefix #{secret} suffix"}
+      result = Outbound.redact_for_audit(event)
+
+      refute String.contains?(result.payload, secret)
+    end
+
+    test "sk-proj keys are redacted in store" do
+      secret = "sk-proj-abc123def456"
+      record = %{data: "key=#{secret}"}
+      result = Outbound.redact_for_store(record)
+
+      refute String.contains?(result.data, secret)
+    end
+  end
+
   describe "secrets never leak" do
     test "no secret survives audit redaction" do
       event = %{
