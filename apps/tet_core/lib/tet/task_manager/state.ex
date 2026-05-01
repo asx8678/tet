@@ -325,22 +325,7 @@ defmodule Tet.TaskManager.State do
 
   @doc "Converts a decoded map back to a validated state."
   @spec from_map(map()) :: {:ok, t()} | {:error, term()}
-  def from_map(attrs) when is_map(attrs) do
-    with {:ok, id} <- fetch_binary(attrs, :id),
-         {:ok, tasks_attrs} <- fetch_optional_map(attrs, :tasks, %{}),
-         {:ok, tasks} <- build_task_map(tasks_attrs),
-         {:ok, active_task_id} <- fetch_optional_binary(attrs, :active_task_id),
-         {:ok, metadata} <- fetch_map(attrs, :metadata, %{}),
-         :ok <- validate_active_task(tasks, active_task_id) do
-      {:ok,
-       %__MODULE__{
-         id: id,
-         tasks: tasks,
-         active_task_id: active_task_id,
-         metadata: metadata
-       }}
-    end
-  end
+  def from_map(attrs) when is_map(attrs), do: new(attrs)
 
   # ── Private helpers ──────────────────────────────────────────────
 

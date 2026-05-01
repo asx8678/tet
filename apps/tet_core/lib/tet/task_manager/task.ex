@@ -171,7 +171,7 @@ defmodule Tet.TaskManager.Task do
   Terminal tasks reject recategorization.
   """
   @spec recategorize(t(), category()) :: {:ok, t()} | {:error, term()}
-  def recategorize(%__MODULE__{status: status} = task, category)
+  def recategorize(%__MODULE__{status: status}, _category)
       when status in @terminal_statuses do
     {:error, {:terminal_task_recategorize, status}}
   end

@@ -136,7 +136,7 @@ defmodule Tet.TaskManager.GuidanceTest do
 
     test "acting categories produce mutation-unlock guidance" do
       for cat <- [:acting, :verifying, :debugging] do
-        {:guidance, _type, msg} = Guidance.for_category(cat)
+        {:guidance, _type, _msg} = Guidance.for_category(cat)
         assert Guidance.acting?(cat)
       end
     end
