@@ -13,7 +13,11 @@ defmodule Tet.Mcp.CallPolicyTest do
     end
 
     test "creates policy with custom allowed categories" do
-      {:ok, policy} = CallPolicy.new(%{allowed_categories: [:read, :write]})
+      {:ok, policy} =
+        CallPolicy.new(%{
+          allowed_categories: [:read, :write],
+          require_approval: [:shell, :network, :admin]
+        })
 
       assert policy.allowed_categories == [:read, :write]
     end
@@ -33,6 +37,14 @@ defmodule Tet.Mcp.CallPolicyTest do
                CallPolicy.new(%{
                  allowed_categories: [:read, :write],
                  blocked_categories: [:read]
+               })
+    end
+
+    test "rejects overlap between allowed and require_approval" do
+      assert {:error, {:allowed_require_approval_overlap, [:write]}} =
+               CallPolicy.new(%{
+                 allowed_categories: [:read, :write],
+                 require_approval: [:write, :shell]
                })
     end
 
@@ -74,7 +86,7 @@ defmodule Tet.Mcp.CallPolicyTest do
 
   describe "evaluate/2" do
     test "allows read with default policy" do
-      assert CallPolicy.evaluate(:read, CallPolicy.default()) == :allow
+      assert CallPolicy.evaluate(:read, CallPolicy.default()) == {:ok, :allow}
     end
 
     test "denies blocked categories" do
@@ -84,32 +96,32 @@ defmodule Tet.Mcp.CallPolicyTest do
           blocked_categories: [:shell]
         })
 
-      assert CallPolicy.evaluate(:shell, policy) == :deny
+      assert CallPolicy.evaluate(:shell, policy) == {:ok, :deny}
     end
 
     test "requires approval for write with default policy" do
       assert CallPolicy.evaluate(:write, CallPolicy.default()) ==
-               {:needs_approval, :policy_requires_approval}
+               {:ok, {:needs_approval, :policy_requires_approval}}
     end
 
     test "requires approval for shell with default policy" do
       assert CallPolicy.evaluate(:shell, CallPolicy.default()) ==
-               {:needs_approval, :policy_requires_approval}
+               {:ok, {:needs_approval, :policy_requires_approval}}
     end
 
     test "requires approval for network with default policy" do
       assert CallPolicy.evaluate(:network, CallPolicy.default()) ==
-               {:needs_approval, :policy_requires_approval}
+               {:ok, {:needs_approval, :policy_requires_approval}}
     end
 
     test "requires approval for admin with default policy" do
       assert CallPolicy.evaluate(:admin, CallPolicy.default()) ==
-               {:needs_approval, :policy_requires_approval}
+               {:ok, {:needs_approval, :policy_requires_approval}}
     end
 
     test "unknown category fail-closes to needs_approval" do
       assert CallPolicy.evaluate(:foobar, CallPolicy.default()) ==
-               {:needs_approval, :category_not_allowed}
+               {:ok, {:needs_approval, :category_not_allowed}}
     end
 
     test "blocked takes precedence over allowed (via valid policy)" do
@@ -120,7 +132,22 @@ defmodule Tet.Mcp.CallPolicyTest do
           blocked_categories: [:shell]
         })
 
-      assert CallPolicy.evaluate(:shell, policy) == :deny
+      assert CallPolicy.evaluate(:shell, policy) == {:ok, :deny}
+    end
+
+    test "require_approval takes precedence over allowed_categories" do
+      # Even if a category were in both (which validation now prevents),
+      # require_approval is checked before allowed_categories.
+      # We test this with a valid policy where a category is only in require_approval.
+      policy =
+        CallPolicy.new!(%{
+          allowed_categories: [:read],
+          require_approval: [:write],
+          blocked_categories: []
+        })
+
+      assert CallPolicy.evaluate(:write, policy) ==
+               {:ok, {:needs_approval, :policy_requires_approval}}
     end
 
     test "permissive policy allows all but admin" do
@@ -131,11 +158,13 @@ defmodule Tet.Mcp.CallPolicyTest do
           blocked_categories: []
         })
 
-      assert CallPolicy.evaluate(:read, policy) == :allow
-      assert CallPolicy.evaluate(:write, policy) == :allow
-      assert CallPolicy.evaluate(:shell, policy) == :allow
-      assert CallPolicy.evaluate(:network, policy) == :allow
-      assert CallPolicy.evaluate(:admin, policy) == {:needs_approval, :policy_requires_approval}
+      assert CallPolicy.evaluate(:read, policy) == {:ok, :allow}
+      assert CallPolicy.evaluate(:write, policy) == {:ok, :allow}
+      assert CallPolicy.evaluate(:shell, policy) == {:ok, :allow}
+      assert CallPolicy.evaluate(:network, policy) == {:ok, :allow}
+
+      assert CallPolicy.evaluate(:admin, policy) ==
+               {:ok, {:needs_approval, :policy_requires_approval}}
     end
   end
 

@@ -16,16 +16,23 @@ defmodule Tet.Mcp.Classification do
 
   ## Classification strategy
 
-  1. If the descriptor provides an explicit `:mcp_category` field, trust it
-     (server-declared intent).
-  2. Otherwise, heuristic match on tool `:name` against known patterns.
+  1. Heuristic match on tool `:name` against known patterns.
+  2. If the descriptor provides an explicit `:mcp_category` field, it can
+     ONLY UPGRADE risk — never downgrade below the heuristic result.
+     This prevents a malicious MCP server from self-reporting `:read` to
+     bypass permission gates (the "self-report bypass" attack).
   3. Default to `:write` (fail-closed for unknown tools — safer than `:read`).
+
+  ## Risk ordering
+
+  `:read`(1) < `:write`(2) < `:network`(3) < `:shell`(4) < `:admin`(5)`
 
   Inspired by Codex `exec_policy.rs` which classifies commands into
   Allow/Prompt/Forbidden buckets using prefix rules and heuristics.
   """
 
   @categories [:read, :write, :shell, :network, :admin]
+  @risk_indices %{read: 1, write: 2, shell: 4, network: 3, admin: 5}
   @risk_levels %{
     read: :low,
     write: :medium,
@@ -56,6 +63,10 @@ defmodule Tet.Mcp.Classification do
   @doc """
   Classifies an MCP tool descriptor into a risk category.
 
+  Uses heuristic (tool name analysis) primarily. Explicit `mcp_category` can
+  only UPGRADE risk — never downgrade below heuristic. This prevents a
+  malicious MCP server from self-reporting `:read` to bypass gates.
+
   ## Examples
 
       iex> Tet.Mcp.Classification.classify(%{name: "read_file"})
@@ -67,26 +78,42 @@ defmodule Tet.Mcp.Classification do
       iex> Tet.Mcp.Classification.classify(%{name: "run_bash", mcp_category: :shell})
       :shell
 
+      iex> Tet.Mcp.Classification.classify(%{name: "run_bash", mcp_category: :read})
+      :shell
+
       iex> Tet.Mcp.Classification.classify(%{name: "unknown_tool_xyz"})
       :write
   """
   @spec classify(descriptor()) :: category()
-  def classify(%{mcp_category: category}) when category in @categories, do: category
-
-  def classify(%{name: name}) when is_binary(name) do
-    normalized = String.downcase(name)
+  def classify(descriptor) do
+    heuristic = classify_by_name(descriptor)
+    explicit = classify_by_explicit(descriptor)
 
     cond do
-      matches_any?(normalized, @admin_patterns) -> :admin
-      matches_any?(normalized, @shell_patterns) -> :shell
-      matches_any?(normalized, @network_patterns) -> :network
-      matches_any?(normalized, @write_patterns) -> :write
-      matches_any?(normalized, @read_patterns) -> :read
-      true -> :write
+      explicit == nil -> heuristic
+      risk_index(explicit) > risk_index(heuristic) -> explicit
+      true -> heuristic
     end
   end
 
-  def classify(_), do: :write
+  @doc "Classifies by heuristic name analysis."
+  @spec classify_by_name(descriptor()) :: category()
+  def classify_by_name(%{name: name}) when is_binary(name), do: heuristic_from_name(name)
+  def classify_by_name(%{"name" => name}) when is_binary(name), do: heuristic_from_name(name)
+  def classify_by_name(_), do: :write
+
+  @doc "Classifies by explicit mcp_category field (may be nil)."
+  @spec classify_by_explicit(descriptor()) :: category() | nil
+  def classify_by_explicit(%{mcp_category: cat}) when cat in @categories, do: cat
+
+  def classify_by_explicit(%{"mcp_category" => cat}) when is_binary(cat),
+    do: parse_category_string(cat)
+
+  def classify_by_explicit(_), do: nil
+
+  @doc "Returns the risk index for a category (higher = more dangerous)."
+  @spec risk_index(category()) :: pos_integer()
+  def risk_index(category) when category in @categories, do: Map.fetch!(@risk_indices, category)
 
   @doc """
   Returns the risk level for a classification category.
@@ -118,6 +145,29 @@ defmodule Tet.Mcp.Classification do
   def requires_approval?(:admin), do: true
 
   # -- Private --
+
+  defp heuristic_from_name(name) do
+    normalized = String.downcase(name)
+
+    cond do
+      matches_any?(normalized, @admin_patterns) -> :admin
+      matches_any?(normalized, @shell_patterns) -> :shell
+      matches_any?(normalized, @network_patterns) -> :network
+      matches_any?(normalized, @write_patterns) -> :write
+      matches_any?(normalized, @read_patterns) -> :read
+      true -> :write
+    end
+  end
+
+  defp parse_category_string(cat) when is_binary(cat) do
+    # Only convert known atoms — safe against atom table pollution
+    try do
+      atom = String.to_existing_atom(cat)
+      if atom in @categories, do: atom, else: nil
+    rescue
+      ArgumentError -> nil
+    end
+  end
 
   # Tokenize the tool name into word segments (split on _ and -),
   # then check if any token starts with a known pattern.

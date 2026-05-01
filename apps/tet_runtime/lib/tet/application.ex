@@ -9,7 +9,8 @@ defmodule Tet.Application do
       {Registry, keys: :duplicate, name: Tet.EventBus.Registry},
       {Registry, keys: :unique, name: Tet.Runtime.SessionRegistry.name()},
       Tet.Runtime.SessionSupervisor,
-      Tet.Runtime.GuidanceLoop
+      Tet.Runtime.GuidanceLoop,
+      Tet.Runtime.Mcp.PolicyGate
     ]
 
     Supervisor.start_link(children,

@@ -55,9 +55,16 @@ defmodule Tet.Mcp.ClassificationTest do
       end
     end
 
-    test "trusts explicit mcp_category over heuristic" do
+    test "explicit mcp_category can only UPGRADE risk, never downgrade" do
+      # Upgrade: heuristic :write, explicit :admin → :admin (higher risk)
+      assert Classification.classify(%{name: "create_file", mcp_category: :admin}) == :admin
+      # Upgrade: heuristic :read, explicit :shell → :shell (higher risk)
       assert Classification.classify(%{name: "read_file", mcp_category: :shell}) == :shell
-      assert Classification.classify(%{name: "run_bash", mcp_category: :read}) == :read
+      # Downgrade blocked: heuristic :shell, explicit :read → :shell (heuristic wins)
+      assert Classification.classify(%{name: "run_bash", mcp_category: :read}) == :shell
+      # Same level: heuristic :shell, explicit :shell → :shell
+      assert Classification.classify(%{name: "run_bash", mcp_category: :shell}) == :shell
+      # Unknown tool with explicit category: heuristic :write, explicit :admin → :admin
       assert Classification.classify(%{name: "x", mcp_category: :admin}) == :admin
     end
 
@@ -117,6 +124,39 @@ defmodule Tet.Mcp.ClassificationTest do
       assert Classification.requires_approval?(:shell) == true
       assert Classification.requires_approval?(:network) == true
       assert Classification.requires_approval?(:admin) == true
+    end
+  end
+
+  describe "classify/1 with string-keyed descriptors" do
+    test "classifies string-keyed name" do
+      assert Classification.classify(%{"name" => "read_file"}) == :read
+      assert Classification.classify(%{"name" => "run_bash"}) == :shell
+    end
+
+    test "string-keyed mcp_category upgrades risk" do
+      # heuristic :read, explicit :shell (upgrade) → :shell
+      assert Classification.classify(%{"name" => "read_file", "mcp_category" => "shell"}) ==
+               :shell
+    end
+
+    test "string-keyed mcp_category cannot downgrade risk" do
+      # heuristic :shell, explicit :read (downgrade blocked) → :shell
+      assert Classification.classify(%{"name" => "run_bash", "mcp_category" => "read"}) ==
+               :shell
+    end
+
+    test "invalid string mcp_category is ignored" do
+      assert Classification.classify(%{"name" => "read_file", "mcp_category" => "bogus"}) ==
+               :read
+    end
+  end
+
+  describe "risk_index/1" do
+    test "risk ordering is read < write < network < shell < admin" do
+      assert Classification.risk_index(:read) < Classification.risk_index(:write)
+      assert Classification.risk_index(:write) < Classification.risk_index(:network)
+      assert Classification.risk_index(:network) < Classification.risk_index(:shell)
+      assert Classification.risk_index(:shell) < Classification.risk_index(:admin)
     end
   end
 end

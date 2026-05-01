@@ -44,19 +44,36 @@ defmodule Tet.Mcp.PermissionGate do
   Takes a classification category, a task context map, and a call policy.
   Returns `:allow`, `:deny`, or `{:needs_approval, reason}`.
 
+  Applies both policy evaluation and task-context enforcement: even if the
+  policy allows a category, the task context may still require approval
+  (e.g., `:write` is not safe in a `:researching` task regardless of policy).
+
   ## Examples
 
       iex> policy = Tet.Mcp.CallPolicy.default()
       iex> Tet.Mcp.PermissionGate.check(:read, %{task_category: :researching}, policy)
-      :allow
+      {:ok, :allow}
 
       iex> policy = Tet.Mcp.CallPolicy.default()
       iex> Tet.Mcp.PermissionGate.check(:shell, %{task_category: :acting}, policy)
-      {:needs_approval, :policy_requires_approval}
+      {:ok, {:needs_approval, :policy_requires_approval}}
   """
-  @spec check(category(), task_context(), CallPolicy.t()) :: decision()
-  def check(category, _task_context, %CallPolicy{} = policy) do
-    CallPolicy.evaluate(category, policy)
+  @spec check(category(), task_context(), CallPolicy.t()) :: {:ok, decision()}
+  def check(category, task_context, %CallPolicy{} = policy) do
+    {:ok, decision} = CallPolicy.evaluate(category, policy)
+    enforce_and_return(decision, category, task_context)
+  end
+
+  defp enforce_and_return(:allow, category, task_context) do
+    if safe_for_task?(category, task_context) do
+      {:ok, :allow}
+    else
+      {:ok, {:needs_approval, :task_context_restriction}}
+    end
+  end
+
+  defp enforce_and_return(decision, _category, _task_context) do
+    {:ok, decision}
   end
 
   @doc """
@@ -97,27 +114,33 @@ defmodule Tet.Mcp.PermissionGate do
   def deny(_ref, _reason), do: :ok
 
   @doc """
-  Checks whether a classification category is safe for a given task category
+  Checks whether a classification category is safe for a given task context
   without consulting the full policy. Useful for quick pre-flight checks.
 
-  Shell is *never* safe without explicit approval, regardless of task.
+  Shell and admin are *never* safe without explicit approval, regardless of task.
+  Network is only safe in `:acting` tasks.
+  Write is only safe in `:acting` or `:debugging` tasks.
 
   ## Examples
 
-      iex> Tet.Mcp.PermissionGate.safe_for_task?(:read, :researching)
+      iex> Tet.Mcp.PermissionGate.safe_for_task?(:read, %{task_category: :researching})
       true
 
-      iex> Tet.Mcp.PermissionGate.safe_for_task?(:shell, :acting)
+      iex> Tet.Mcp.PermissionGate.safe_for_task?(:shell, %{task_category: :acting})
+      false
+
+      iex> Tet.Mcp.PermissionGate.safe_for_task?(:network, %{task_category: :acting})
+      true
+
+      iex> Tet.Mcp.PermissionGate.safe_for_task?(:network, %{task_category: :debugging})
       false
   """
-  @spec safe_for_task?(category(), atom()) :: boolean()
-  def safe_for_task?(:read, _task_category), do: true
-  def safe_for_task?(:shell, _task_category), do: false
-  def safe_for_task?(:admin, _task_category), do: false
-
-  def safe_for_task?(category, task_category) when category in [:write, :network] do
-    task_category in [:acting, :debugging]
-  end
-
-  def safe_for_task?(_category, _task_category), do: false
+  @spec safe_for_task?(category(), task_context()) :: boolean()
+  def safe_for_task?(:read, _task_context), do: true
+  def safe_for_task?(:write, %{task_category: cat}) when cat in [:acting, :debugging], do: true
+  def safe_for_task?(:write, _), do: false
+  def safe_for_task?(:network, %{task_category: :acting}), do: true
+  def safe_for_task?(:network, _), do: false
+  def safe_for_task?(:shell, _), do: false
+  def safe_for_task?(:admin, _), do: false
 end

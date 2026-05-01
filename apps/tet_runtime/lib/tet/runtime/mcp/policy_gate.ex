@@ -139,7 +139,7 @@ defmodule Tet.Runtime.Mcp.PolicyGate do
 
   @impl GenServer
   def handle_call({:authorize, call_id, tool_descriptor, category, task_context}, _from, state) do
-    decision = PermissionGate.check(category, task_context, state.policy)
+    {:ok, decision} = PermissionGate.check(category, task_context, state.policy)
     tool_name = Map.get(tool_descriptor, :name, "unknown")
 
     # Record decision for audit

@@ -8,10 +8,11 @@ defmodule Tet.Mcp.CallPolicy do
 
   ## Invariants
 
-  1. `blocked_categories` takes precedence over `allowed_categories`.
+  1. `blocked_categories` takes precedence over all.
   2. `require_approval` takes precedence over `allowed_categories`.
   3. A category cannot appear in both `allowed_categories` and `blocked_categories`.
-  4. Unknown categories fail-closed: if not explicitly allowed, they need approval.
+  4. A category cannot appear in both `allowed_categories` and `require_approval`.
+  5. Unknown categories fail-closed: if not explicitly allowed, they need approval.
 
   ## Relationship to other modules
 
@@ -60,7 +61,8 @@ defmodule Tet.Mcp.CallPolicy do
     with :ok <- validate_category_list(allowed, :allowed_categories),
          :ok <- validate_category_list(approval, :require_approval),
          :ok <- validate_category_list(blocked, :blocked_categories),
-         :ok <- validate_no_overlap(allowed, blocked) do
+         :ok <- validate_no_overlap(allowed, blocked),
+         :ok <- validate_no_overlap(allowed, approval, :allowed_require_approval_overlap) do
       {:ok,
        %__MODULE__{
          allowed_categories: allowed,
@@ -88,7 +90,7 @@ defmodule Tet.Mcp.CallPolicy do
   @doc """
   Evaluates an MCP call against this policy.
 
-  Returns one of:
+  Returns `{:ok, decision}` where decision is one of:
     - `:allow` — the call is permitted.
     - `:deny` — the call is blocked.
     - `{:needs_approval, reason}` — the call requires explicit approval.
@@ -96,36 +98,40 @@ defmodule Tet.Mcp.CallPolicy do
   ## Decision flow
 
   1. Blocked categories take absolute precedence → `:deny`.
-  2. Allowed categories → `:allow`.
-  3. Require-approval categories → `{:needs_approval, :policy_requires_approval}`.
+  2. Require-approval categories → `{:needs_approval, :policy_requires_approval}`.
+  3. Allowed categories → `:allow`.
   4. Anything else → `{:needs_approval, :category_not_allowed}` (fail-closed).
 
   ## Examples
 
       iex> policy = Tet.Mcp.CallPolicy.default()
       iex> Tet.Mcp.CallPolicy.evaluate(:read, policy)
-      :allow
+      {:ok, :allow}
 
       iex> policy = Tet.Mcp.CallPolicy.default()
       iex> Tet.Mcp.CallPolicy.evaluate(:shell, policy)
-      {:needs_approval, :policy_requires_approval}
+      {:ok, {:needs_approval, :policy_requires_approval}}
   """
-  @spec evaluate(category(), t()) :: :allow | :deny | {:needs_approval, atom()}
+  @spec evaluate(category(), t()) ::
+          {:ok, :allow | :deny | {:needs_approval, atom()}} | {:error, term()}
   def evaluate(category, %__MODULE__{} = policy) when is_atom(category) do
-    cond do
-      category in policy.blocked_categories ->
-        :deny
+    decision =
+      cond do
+        category in policy.blocked_categories ->
+          :deny
 
-      category in policy.allowed_categories ->
-        :allow
+        category in policy.require_approval ->
+          {:needs_approval, :policy_requires_approval}
 
-      category in policy.require_approval ->
-        {:needs_approval, :policy_requires_approval}
+        category in policy.allowed_categories ->
+          :allow
 
-      true ->
-        # Fail-closed: unknown or unlisted categories need approval
-        {:needs_approval, :category_not_allowed}
-    end
+        true ->
+          # Fail-closed: unknown or unlisted categories need approval
+          {:needs_approval, :category_not_allowed}
+      end
+
+    {:ok, decision}
   end
 
   @doc """
@@ -197,13 +203,13 @@ defmodule Tet.Mcp.CallPolicy do
 
   defp validate_category_list(_, field), do: {:error, {:invalid_categories, field}}
 
-  defp validate_no_overlap(allowed, blocked) do
-    overlap = MapSet.intersection(MapSet.new(allowed), MapSet.new(blocked))
+  defp validate_no_overlap(list_a, list_b, error_tag \\ :policy_category_overlap) do
+    overlap = MapSet.intersection(MapSet.new(list_a), MapSet.new(list_b))
 
     if MapSet.size(overlap) == 0 do
       :ok
     else
-      {:error, {:policy_category_overlap, MapSet.to_list(overlap)}}
+      {:error, {error_tag, MapSet.to_list(overlap)}}
     end
   end
 end
