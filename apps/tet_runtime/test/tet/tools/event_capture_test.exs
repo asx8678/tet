@@ -47,6 +47,36 @@ defmodule Tet.Runtime.Tools.EventCaptureTest do
       assert completed.payload.result_summary.line_count > 0
     end
 
+    test "includes artifact_ref for large result (>100KB)", %{workspace: ws} do
+      # Create a file > 102400 bytes
+      large_path = Path.join(ws, "large_result.txt")
+      # Each line is ~100 bytes, need ~1050 lines for ~105KB
+      large_content =
+        1..1050
+        |> Enum.map(fn n -> "Line #{n}: #{String.duplicate("abcdefghij", 9)} end" end)
+        |> Enum.join("\n")
+
+      assert byte_size(large_content) > 102_400,
+        "large_content is only #{byte_size(large_content)} bytes"
+
+      File.write!(large_path, large_content)
+
+      {:ok, _result, [_started, completed]} =
+        EventCapture.run("read", %{"path" => "large_result.txt"}, workspace_root: ws,
+          session_id: "ses_large")
+
+      assert completed.payload.ok == true
+      assert %{
+               content_sha256: sha256,
+               content_bytes: content_bytes,
+               inline_truncated: true
+             } = completed.payload.artifact_ref
+
+      assert byte_size(sha256) == 64
+      assert String.match?(sha256, ~r/^[a-f0-9]{64}$/)
+      assert content_bytes > 102_400
+    end
+
     test "emits error event when tool fails", %{workspace: ws} do
       {:error, result, [_started, completed]} =
         EventCapture.run("read", %{"path" => "nonexistent.txt"}, workspace_root: ws,

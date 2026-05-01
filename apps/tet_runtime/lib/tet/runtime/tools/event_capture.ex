@@ -123,17 +123,10 @@ defmodule Tet.Runtime.Tools.EventCapture do
     summary = summarize_result(tool_name, data)
     artifact_ref = maybe_artifact_ref(tool_name, data)
 
-    payload =
-      common
-      |> Map.put(:ok, true)
-      |> Map.put(:result_summary, summary)
-      |> put_if(artifact_ref, :artifact_ref)
-
-    if artifact_ref do
-      payload
-    else
-      payload
-    end
+    common
+    |> Map.put(:ok, true)
+    |> Map.put(:result_summary, summary)
+    |> put_if(artifact_ref, :artifact_ref)
   end
 
   defp build_error_payload(result, common) do
