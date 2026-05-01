@@ -580,7 +580,16 @@ defmodule Tet.Store.SQLite do
   def list_pending_workflows, do: {:ok, []}
 
   @impl true
-  def list_steps(_workflow_id), do: {:ok, []}
+  def list_steps(workflow_id) when is_binary(workflow_id) do
+    list_steps(workflow_id, [])
+  end
+
+  @impl true
+  def list_steps(workflow_id, opts) when is_binary(workflow_id) and is_list(opts) do
+    with {:ok, steps} <- read_workflow_steps(workflow_steps_path(opts)) do
+      {:ok, Enum.filter(steps, &(&1.workflow_id == workflow_id))}
+    end
+  end
 
   @impl true
   def claim_workflow(_id, _node, _ttl), do: {:ok, :claimed}

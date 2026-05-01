@@ -1,14 +1,22 @@
 defmodule Tet.Checkpoint do
   @moduledoc """
-  Session checkpoint struct for durable state snapshots — BD-0034.
+  Session checkpoint struct for durable state snapshots — BD-0034/BD-0035.
 
   A checkpoint captures the full runtime state of a session at a point in time,
-  enabling crash recovery and resume semantics (§12). Checkpoints are
-  content-addressable by `sha256` of their serialized state.
+  enabling crash recovery, resume, and deterministic workflow replay (§12).
+  Checkpoints are content-addressable by `sha256` of their serialized state.
 
-  This module is pure data and pure functions. It does not touch the filesystem,
-  persist events, or dispatch tools.
+  ## Create & restore
+
+      {:ok, cp} = Tet.Checkpoint.create(store, "ses_123", %{foo: "bar"})
+      {:ok, snapshot} = Tet.Checkpoint.restore(store, cp.id)
+
+  ## Replay
+
+  See `Tet.Checkpoint.Replay` for replaying workflow steps from a checkpoint.
   """
+
+  alias Tet.Prompt.Canonical
 
   @enforce_keys [:id, :session_id]
   defstruct [
@@ -58,6 +66,75 @@ defmodule Tet.Checkpoint do
     end
   end
 
+  @doc """
+  Creates a checkpoint for the given session, capturing the provided state snapshot.
+
+  The snapshot is hashed (SHA-256) for content-addressability. The checkpoint is
+  persisted through the store adapter.
+
+  ## Options
+
+    * `:id` — explicit checkpoint ID (auto-generated if omitted)
+    * `:task_id` — optional task correlation
+    * `:workflow_id` — optional workflow correlation
+    * `:metadata` — additional metadata map (merged into checkpoint metadata)
+  """
+  @spec create(module(), binary(), map(), keyword()) :: {:ok, t()} | {:error, term()}
+  def create(store, session_id, state_snapshot, opts \\ []) when is_list(opts) do
+    with {:ok, normalized} <- Canonical.normalize(state_snapshot) do
+      sha256 = Canonical.hash(normalized)
+
+      id = Keyword.get(opts, :id) || generate_id()
+      now = DateTime.utc_now() |> DateTime.to_iso8601()
+      metadata = Keyword.get(opts, :metadata, %{})
+
+      attrs = %{
+        id: id,
+        session_id: session_id,
+        task_id: Keyword.get(opts, :task_id),
+        workflow_id: Keyword.get(opts, :workflow_id),
+        sha256: sha256,
+        state_snapshot: state_snapshot,
+        created_at: now,
+        metadata: metadata
+      }
+
+      store.save_checkpoint(attrs, opts)
+    end
+  end
+
+  @doc """
+  Restores a checkpoint by loading it from the store.
+
+  Returns `{:ok, state_snapshot}` on success, or an error tuple if the
+  checkpoint is not found.
+  """
+  @spec restore(module(), binary(), keyword()) :: {:ok, map()} | {:error, term()}
+  def restore(store, checkpoint_id, opts \\ []) when is_list(opts) do
+    with {:ok, checkpoint} <- store.get_checkpoint(checkpoint_id, opts) do
+      case checkpoint.state_snapshot do
+        nil -> {:error, :empty_checkpoint_snapshot}
+        snapshot -> {:ok, snapshot}
+      end
+    end
+  end
+
+  @doc """
+  Lists all checkpoints for a session.
+  """
+  @spec list(module(), binary(), keyword()) :: {:ok, [t()]} | {:error, term()}
+  def list(store, session_id, opts \\ []) when is_list(opts) do
+    store.list_checkpoints(session_id, opts)
+  end
+
+  @doc """
+  Deletes a checkpoint by id.
+  """
+  @spec delete(module(), binary(), keyword()) :: {:ok, :ok} | {:error, term()}
+  def delete(store, checkpoint_id, opts \\ []) when is_list(opts) do
+    store.delete_checkpoint(checkpoint_id, opts)
+  end
+
   @doc "Converts a checkpoint to a JSON-friendly map."
   @spec to_map(t()) :: map()
   def to_map(%__MODULE__{} = checkpoint) do
@@ -79,6 +156,12 @@ defmodule Tet.Checkpoint do
   @doc "Converts a decoded map back to a validated checkpoint."
   @spec from_map(map()) :: {:ok, t()} | {:error, term()}
   def from_map(attrs) when is_map(attrs), do: new(attrs)
+
+  # -- ID generation --
+
+  defp generate_id do
+    "cp_" <> (:crypto.strong_rand_bytes(16) |> Base.encode16(case: :lower))
+  end
 
   # -- Private helpers --
 
