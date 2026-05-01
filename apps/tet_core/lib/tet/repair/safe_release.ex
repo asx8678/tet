@@ -131,9 +131,18 @@ defmodule Tet.Repair.SafeRelease do
       release.mode not in @modes ->
         {:error, {:invalid_safe_release_field, :mode}}
 
+      not valid_list?(release.capabilities, @valid_capabilities) ->
+        {:error, {:invalid_safe_release_field, :capabilities}}
+
       not Enum.all?(@required_capabilities, &(&1 in release.capabilities)) ->
         missing = @required_capabilities -- release.capabilities
         {:error, {:missing_required_capabilities, missing}}
+
+      not valid_list?(release.restricted_tools, @valid_restricted_tools) ->
+        {:error, {:invalid_safe_release_field, :restricted_tools}}
+
+      not is_list(release.excluded_deps) or not Enum.all?(release.excluded_deps, &is_atom/1) ->
+        {:error, {:invalid_safe_release_field, :excluded_deps}}
 
       not is_integer(release.health_check_interval) or release.health_check_interval < 1 ->
         {:error, {:invalid_safe_release_field, :health_check_interval}}
@@ -148,6 +157,8 @@ defmodule Tet.Repair.SafeRelease do
         :ok
     end
   end
+
+  def validate(_), do: {:error, :invalid_safe_release}
 
   @doc """
   Checks if the minimal requirements are met for a repair boot.
@@ -274,4 +285,10 @@ defmodule Tet.Repair.SafeRelease do
       atom -> {:ok, atom}
     end
   end
+
+  defp valid_list?(values, allowed) when is_list(values) do
+    Enum.all?(values, &(&1 in allowed))
+  end
+
+  defp valid_list?(_values, _allowed), do: false
 end

@@ -184,6 +184,38 @@ defmodule Tet.Repair.SafeReleaseTest do
       assert {:error, {:invalid_safe_release_field, :handoff_strategy}} =
                SafeRelease.validate(bad)
     end
+
+    test "rejects invalid capability in mutated struct" do
+      {:ok, r} = SafeRelease.new(%{id: "rel"})
+
+      assert {:error, {:invalid_safe_release_field, :capabilities}} =
+               SafeRelease.validate(%{r | capabilities: [:diagnose, :handoff, :teleport]})
+    end
+
+    test "rejects nil capabilities" do
+      {:ok, r} = SafeRelease.new(%{id: "rel"})
+
+      assert {:error, {:invalid_safe_release_field, :capabilities}} =
+               SafeRelease.validate(%{r | capabilities: nil})
+    end
+
+    test "rejects invalid restricted_tools" do
+      {:ok, r} = SafeRelease.new(%{id: "rel"})
+
+      assert {:error, {:invalid_safe_release_field, :restricted_tools}} =
+               SafeRelease.validate(%{r | restricted_tools: [:delete]})
+    end
+
+    test "rejects string excluded_deps" do
+      {:ok, r} = SafeRelease.new(%{id: "rel"})
+
+      assert {:error, {:invalid_safe_release_field, :excluded_deps}} =
+               SafeRelease.validate(%{r | excluded_deps: ["ecto"]})
+    end
+
+    test "rejects non-struct input" do
+      assert {:error, :invalid_safe_release} = SafeRelease.validate(%{id: "rel"})
+    end
   end
 
   describe "can_boot?/1" do
