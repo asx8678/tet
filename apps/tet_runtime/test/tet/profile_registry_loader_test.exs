@@ -39,7 +39,22 @@ defmodule Tet.ProfileRegistryLoaderTest do
     assert registry.profiles["chat"].overlays.model.default_model == "openai/gpt-4o-mini"
 
     assert {:ok, profiles} = RuntimeProfileRegistry.list()
-    assert Enum.map(profiles, & &1.id) == ["chat", "tet_standalone", "tool_use"]
+
+    assert Enum.map(profiles, & &1.id) ==
+             [
+               "chat",
+               "critic",
+               "json-data",
+               "packager",
+               "planner",
+               "repair",
+               "retriever",
+               "reviewer",
+               "security",
+               "tester",
+               "tet_standalone",
+               "tool_use"
+             ]
 
     assert {:ok, tool_use} = Tet.get_profile("tool_use")
     assert tool_use.overlays.tool.mode == "standard"
@@ -116,6 +131,35 @@ defmodule Tet.ProfileRegistryLoaderTest do
     assert profile.overlays.prompt.system =~ "Tet"
 
     assert {:error, :profile_not_found} = Tet.get_profile("missing")
+  end
+
+  test "bundled registry contains all nine specialty profiles" do
+    specialty_ids =
+      ~w(critic json-data packager planner repair retriever reviewer security tester)
+
+    assert {:ok, _registry} = RuntimeProfileRegistry.load()
+
+    for id <- specialty_ids do
+      assert {:ok, profile} = Tet.get_profile(id),
+             "bundled registry missing specialty profile #{inspect(id)}"
+
+      assert profile.overlays.tool.mode in ["read_only", "standard"],
+             "#{id} has unexpected tool mode: #{inspect(profile.overlays.tool.mode)}"
+
+      assert profile.overlays.model.default_model != nil,
+             "#{id} missing default_model"
+    end
+  end
+
+  test "bundled specialty profiles validate against the model registry" do
+    assert {:ok, _registry} = RuntimeProfileRegistry.load()
+
+    for id <- ~w(planner reviewer critic tester security packager retriever json-data repair) do
+      {:ok, profile} = Tet.get_profile(id)
+
+      assert is_binary(profile.overlays.model.profile_pin),
+             "#{id} missing profile_pin for model registry cross-reference"
+    end
   end
 
   defp unique_tmp_root(prefix) do

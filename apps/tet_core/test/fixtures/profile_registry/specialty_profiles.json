@@ -1,0 +1,479 @@
+{
+  "schema_version": 1,
+  "profiles": {
+    "planner": {
+      "display_name": "Planner",
+      "description": "Specialty profile for planning and strategy tasks.",
+      "version": "1.0.0",
+      "tags": ["specialty", "planning"],
+      "overlays": {
+        "prompt": {
+          "system": "You are Tet in planner mode.",
+          "layers": [
+            {
+              "id": "plan-before-act",
+              "label": "Plan before act",
+              "content": "Produce a structured plan before any tool execution."
+            }
+          ]
+        },
+        "tool": {
+          "mode": "read_only",
+          "allow": ["native.list_files", "native.read_file", "native.grep", "native.patch.preview"],
+          "deny": ["native.patch.apply", "native.shell.exec", "native.shell.write"]
+        },
+        "model": {
+          "profile_pin": "planner",
+          "default_model": "openai/gpt-4o-mini",
+          "fallback_models": ["mock/default"],
+          "settings": {
+            "temperature": 0.3
+          }
+        },
+        "task": {
+          "categories": ["planning", "chat"],
+          "modes": ["plan", "assist"],
+          "default_mode": "plan",
+          "priority": "normal"
+        },
+        "schema": {
+          "response": {
+            "type": "object",
+            "additional_properties": true
+          }
+        },
+        "cache": {
+          "policy": "preserve",
+          "prompt": true,
+          "tools": true,
+          "ttl_seconds": 7200
+        }
+      },
+      "metadata": {
+        "source": "fixture"
+      }
+    },
+    "reviewer": {
+      "display_name": "Reviewer",
+      "description": "Specialty profile for code review tasks.",
+      "version": "1.0.0",
+      "tags": ["specialty", "review", "read-only"],
+      "overlays": {
+        "prompt": {
+          "system": "You are Tet in reviewer mode.",
+          "layers": [
+            {
+              "id": "review-discipline",
+              "label": "Review discipline",
+              "content": "Classify each finding by severity."
+            }
+          ]
+        },
+        "tool": {
+          "mode": "read_only",
+          "allow": ["native.list_files", "native.read_file", "native.grep", "native.patch.preview", "native.git_diff"],
+          "deny": ["native.patch.apply", "native.shell.exec", "native.shell.write"]
+        },
+        "model": {
+          "profile_pin": "reviewer",
+          "default_model": "openai/gpt-4o-mini",
+          "fallback_models": ["mock/default"],
+          "settings": {
+            "temperature": 0.1
+          }
+        },
+        "task": {
+          "categories": ["acting", "verification"],
+          "modes": ["review", "assist"],
+          "default_mode": "review",
+          "priority": "normal"
+        },
+        "schema": {
+          "response": {
+            "type": "object",
+            "additional_properties": true
+          }
+        },
+        "cache": {
+          "policy": "preserve",
+          "prompt": true,
+          "tools": true,
+          "ttl_seconds": 3600
+        }
+      },
+      "metadata": {
+        "source": "fixture"
+      }
+    },
+    "critic": {
+      "display_name": "Critic",
+      "description": "Specialty profile for critical evaluation.",
+      "version": "1.0.0",
+      "tags": ["specialty", "critic", "diagnostic"],
+      "overlays": {
+        "prompt": {
+          "system": "You are Tet in critic mode.",
+          "layers": [
+            {
+              "id": "critical-stance",
+              "label": "Critical stance",
+              "content": "Challenge assumptions, identify logical flaws."
+            }
+          ]
+        },
+        "tool": {
+          "mode": "read_only",
+          "allow": ["native.list_files", "native.read_file", "native.grep", "native.git_diff"],
+          "deny": ["native.patch.apply", "native.patch.preview", "native.shell.exec", "native.shell.write"]
+        },
+        "model": {
+          "profile_pin": "critic",
+          "default_model": "openai/gpt-4o-mini",
+          "fallback_models": ["mock/default"],
+          "settings": {
+            "temperature": 0.2
+          }
+        },
+        "task": {
+          "categories": ["chat", "verification"],
+          "modes": ["review", "assist"],
+          "default_mode": "review",
+          "priority": "normal"
+        },
+        "schema": {
+          "response": {
+            "type": "object",
+            "additional_properties": true
+          }
+        },
+        "cache": {
+          "policy": "preserve",
+          "prompt": true,
+          "tools": false,
+          "ttl_seconds": 3600
+        }
+      },
+      "metadata": {
+        "source": "fixture"
+      }
+    },
+    "tester": {
+      "display_name": "Tester",
+      "description": "Specialty profile for test writing and execution.",
+      "version": "1.0.0",
+      "tags": ["specialty", "testing", "verification"],
+      "overlays": {
+        "prompt": {
+          "system": "You are Tet in tester mode.",
+          "layers": [
+            {
+              "id": "test-scope",
+              "label": "Test scope",
+              "content": "Only write to test files. Use shell only for test runners."
+            }
+          ]
+        },
+        "tool": {
+          "mode": "standard",
+          "allow": ["native.list_files", "native.read_file", "native.grep", "native.patch.preview", "native.patch.apply", "native.shell.test"],
+          "deny": ["native.shell.unbounded", "native.patch.apply_unapproved"]
+        },
+        "model": {
+          "profile_pin": "tester",
+          "default_model": "openai/gpt-4o-mini",
+          "fallback_models": ["mock/default"],
+          "settings": {
+            "temperature": 0.1,
+            "tool_choice": "auto"
+          }
+        },
+        "task": {
+          "categories": ["acting", "verification"],
+          "modes": ["act", "verify"],
+          "default_mode": "act",
+          "priority": "normal"
+        },
+        "schema": {
+          "response": {
+            "type": "object",
+            "additional_properties": true
+          }
+        },
+        "cache": {
+          "policy": "drop",
+          "prompt": true,
+          "tools": false
+        }
+      },
+      "metadata": {
+        "source": "fixture"
+      }
+    },
+    "security": {
+      "display_name": "Security",
+      "description": "Specialty profile for security auditing.",
+      "version": "1.0.0",
+      "tags": ["specialty", "security", "read-only"],
+      "overlays": {
+        "prompt": {
+          "system": "You are Tet in security mode.",
+          "layers": [
+            {
+              "id": "security-scope",
+              "label": "Security scope",
+              "content": "Check for hardcoded secrets, injection risks, and misconfigured permissions."
+            }
+          ]
+        },
+        "tool": {
+          "mode": "read_only",
+          "allow": ["native.list_files", "native.read_file", "native.grep", "native.git_diff", "native.security.scan"],
+          "deny": ["native.patch.apply", "native.patch.preview", "native.shell.exec", "native.shell.write"]
+        },
+        "model": {
+          "profile_pin": "security",
+          "default_model": "openai/gpt-4o-mini",
+          "fallback_models": ["mock/default"],
+          "settings": {
+            "temperature": 0.0
+          }
+        },
+        "task": {
+          "categories": ["verification", "acting"],
+          "modes": ["review", "verify"],
+          "default_mode": "review",
+          "priority": "high"
+        },
+        "schema": {
+          "response": {
+            "type": "object",
+            "additional_properties": true
+          }
+        },
+        "cache": {
+          "policy": "preserve",
+          "prompt": true,
+          "tools": true,
+          "ttl_seconds": 1800
+        }
+      },
+      "metadata": {
+        "source": "fixture"
+      }
+    },
+    "packager": {
+      "display_name": "Packager",
+      "description": "Specialty profile for build and release tasks.",
+      "version": "1.0.0",
+      "tags": ["specialty", "build", "release"],
+      "overlays": {
+        "prompt": {
+          "system": "You are Tet in packager mode.",
+          "layers": [
+            {
+              "id": "build-discipline",
+              "label": "Build discipline",
+              "content": "Use deterministic build flags. Verify checksums after assembly."
+            }
+          ]
+        },
+        "tool": {
+          "mode": "standard",
+          "allow": ["native.list_files", "native.read_file", "native.grep", "native.patch.preview", "native.shell.build", "native.shell.package"],
+          "deny": ["native.shell.unbounded", "native.patch.apply_unapproved", "network.external"]
+        },
+        "model": {
+          "profile_pin": "packager",
+          "default_model": "openai/gpt-4o-mini",
+          "fallback_models": ["mock/default"],
+          "settings": {
+            "temperature": 0.0,
+            "tool_choice": "auto"
+          }
+        },
+        "task": {
+          "categories": ["acting"],
+          "modes": ["act"],
+          "default_mode": "act",
+          "priority": "normal"
+        },
+        "schema": {
+          "response": {
+            "type": "object",
+            "additional_properties": true
+          }
+        },
+        "cache": {
+          "policy": "drop",
+          "prompt": true,
+          "tools": false
+        }
+      },
+      "metadata": {
+        "source": "fixture"
+      }
+    },
+    "retriever": {
+      "display_name": "Retriever",
+      "description": "Specialty profile for information gathering.",
+      "version": "1.0.0",
+      "tags": ["specialty", "search", "read-only"],
+      "overlays": {
+        "prompt": {
+          "system": "You are Tet in retriever mode.",
+          "layers": [
+            {
+              "id": "retrieval-scope",
+              "label": "Retrieval scope",
+              "content": "Use broad search patterns first, then narrow."
+            }
+          ]
+        },
+        "tool": {
+          "mode": "read_only",
+          "allow": ["native.list_files", "native.read_file", "native.grep", "native.git_diff", "native.repo_scan"],
+          "deny": ["native.patch.apply", "native.patch.preview", "native.shell.exec", "native.shell.write"]
+        },
+        "model": {
+          "profile_pin": "retriever",
+          "default_model": "openai/gpt-4o-mini",
+          "fallback_models": ["mock/default"],
+          "settings": {
+            "temperature": 0.2
+          }
+        },
+        "task": {
+          "categories": ["chat", "planning"],
+          "modes": ["assist"],
+          "default_mode": "assist",
+          "priority": "normal"
+        },
+        "schema": {
+          "response": {
+            "type": "object",
+            "additional_properties": true
+          }
+        },
+        "cache": {
+          "policy": "preserve",
+          "prompt": true,
+          "tools": true,
+          "ttl_seconds": 7200
+        }
+      },
+      "metadata": {
+        "source": "fixture"
+      }
+    },
+    "json-data": {
+      "display_name": "JSON Data",
+      "description": "Specialty profile for structured data and JSON tasks.",
+      "version": "1.0.0",
+      "tags": ["specialty", "data", "structured-output"],
+      "overlays": {
+        "prompt": {
+          "system": "You are Tet in JSON-data mode.",
+          "layers": [
+            {
+              "id": "schema-conformance",
+              "label": "Schema conformance",
+              "content": "Validate output against declared schema before returning."
+            }
+          ]
+        },
+        "tool": {
+          "mode": "standard",
+          "allow": ["native.list_files", "native.read_file", "native.grep", "native.patch.preview", "native.patch.apply", "native.json.validate"],
+          "deny": ["native.shell.unbounded", "native.shell.exec", "native.patch.apply_unapproved"]
+        },
+        "model": {
+          "profile_pin": "json-data",
+          "default_model": "openai/gpt-4o-mini",
+          "fallback_models": ["mock/default"],
+          "settings": {
+            "temperature": 0.0,
+            "response_format": "json"
+          }
+        },
+        "task": {
+          "categories": ["acting", "chat"],
+          "modes": ["act", "assist"],
+          "default_mode": "act",
+          "priority": "normal"
+        },
+        "schema": {
+          "response": {
+            "type": "object",
+            "additional_properties": true
+          }
+        },
+        "cache": {
+          "policy": "preserve",
+          "prompt": true,
+          "tools": true,
+          "ttl_seconds": 3600
+        }
+      },
+      "metadata": {
+        "source": "fixture"
+      }
+    },
+    "repair": {
+      "display_name": "Repair",
+      "description": "Specialty profile for self-healing and repair tasks.",
+      "version": "1.0.0",
+      "tags": ["specialty", "repair", "self-healing"],
+      "overlays": {
+        "prompt": {
+          "system": "You are Tet in repair mode.",
+          "layers": [
+            {
+              "id": "repair-discipline",
+              "label": "Repair discipline",
+              "content": "Diagnose before fixing. Apply the smallest possible change."
+            },
+            {
+              "id": "approval-gates",
+              "label": "Approval gates",
+              "content": "Every mutation requires explicit approval."
+            }
+          ]
+        },
+        "tool": {
+          "mode": "standard",
+          "allow": ["native.list_files", "native.read_file", "native.grep", "native.patch.preview", "native.patch.apply", "native.verify.allowlisted", "native.shell.test"],
+          "deny": ["native.shell.unbounded", "native.patch.apply_unapproved"]
+        },
+        "model": {
+          "profile_pin": "repair",
+          "default_model": "openai/gpt-4o-mini",
+          "fallback_models": ["mock/default"],
+          "settings": {
+            "temperature": 0.1,
+            "tool_choice": "auto"
+          }
+        },
+        "task": {
+          "categories": ["acting", "verification"],
+          "modes": ["act", "verify"],
+          "default_mode": "act",
+          "priority": "high"
+        },
+        "schema": {
+          "response": {
+            "type": "object",
+            "additional_properties": true
+          }
+        },
+        "cache": {
+          "policy": "drop",
+          "prompt": true,
+          "tools": false
+        }
+      },
+      "metadata": {
+        "source": "fixture"
+      }
+    }
+  }
+}
