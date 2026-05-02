@@ -67,10 +67,7 @@ defmodule Tet.Store.SQLite.WorkflowStepsTest do
         status: :running
       })
 
-    workflow_steps_path = Path.join(System.tmp_dir!(), "tet-wf-steps-#{n}.jsonl")
-
     opts = [
-      workflow_steps_path: workflow_steps_path,
       ws_id: ws_id,
       ses_id: ses_id,
       wf_id: wf_id
@@ -230,32 +227,14 @@ defmodule Tet.Store.SQLite.WorkflowStepsTest do
     end
   end
 
-  describe "list_steps/1 (callback, default path via env)" do
-    setup %{opts: opts} do
-      original_env = System.get_env("TET_WORKFLOW_STEPS_PATH")
-      System.put_env("TET_WORKFLOW_STEPS_PATH", opts[:workflow_steps_path])
-
-      on_exit(fn ->
-        if original_env do
-          System.put_env("TET_WORKFLOW_STEPS_PATH", original_env)
-        else
-          System.delete_env("TET_WORKFLOW_STEPS_PATH")
-        end
-      end)
-
-      :ok
-    end
-
-    test "returns steps via callback signature using env-configured path", %{
-      opts: opts,
-      wf_id: wf_id
-    } do
+  describe "list_steps/1 (arity-1 callback)" do
+    test "delegates to list_steps/2", %{opts: opts, wf_id: wf_id} do
       n = unique_integer()
 
       assert {:ok, _step} =
                append_step(
                  %{
-                   id: "step_cb_1_#{n}",
+                   id: "step_arity1_#{n}",
                    workflow_id: wf_id,
                    session_id: opts[:ses_id],
                    name: "research",
@@ -266,72 +245,9 @@ defmodule Tet.Store.SQLite.WorkflowStepsTest do
                  opts
                )
 
-      assert {:ok, _step} =
-               append_step(
-                 %{
-                   id: "step_cb_2_#{n}",
-                   workflow_id: wf_id,
-                   session_id: opts[:ses_id],
-                   name: "build",
-                   idempotency_key: @idem_key_002,
-                   status: :committed,
-                   attempt: 1
-                 },
-                 opts
-               )
-
-      # list_steps/1 reads from TET_WORKFLOW_STEPS_PATH env var
       assert {:ok, steps} = Tet.Store.SQLite.list_steps(wf_id)
-      step_names = Enum.map(steps, & &1.step_name)
-      assert "research" in step_names
-      assert "build" in step_names
-      assert length(steps) == 2
-    end
-
-    test "callback filters by workflow_id correctly", %{opts: opts, wf_id: wf_a} do
-      n = unique_integer()
-      # Create a second workflow
-      wf_b = "wf_cb_filter_b_#{n}"
-
-      {:ok, _wf} =
-        Tet.Store.SQLite.create_workflow(%{
-          id: wf_b,
-          session_id: opts[:ses_id],
-          status: :running
-        })
-
-      assert {:ok, _wf_a} =
-               append_step(
-                 %{
-                   id: "step_cb_a_1_#{n}",
-                   workflow_id: wf_a,
-                   session_id: opts[:ses_id],
-                   name: "research",
-                   idempotency_key: @idem_key_001,
-                   status: :started,
-                   attempt: 1
-                 },
-                 opts
-               )
-
-      assert {:ok, _wf_b} =
-               append_step(
-                 %{
-                   id: "step_cb_b_1_#{n}",
-                   workflow_id: wf_b,
-                   session_id: opts[:ses_id],
-                   name: "build",
-                   idempotency_key: @idem_key_002,
-                   status: :started,
-                   attempt: 1
-                 },
-                 opts
-               )
-
-      assert {:ok, steps} = Tet.Store.SQLite.list_steps(wf_a)
-      step_ids = Enum.map(steps, & &1.id)
-      assert "step_cb_a_1_#{n}" in step_ids
-      refute "step_cb_b_1_#{n}" in step_ids
+      assert length(steps) == 1
+      assert hd(steps).step_name == "research"
     end
   end
 

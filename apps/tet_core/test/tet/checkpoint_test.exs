@@ -1,17 +1,10 @@
 defmodule Tet.CheckpointTest do
   use ExUnit.Case, async: false
 
-  @sqlite_steps_path Path.join(
-                       System.tmp_dir!(),
-                       "tet_checkpoint_test_steps_#{System.unique_integer([:positive])}.jsonl"
-                     )
-
   setup do
     Tet.Store.Memory.reset()
     :ok
   end
-
-  setup :cleanup_sqlite_steps
 
   # ── Checkpoint.create/4 ────────────────────────────────────────────────────
 
@@ -370,7 +363,7 @@ defmodule Tet.CheckpointTest do
                  Tet.Store.SQLite,
                  "wf_sqlite_opts",
                  step_fn,
-                 workflow_steps_path: @sqlite_steps_path
+                 []
                )
 
       assert summary.total == 2
@@ -478,47 +471,88 @@ defmodule Tet.CheckpointTest do
     :ok
   end
 
-  defp cleanup_sqlite_steps(%{}) do
-    # Clean up the SQLite steps file from previous runs
-    if File.exists?(@sqlite_steps_path) do
-      File.rm!(@sqlite_steps_path)
-    end
-
-    :ok
-  end
-
   defp create_sqlite_steps_with_opts(%{}) do
     now = DateTime.utc_now()
+    n = System.unique_integer([:positive, :monotonic])
+
+    # Clean SQLite tables to prevent unique constraint collisions from previous runs.
+    # FK-ordered: children first, then parents.
+    cleanup_tables = [
+      "workflow_steps",
+      "workflows",
+      "events",
+      "messages",
+      "tasks",
+      "sessions",
+      "workspaces"
+    ]
+
+    for table <- cleanup_tables do
+      Ecto.Adapters.SQL.query!(Tet.Store.SQLite.Repo, "DELETE FROM #{table}", [])
+    end
+
+    # Create FK parent chain required by SQLite adapter
+    ws_id = "ws_cp_sqlite_#{n}"
+    ses_id = "ses_cp_sqlite_#{n}"
+    wf_id = "wf_sqlite_opts"
+
+    {:ok, _} =
+      Tet.Store.SQLite.create_workspace(%{
+        id: ws_id,
+        name: "checkpoint-test",
+        root_path: "/tmp/cp-test-#{ws_id}",
+        tet_dir_path: "/tmp/cp-test-#{ws_id}/.tet",
+        trust_state: :trusted
+      })
+
+    {:ok, _} =
+      Tet.Store.SQLite.create_session(%{
+        id: ses_id,
+        workspace_id: ws_id,
+        short_id: String.slice(ses_id, 0, 8),
+        mode: :chat,
+        status: :idle
+      })
+
+    {:ok, _} =
+      Tet.Store.SQLite.create_workflow(%{
+        id: wf_id,
+        session_id: ses_id,
+        status: :running
+      })
+
+    # 64-char hex idempotency keys (required by SQLite CHECK constraint)
+    idem_key_1 = "cc" <> String.duplicate("a1", 31)
+    idem_key_2 = "dd" <> String.duplicate("b2", 31)
 
     steps = [
       %Tet.WorkflowStep{
         id: "sqlite_step_1",
-        workflow_id: "wf_sqlite_opts",
-        session_id: "ses_sqlite_opts",
+        workflow_id: wf_id,
+        session_id: ses_id,
         step_name: "already_done",
-        idempotency_key: "ik_sqlite_1",
+        idempotency_key: idem_key_1,
         status: :committed,
+        attempt: 1,
         input: %{},
         output: %{done: true},
         created_at: now
       },
       %Tet.WorkflowStep{
         id: "sqlite_step_2",
-        workflow_id: "wf_sqlite_opts",
-        session_id: "ses_sqlite_opts",
+        workflow_id: wf_id,
+        session_id: ses_id,
         step_name: "needs_replay",
-        idempotency_key: "ik_sqlite_2",
-        status: :pending,
+        idempotency_key: idem_key_2,
+        status: :started,
+        attempt: 1,
         input: %{foo: "bar"},
         created_at: DateTime.add(now, 1, :second)
       }
     ]
 
     Enum.each(steps, fn step ->
-      {:ok, _} =
-        Tet.Store.SQLite.append_step(Tet.WorkflowStep.to_map(step),
-          workflow_steps_path: @sqlite_steps_path
-        )
+      {:ok, _} = Tet.Store.SQLite.append_step(Tet.WorkflowStep.to_map(step), [])
     end)
 
     :ok

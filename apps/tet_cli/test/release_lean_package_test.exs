@@ -28,19 +28,38 @@ defmodule TetCLI.ReleaseLeanPackageTest do
     end
 
     test "no circular dependencies between umbrella apps" do
-      dep_map = %{
-        tet_cli: [:tet_core, :tet_runtime],
-        tet_runtime: [:tet_core],
-        tet_core: [],
-        tet_store_sqlite: [:tet_core],
-        tet_store_memory: [:tet_core],
-        tet_web_phoenix: [:tet_core, :tet_runtime]
-      }
+      dep_map = Tet.Release.umbrella_dep_graph()
 
       # Check each app has no cycles via DFS
       for {app, _deps} <- dep_map do
         assert :acyclic = has_cycle?(app, dep_map, MapSet.new(), MapSet.new()),
                "#{app} has a circular dependency"
+      end
+    end
+
+    test "Tet.Release dep graph matches actual mix.exs umbrella deps" do
+      graph = Tet.Release.umbrella_dep_graph()
+
+      for {app, declared_deps} <- graph do
+        mix_path = Path.join(@root, "apps/#{app}/mix.exs")
+        assert File.exists?(mix_path), "Missing mix.exs for #{app}"
+        content = File.read!(mix_path)
+
+        # Extract in_umbrella deps from the file content (used for reference; prod_deps is what we assert on)
+        _actual_umbrella_deps =
+          Regex.scan(~r/\{:([\w]+),\s*in_umbrella:\s*true(?:,\s*only:\s*:\w+)?\}/, content)
+          |> Enum.map(fn [_full, name] -> String.to_existing_atom(name) end)
+
+        # The declared graph should match actual production in_umbrella deps
+        # (test-only deps like tet_store_memory in tet_runtime are excluded from the graph)
+        prod_deps =
+          Regex.scan(~r/\{:([\w]+),\s*in_umbrella:\s*true\}/, content)
+          |> Enum.map(fn [_full, name] -> String.to_existing_atom(name) end)
+
+        assert Enum.sort(declared_deps) == Enum.sort(prod_deps),
+               "Tet.Release dep graph for #{app} declares #{inspect(Enum.sort(declared_deps))} " <>
+                 "but actual mix.exs has #{inspect(Enum.sort(prod_deps))}. " <>
+                 "Update @umbrella_dep_graph in Tet.Release."
       end
     end
 

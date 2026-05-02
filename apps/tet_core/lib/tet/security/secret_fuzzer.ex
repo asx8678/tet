@@ -82,7 +82,7 @@ defmodule Tet.Security.SecretFuzzer do
       {"ghp_1234567890abcdefghijklmnopqrstuvwxyz1234", :token},
       {"gho_1234567890abcdefghijklmnopqrstuvwxyz1234", :token},
       {"ghs_1234567890abcdefghijklmnopqrstuvwxyz1234", :token},
-      # Slack
+      # Slack — tokens split to avoid GitHub push-protection false positives
       {("xoxb-" <> "1234567890-abcdefghijklmnopqrstuvwx"), :token},
       {("xoxa-" <> "123456789012345678901234"), :token},
       {("xoxp-" <> "123456789012345678901234"), :token}
