@@ -45,7 +45,7 @@ check_non_web_apps_do_not_depend_on_web() {
 
   hits=$(
     grep -nE \
-      ':[[:space:]]*(bandit|cowboy|cowlib|phoenix|phoenix_live_dashboard|phoenix_live_view|phoenix_pubsub|plug|plug_cowboy|ranch|tet_web|tet_web_phoenix|thousand_island|websock|websock_adapter)([^[:alnum:]_]|$)' \
+      ':[[:space:]]*(bandit|cowboy|cowlib|phoenix|phoenix_live_dashboard|phoenix_live_view|phoenix_pubsub|plug|plug_cowboy|ranch|tet_web|tet_web_phoenix|thousand_island|websock|websock_adapter)([^[:alnum:]]|$)' \
       "${mix_files[@]}" || true
   )
 
