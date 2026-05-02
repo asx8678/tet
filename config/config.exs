@@ -34,6 +34,9 @@ config :tet_cli,
   release_profile: :tet_standalone
 
 # Import environment-specific config (dev.exs, test.exs, prod.exs)
-if File.exists?("config/#{config_env()}.exs") do
-  import_config "#{config_env()}.exs"
+env_config = "#{config_env()}.exs"
+env_config_path = Path.join(__DIR__, env_config)
+
+if File.exists?(env_config_path) do
+  import_config env_config
 end

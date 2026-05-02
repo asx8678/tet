@@ -4,6 +4,19 @@ defmodule Tet.Store.SQLiteMigratorTest do
   alias Ecto.Adapters.SQL
   alias Tet.Store.SQLite.{Connection, Migrator, Repo}
 
+  # Migrator.run!/1 starts its own Repo process, which conflicts with
+  # the already-running supervised Repo. Stop the app before each test
+  # and restart it in on_exit so subsequent tests have a working app.
+  setup do
+    :ok = Application.stop(:tet_store_sqlite)
+
+    on_exit(fn ->
+      {:ok, _} = Application.ensure_all_started(:tet_store_sqlite)
+    end)
+
+    :ok
+  end
+
   @expected_tables ~w(
     workspaces
     sessions
@@ -18,6 +31,12 @@ defmodule Tet.Store.SQLiteMigratorTest do
     autosaves
     prompt_history_entries
     legacy_jsonl_imports
+    checkpoints
+    error_log
+    repairs
+    findings
+    persistent_memories
+    project_lessons
   )
 
   test "migration runner bootstraps an empty DB with all v0.3, journal, and compat tables" do
@@ -25,7 +44,7 @@ defmodule Tet.Store.SQLiteMigratorTest do
 
     try do
       applied = Migrator.run!(database: db_path)
-      assert length(applied) == 13
+      assert length(applied) == 19
 
       with_repo(db_path, fn ->
         assert @expected_tables -- table_names() == []
@@ -92,7 +111,7 @@ defmodule Tet.Store.SQLiteMigratorTest do
     db_path = unique_db_path("rollback")
 
     try do
-      assert length(Migrator.run!(database: db_path)) == 13
+      assert length(Migrator.run!(database: db_path)) == 19
 
       with_repo(db_path, fn ->
         previous_ignore_module_conflict = Code.compiler_options()[:ignore_module_conflict]
@@ -105,7 +124,7 @@ defmodule Tet.Store.SQLiteMigratorTest do
             Code.compiler_options(ignore_module_conflict: previous_ignore_module_conflict)
           end
 
-        assert length(down) == 13
+        assert length(down) == 19
         assert table_names() == []
       end)
     after
@@ -117,12 +136,12 @@ defmodule Tet.Store.SQLiteMigratorTest do
     db_path = unique_db_path("idempotent")
 
     try do
-      assert length(Migrator.run!(database: db_path)) == 13
+      assert length(Migrator.run!(database: db_path)) == 19
       assert Migrator.run!(database: db_path) == []
 
       with_repo(db_path, fn ->
-        assert scalar!("SELECT COUNT(*) FROM schema_migrations") == 13
-        assert scalar!("SELECT COUNT(DISTINCT version) FROM schema_migrations") == 13
+        assert scalar!("SELECT COUNT(*) FROM schema_migrations") == 19
+        assert scalar!("SELECT COUNT(DISTINCT version) FROM schema_migrations") == 19
       end)
     after
       File.rm_rf!(Path.dirname(db_path))
