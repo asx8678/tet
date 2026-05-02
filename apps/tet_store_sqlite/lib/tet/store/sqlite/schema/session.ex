@@ -85,10 +85,20 @@ defmodule Tet.Store.SQLite.Schema.Session do
   end
 
   # Session core struct stores timestamps as ISO 8601 strings.
+  # SQLite stores timestamps as unix integers in milliseconds to preserve
+  # sub-second precision across DB round-trips.
   defp datetime_to_iso(nil), do: nil
 
-  defp datetime_to_iso(unix) when is_integer(unix) do
-    unix |> DateTime.from_unix!() |> DateTime.to_iso8601()
+  defp datetime_to_iso(unix_ms) when is_integer(unix_ms) and unix_ms > 100_000_000_000 do
+    unix_ms
+    |> DateTime.from_unix!(:millisecond)
+    |> DateTime.to_iso8601()
+  end
+
+  defp datetime_to_iso(unix_s) when is_integer(unix_s) do
+    unix_s
+    |> DateTime.from_unix!()
+    |> DateTime.to_iso8601()
   end
 
   defp parse_timestamp(nil), do: nil
@@ -96,7 +106,7 @@ defmodule Tet.Store.SQLite.Schema.Session do
 
   defp parse_timestamp(iso) when is_binary(iso) do
     case DateTime.from_iso8601(iso) do
-      {:ok, dt, _} -> DateTime.to_unix(dt)
+      {:ok, dt, _} -> DateTime.to_unix(dt, :millisecond)
       _ -> nil
     end
   end

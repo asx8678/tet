@@ -6,10 +6,12 @@ defmodule Tet.CLITest do
   alias Tet.CLI.Render
 
   setup do
-    tmp_root = unique_tmp_root("tet-cli-test")
+    # Clean tables for test isolation (SQLite adapter uses shared DB)
+    alias Tet.Store.SQLite.Repo
 
-    File.rm_rf!(tmp_root)
-    File.mkdir_p!(tmp_root)
+    for table <- ["events", "messages", "autosaves", "sessions", "workspaces"] do
+      Ecto.Adapters.SQL.query!(Repo, "DELETE FROM #{table}", [])
+    end
 
     old_events_path = System.get_env("TET_EVENTS_PATH")
     old_profile_registry_path = System.get_env("TET_PROFILE_REGISTRY_PATH")
@@ -24,15 +26,13 @@ defmodule Tet.CLITest do
         "TET_PROFILE_REGISTRY_PATH" => old_profile_registry_path,
         "TET_MODEL_REGISTRY_PATH" => old_model_registry_path
       })
-
-      File.rm_rf!(tmp_root)
     end)
 
-    {:ok, tmp_root: tmp_root}
+    :ok
   end
 
-  test "doctor renders the standalone boundary through the public facade", %{tmp_root: tmp_root} do
-    with_env(%{"TET_STORE_PATH" => tmp_path(tmp_root, "doctor")}, fn ->
+  test "doctor renders the standalone boundary through the public facade" do
+    with_env(%{"TET_PROVIDER" => "mock"}, fn ->
       output = capture_io(fn -> assert Tet.CLI.run(["doctor"]) == 0 end)
 
       assert output =~ "Tet standalone doctor: ok"
@@ -44,12 +44,11 @@ defmodule Tet.CLITest do
     end)
   end
 
-  test "doctor reports selected OpenAI-compatible provider missing config", %{tmp_root: tmp_root} do
+  test "doctor reports selected OpenAI-compatible provider missing config" do
     with_env(
       %{
         "TET_PROVIDER" => "openai_compatible",
-        "TET_OPENAI_API_KEY" => nil,
-        "TET_STORE_PATH" => tmp_path(tmp_root, "doctor-openai")
+        "TET_OPENAI_API_KEY" => nil
       },
       fn ->
         output = capture_io(fn -> assert Tet.CLI.run(["doctor"]) == 1 end)
@@ -95,19 +94,21 @@ defmodule Tet.CLITest do
              "profiles: profiles must declare entries; models: models must declare entries"
   end
 
-  test "ask streams mock output and persists the chat turn", %{tmp_root: tmp_root} do
-    path = tmp_path(tmp_root, "cli")
-
-    with_env(%{"TET_PROVIDER" => "mock", "TET_STORE_PATH" => path}, fn ->
+  test "ask streams mock output and persists the chat turn" do
+    with_env(%{"TET_PROVIDER" => "mock"}, fn ->
       output = capture_io(fn -> assert Tet.CLI.run(["ask", "hello", "cli"]) == 0 end)
 
       assert output == "mock: hello cli\n"
 
-      persisted = File.read!(path)
-      assert persisted =~ ~s("role":"user")
-      assert persisted =~ ~s("content":"hello cli")
-      assert persisted =~ ~s("role":"assistant")
-      assert persisted =~ ~s("content":"mock: hello cli")
+      # Verify messages were persisted via SQLite
+      {:ok, sessions} = Tet.list_sessions()
+      assert length(sessions) == 1
+
+      session = hd(sessions)
+      {:ok, messages} = Tet.list_messages(session.id)
+      assert length(messages) == 2
+      assert Enum.find(messages, &(&1.role == :user)).content == "hello cli"
+      assert Enum.find(messages, &(&1.role == :assistant)).content == "mock: hello cli"
     end)
   end
 
@@ -140,11 +141,10 @@ defmodule Tet.CLITest do
     assert Render.events(events) == expected
   end
 
-  test "events command renders persisted timeline with CLI parity snapshot", %{tmp_root: tmp_root} do
-    path = tmp_path(tmp_root, "events")
+  test "events command renders persisted timeline with CLI parity snapshot" do
     session_id = "cli-events-session"
 
-    with_env(%{"TET_PROVIDER" => "mock", "TET_STORE_PATH" => path}, fn ->
+    with_env(%{"TET_PROVIDER" => "mock"}, fn ->
       output =
         capture_io(fn ->
           assert Tet.CLI.run(["ask", "--session", session_id, "timeline", "cli"]) == 0
@@ -152,7 +152,7 @@ defmodule Tet.CLITest do
 
       assert output == "mock: timeline cli\n"
 
-      assert {:ok, events} = Tet.list_events(session_id, store_path: path)
+      assert {:ok, events} = Tet.list_events(session_id)
       expected = Render.events(events) <> "\n"
 
       event_output =
@@ -168,11 +168,10 @@ defmodule Tet.CLITest do
     end)
   end
 
-  test "session commands list and show resumed messages", %{tmp_root: tmp_root} do
-    path = tmp_path(tmp_root, "sessions")
+  test "session commands list and show resumed messages" do
     session_id = "cli-resume-session"
 
-    with_env(%{"TET_PROVIDER" => "mock", "TET_STORE_PATH" => path}, fn ->
+    with_env(%{"TET_PROVIDER" => "mock"}, fn ->
       first =
         capture_io(fn -> assert Tet.CLI.run(["ask", "--session", session_id, "first"]) == 0 end)
 
@@ -327,17 +326,6 @@ defmodule Tet.CLITest do
       end)
 
     assert output =~ "--limit requires"
-  end
-
-  defp tmp_path(tmp_root, name), do: Path.join(tmp_root, "#{name}.jsonl")
-
-  defp unique_tmp_root(prefix) do
-    suffix = "#{System.pid()}-#{System.system_time(:nanosecond)}-#{unique_integer()}"
-    Path.join(System.tmp_dir!(), "#{prefix}-#{suffix}")
-  end
-
-  defp unique_integer do
-    System.unique_integer([:positive, :monotonic])
   end
 
   defp with_env(vars, fun) do

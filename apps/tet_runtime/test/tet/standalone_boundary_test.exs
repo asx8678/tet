@@ -20,9 +20,12 @@ defmodule Tet.StandaloneBoundaryTest do
   ]
 
   setup do
-    tmp_root = unique_tmp_root("tet-boundary-test")
-    File.rm_rf!(tmp_root)
-    File.mkdir_p!(tmp_root)
+    # Clean tables for test isolation
+    alias Tet.Store.SQLite.Repo
+
+    for table <- ["events", "messages", "autosaves", "sessions", "workspaces"] do
+      Ecto.Adapters.SQL.query!(Repo, "DELETE FROM #{table}", [])
+    end
 
     old_env =
       Map.new(["TET_PROVIDER", "TET_STORE_PATH", "TET_OPENAI_API_KEY"], fn name ->
@@ -30,12 +33,11 @@ defmodule Tet.StandaloneBoundaryTest do
       end)
 
     System.put_env("TET_PROVIDER", "mock")
-    System.put_env("TET_STORE_PATH", Path.join(tmp_root, "messages.jsonl"))
+    System.delete_env("TET_STORE_PATH")
     System.delete_env("TET_OPENAI_API_KEY")
 
     on_exit(fn ->
       restore_env(old_env)
-      File.rm_rf!(tmp_root)
     end)
 
     :ok
@@ -132,12 +134,5 @@ defmodule Tet.StandaloneBoundaryTest do
       {name, nil} -> System.delete_env(name)
       {name, value} -> System.put_env(name, value)
     end)
-  end
-
-  defp unique_tmp_root(prefix) do
-    suffix =
-      "#{System.pid()}-#{System.system_time(:nanosecond)}-#{System.unique_integer([:positive, :monotonic])}"
-
-    Path.join(System.tmp_dir!(), "#{prefix}-#{suffix}")
   end
 end

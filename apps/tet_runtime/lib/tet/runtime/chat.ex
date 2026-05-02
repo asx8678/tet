@@ -115,8 +115,8 @@ defmodule Tet.Runtime.Chat do
       event
       |> ensure_session_id(session_id)
       |> ensure_timestamp()
-      |> persist_event(adapter, store_opts)
 
+    persist_event(event, adapter, store_opts)
     publish(event)
     emit.(event)
     :ok
@@ -138,8 +138,8 @@ defmodule Tet.Runtime.Chat do
 
   defp persist_event(%Tet.Event{} = event, adapter, store_opts) do
     case adapter.save_event(event, store_opts) do
-      {:ok, saved_event} -> saved_event
-      {:error, _reason} -> event
+      {:ok, _saved_event} -> :ok
+      {:error, _reason} -> :ok
     end
   end
 

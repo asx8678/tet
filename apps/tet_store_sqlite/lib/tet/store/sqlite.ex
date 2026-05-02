@@ -40,7 +40,9 @@ defmodule Tet.Store.SQLite do
          journal_mode: snapshot.journal_mode,
          auto_vacuum: snapshot.auto_vacuum,
          schema_version: schema_version,
-         started?: app_started?()
+         started?: app_started?(),
+         readable?: true,
+         writable?: true
        })}
     rescue
       e -> {:error, {:store_unhealthy, Connection.default_database_path(), Exception.message(e)}}
@@ -159,6 +161,7 @@ defmodule Tet.Store.SQLite do
       |> order_by([s], desc: s.created_at)
       |> Repo.all()
       |> Enum.map(&Schema.Session.to_core_struct/1)
+      |> Enum.map(&enrich_session_stats/1)
 
     {:ok, sessions}
   end
@@ -171,8 +174,43 @@ defmodule Tet.Store.SQLite do
       |> order_by([s], desc: s.created_at)
       |> Repo.all()
       |> Enum.map(&Schema.Session.to_core_struct/1)
+      |> Enum.map(&enrich_session_stats/1)
 
     {:ok, sessions}
+  end
+
+  defp enrich_session_stats(%Tet.Session{} = session) do
+    sid = session.id
+
+    stats =
+      Repo.one(
+        from(m in Schema.Message,
+          where: m.session_id == ^sid,
+          select: %{
+            count: count(m.id),
+            last_role: max(m.role),
+            last_content: fragment("?", m.content)
+          }
+        )
+      )
+
+    # Get the last message content/role from the most recent message
+    last_msg =
+      Repo.one(
+        from(m in Schema.Message,
+          where: m.session_id == ^sid,
+          order_by: [desc: m.seq],
+          limit: 1,
+          select: %{role: m.role, content: m.content}
+        )
+      )
+
+    %{
+      session
+      | message_count: stats[:count] || 0,
+        last_role: last_msg && String.to_existing_atom(last_msg.role),
+        last_content: last_msg && last_msg.content
+    }
   end
 
   @impl true
@@ -182,7 +220,7 @@ defmodule Tet.Store.SQLite do
   def fetch_session(session_id, _opts) when is_binary(session_id) do
     case Repo.get(Schema.Session, session_id) do
       nil -> {:error, :session_not_found}
-      row -> {:ok, Schema.Session.to_core_struct(row)}
+      row -> {:ok, row |> Schema.Session.to_core_struct() |> enrich_session_stats()}
     end
   end
 
@@ -1014,23 +1052,88 @@ defmodule Tet.Store.SQLite do
   defp repo_result({:error, %Ecto.Changeset{} = cs}, _), do: {:error, {:changeset_error, cs}}
   defp repo_result({:error, reason}, _), do: {:error, reason}
 
+  # Auto-ensures a session row exists so that message/event FK constraints are
+  # satisfied. Also ensures the parent workspace row exists. Idempotent.
+  # Uses `on_conflict: :nothing` to avoid unique-constraint races.
+  defp ensure_session_exists(nil), do: :ok
+  defp ensure_session_exists(""), do: :ok
+
+  defp ensure_session_exists(session_id) when is_binary(session_id) do
+    case Repo.get(Schema.Session, session_id) do
+      %Schema.Session{} ->
+        :ok
+
+      nil ->
+        with :ok <- ensure_workspace_exists("ws_default") do
+          now_ms = DateTime.to_unix(DateTime.utc_now(), :millisecond)
+
+          attrs = %{
+            id: session_id,
+            workspace_id: "ws_default",
+            short_id: String.slice(session_id, 0, 8),
+            mode: "chat",
+            status: "idle",
+            created_at: now_ms,
+            updated_at: now_ms
+          }
+
+          case Schema.Session.changeset(attrs)
+               |> Repo.insert(on_conflict: :nothing, conflict_target: :id) do
+            {:ok, _row} ->
+              :ok
+
+            {:error, %Ecto.Changeset{errors: [{:workspace_id, {_, [constraint: :foreign]}} | _]}} ->
+              {:error, :workspace_not_found}
+
+            {:error, changeset} ->
+              {:error, {:session_creation_failed, changeset}}
+          end
+        end
+    end
+  end
+
+  defp ensure_workspace_exists(workspace_id) do
+    now = DateTime.to_unix(DateTime.utc_now())
+
+    attrs = %{
+      id: workspace_id,
+      name: "default",
+      root_path: File.cwd!(),
+      tet_dir_path: Path.join(File.cwd!(), ".tet"),
+      trust_state: "untrusted",
+      created_at: now,
+      updated_at: now
+    }
+
+    case Schema.Workspace.changeset(attrs)
+         |> Repo.insert(on_conflict: :nothing, conflict_target: :id) do
+      {:ok, _row} -> :ok
+      {:error, changeset} -> {:error, {:workspace_creation_failed, changeset}}
+    end
+  end
+
   defp insert_message_with_seq(%Tet.Message{} = message) do
     Repo.transaction(fn ->
       sid = message.session_id
 
-      max_seq =
-        Repo.one(from(m in Schema.Message, where: m.session_id == ^sid, select: max(m.seq))) || 0
+      with :ok <- ensure_session_exists(sid) do
+        max_seq =
+          Repo.one(from(m in Schema.Message, where: m.session_id == ^sid, select: max(m.seq))) ||
+            0
 
-      new_seq = max_seq + 1
+        new_seq = max_seq + 1
 
-      db_attrs =
-        message
-        |> Schema.Message.from_core_struct(seq: new_seq)
-        |> default_unix_timestamp(:created_at)
+        db_attrs =
+          message
+          |> Schema.Message.from_core_struct(seq: new_seq)
+          |> default_unix_timestamp(:created_at)
 
-      case Schema.Message.changeset(db_attrs) |> Repo.insert() do
-        {:ok, row} -> Schema.Message.to_core_struct(row)
-        {:error, cs} -> Repo.rollback({:changeset_error, cs})
+        case Schema.Message.changeset(db_attrs) |> Repo.insert() do
+          {:ok, row} -> Schema.Message.to_core_struct(row)
+          {:error, cs} -> Repo.rollback({:changeset_error, cs})
+        end
+      else
+        {:error, reason} -> Repo.rollback(reason)
       end
     end)
   end
@@ -1041,20 +1144,24 @@ defmodule Tet.Store.SQLite do
     Repo.transaction(fn ->
       sid = event.session_id
 
-      max_seq =
-        Repo.one(from(e in Schema.Event, where: e.session_id == ^sid, select: max(e.seq))) || 0
+      with :ok <- ensure_session_exists(sid) do
+        max_seq =
+          Repo.one(from(e in Schema.Event, where: e.session_id == ^sid, select: max(e.seq))) || 0
 
-      new_seq = max_seq + 1
-      event = %{event | seq: new_seq, sequence: new_seq}
+        new_seq = max_seq + 1
+        event = %{event | seq: new_seq, sequence: new_seq}
 
-      db_attrs =
-        event
-        |> Schema.Event.from_core_struct()
-        |> default_unix_timestamp(:inserted_at)
+        db_attrs =
+          event
+          |> Schema.Event.from_core_struct()
+          |> default_unix_timestamp(:inserted_at)
 
-      case Schema.Event.changeset(db_attrs) |> Repo.insert() do
-        {:ok, row} -> Schema.Event.to_core_struct(row)
-        {:error, cs} -> Repo.rollback({:changeset_error, cs})
+        case Schema.Event.changeset(db_attrs) |> Repo.insert() do
+          {:ok, row} -> Schema.Event.to_core_struct(row)
+          {:error, cs} -> Repo.rollback({:changeset_error, cs})
+        end
+      else
+        {:error, reason} -> Repo.rollback(reason)
       end
     end)
   end

@@ -2,33 +2,30 @@ defmodule Tet.ChatTest do
   use ExUnit.Case, async: false
 
   setup do
-    tmp_root = unique_tmp_root("tet-chat-test")
+    # Clean tables for test isolation
+    alias Tet.Store.SQLite.Repo
 
-    File.rm_rf!(tmp_root)
-    File.mkdir_p!(tmp_root)
+    for table <- ["events", "messages", "autosaves", "sessions", "workspaces"] do
+      Ecto.Adapters.SQL.query!(Repo, "DELETE FROM #{table}", [])
+    end
 
     old_events_path = System.get_env("TET_EVENTS_PATH")
     System.delete_env("TET_EVENTS_PATH")
 
     on_exit(fn ->
       restore_env(%{"TET_EVENTS_PATH" => old_events_path})
-      File.rm_rf!(tmp_root)
     end)
 
-    {:ok, tmp_root: tmp_root}
+    :ok
   end
 
-  test "mock provider streams chunks and persists user and assistant messages", %{
-    tmp_root: tmp_root
-  } do
-    path = tmp_path(tmp_root, "mock")
+  test "mock provider streams chunks and persists user and assistant messages" do
     session_id = unique_session("mock")
     parent = self()
 
     assert {:ok, result} =
              Tet.ask("hello puppy",
                provider: :mock,
-               store_path: path,
                session_id: session_id,
                on_event: &send(parent, {:event, &1})
              )
@@ -40,7 +37,7 @@ defmodule Tet.ChatTest do
     assert assistant_chunks() == ["mock", ": ", "hello puppy"]
 
     assert {:ok, [user_message, assistant_message]} =
-             Tet.list_messages(session_id, store_path: path)
+             Tet.list_messages(session_id)
 
     assert user_message.role == :user
     assert user_message.content == "hello puppy"
@@ -55,16 +52,13 @@ defmodule Tet.ChatTest do
     assert is_binary(assistant_message.timestamp)
   end
 
-  test "timeline persists chat events and facade subscription receives runtime fanout", %{
-    tmp_root: tmp_root
-  } do
-    path = tmp_path(tmp_root, "timeline")
+  test "timeline persists chat events and facade subscription receives runtime fanout" do
     session_id = unique_session("timeline")
 
     assert {:ok, _subscription} = Tet.subscribe_events(session_id)
 
     assert {:ok, _result} =
-             Tet.ask("timeline please", provider: :mock, store_path: path, session_id: session_id)
+             Tet.ask("timeline please", provider: :mock, session_id: session_id)
 
     live_events = collect_tet_events(session_id)
 
@@ -83,7 +77,7 @@ defmodule Tet.ChatTest do
 
     assert Enum.map(live_events, & &1.type) == expected_types
 
-    assert {:ok, events} = Tet.list_events(session_id, store_path: path)
+    assert {:ok, events} = Tet.list_events(session_id)
 
     assert Enum.map(events, & &1.sequence) == Enum.to_list(1..10)
 
@@ -107,22 +101,21 @@ defmodule Tet.ChatTest do
            |> Enum.map(&event_value(&1, :content)) == ["mock", ": ", "timeline please"]
   end
 
-  test "session resume appends turns under the same session id", %{tmp_root: tmp_root} do
-    path = tmp_path(tmp_root, "resume")
+  test "session resume appends turns under the same session id" do
     session_id = unique_session("resume")
 
     assert {:ok, first} =
-             Tet.ask("first turn", provider: :mock, store_path: path, session_id: session_id)
+             Tet.ask("first turn", provider: :mock, session_id: session_id)
 
     assert first.session_id == session_id
 
     assert {:ok, second} =
-             Tet.resume_session(session_id, "second turn", provider: :mock, store_path: path)
+             Tet.resume_session(session_id, "second turn", provider: :mock)
 
     assert second.session_id == session_id
 
     assert {:ok, [user_1, assistant_1, user_2, assistant_2]} =
-             Tet.list_messages(session_id, store_path: path)
+             Tet.list_messages(session_id)
 
     assert Enum.map([user_1, assistant_1, user_2, assistant_2], & &1.role) == [
              :user,
@@ -136,43 +129,37 @@ defmodule Tet.ChatTest do
     assert user_2.content == "second turn"
     assert assistant_2.content == "mock: second turn"
 
-    assert {:ok, [session]} = Tet.list_sessions(store_path: path)
+    assert {:ok, [session]} = Tet.list_sessions()
     assert session.id == session_id
     assert session.message_count == 4
     assert session.last_role == :assistant
     assert session.last_content == "mock: second turn"
 
     assert {:ok, %{session: shown, messages: shown_messages}} =
-             Tet.show_session(session_id, store_path: path)
+             Tet.show_session(session_id)
 
     assert shown.id == session_id
     assert length(shown_messages) == 4
   end
 
-  test "ask can compact provider context without mutating persisted session history", %{
-    tmp_root: tmp_root
-  } do
-    path = tmp_path(tmp_root, "ask-compaction")
+  test "ask can compact provider context without mutating persisted session history" do
     session_id = unique_session("ask-compaction")
 
     assert {:ok, _first} =
              Tet.ask("first compactable turn",
                provider: :mock,
-               store_path: path,
                session_id: session_id
              )
 
     assert {:ok, _second} =
              Tet.ask("second compactable turn",
                provider: :mock,
-               store_path: path,
                session_id: session_id
              )
 
     assert {:ok, third} =
              Tet.ask("third compacted turn",
                provider: :mock,
-               store_path: path,
                session_id: session_id,
                compaction: [force: true, recent_count: 2]
              )
@@ -182,7 +169,7 @@ defmodule Tet.ChatTest do
     assert third.compaction["retained_message_count"] == 2
     assert third.compaction["compacted_message_count"] == 3
 
-    assert {:ok, messages} = Tet.list_messages(session_id, store_path: path)
+    assert {:ok, messages} = Tet.list_messages(session_id)
 
     assert Enum.map(messages, & &1.content) == [
              "first compactable turn",
@@ -194,13 +181,12 @@ defmodule Tet.ChatTest do
            ]
   end
 
-  test "openai-compatible provider validation rejects missing API key env", %{tmp_root: tmp_root} do
+  test "openai-compatible provider validation rejects missing API key env" do
     without_env("TET_OPENAI_API_KEY", fn ->
       assert {:error, {:missing_provider_env, "TET_OPENAI_API_KEY"}} =
                Tet.ask(
                  "hello",
-                 provider: :openai_compatible,
-                 store_path: tmp_path(tmp_root, "missing-env")
+                 provider: :openai_compatible
                )
     end)
   end
@@ -235,8 +221,7 @@ defmodule Tet.ChatTest do
     assert candidate.opts[:model] == "mock-default"
   end
 
-  test "router ask persists route audit events and assistant message", %{tmp_root: tmp_root} do
-    path = tmp_path(tmp_root, "router")
+  test "router ask persists route audit events and assistant message" do
     session_id = unique_session("router")
     parent = self()
 
@@ -253,7 +238,6 @@ defmodule Tet.ChatTest do
                  ],
                  [provider: :mock, model: "mock-good", chunks: ["routed answer"]]
                ],
-               store_path: path,
                session_id: session_id,
                on_event: &send(parent, {:event, &1})
              )
@@ -264,14 +248,14 @@ defmodule Tet.ChatTest do
     assert assistant_chunks() == ["routed answer"]
 
     assert {:ok, [user_message, assistant_message]} =
-             Tet.list_messages(session_id, store_path: path)
+             Tet.list_messages(session_id)
 
     assert user_message.role == :user
     assert user_message.content == "routed ping"
     assert assistant_message.role == :assistant
     assert assistant_message.content == "routed answer"
 
-    assert {:ok, events} = Tet.list_events(session_id, store_path: path)
+    assert {:ok, events} = Tet.list_events(session_id)
     event_types = Enum.map(events, & &1.type)
 
     assert :provider_route_decision in event_types
@@ -288,10 +272,7 @@ defmodule Tet.ChatTest do
     assert event_value(fallback, :kind) == "provider_unavailable"
   end
 
-  test "configured openai-compatible provider streams SSE chunks and persists messages", %{
-    tmp_root: tmp_root
-  } do
-    path = tmp_path(tmp_root, "openai")
+  test "configured openai-compatible provider streams SSE chunks and persists messages" do
     session_id = unique_session("openai")
     parent = self()
     {:ok, server} = start_openai_stream_server(["configured", " provider"])
@@ -302,7 +283,6 @@ defmodule Tet.ChatTest do
                api_key: "test-key",
                base_url: server.base_url,
                model: "unit-test-model",
-               store_path: path,
                session_id: session_id,
                on_event: &send(parent, {:event, &1})
              )
@@ -320,7 +300,7 @@ defmodule Tet.ChatTest do
     assert request =~ "configured ping"
 
     assert {:ok, [user_message, assistant_message]} =
-             Tet.list_messages(session_id, store_path: path)
+             Tet.list_messages(session_id)
 
     assert user_message.role == :user
     assert user_message.content == "configured ping"
@@ -404,10 +384,7 @@ defmodule Tet.ChatTest do
     assert_receive {:openai_request, _request}, 1_000
   end
 
-  test "Tet.ask does not persist assistant message when provider stream is incomplete", %{
-    tmp_root: tmp_root
-  } do
-    path = tmp_path(tmp_root, "runtime-incomplete")
+  test "Tet.ask does not persist assistant message when provider stream is incomplete" do
     session_id = unique_session("runtime-incomplete")
     {:ok, server} = start_openai_stream_server(["partial"], send_done: false)
 
@@ -418,26 +395,35 @@ defmodule Tet.ChatTest do
                  api_key: "test-key",
                  base_url: server.base_url,
                  model: "unit-test-model",
-                 store_path: path,
                  session_id: session_id,
                  allow_incomplete_stream: true
                )
 
       assert_receive {:openai_request, _request}, 1_000
 
-      assert {:ok, [user_message]} = Tet.list_messages(session_id, store_path: path)
+      assert {:ok, [user_message]} = Tet.list_messages(session_id)
       assert user_message.role == :user
       assert user_message.content == "please fail safely"
-      refute File.read!(path) =~ ~s("role":"assistant")
+      # With SQLite, verify no assistant message via list_messages instead of
+      # reading a JSONL file (the Repo-based adapter doesn't write to a file).
+      assert {:ok, messages} = Tet.list_messages(session_id)
+      refute Enum.any?(messages, &(&1.role == :assistant))
     end)
   end
 
-  test "store reports non-map JSONL records without crashing", %{tmp_root: tmp_root} do
-    path = tmp_path(tmp_root, "non-map")
-    File.write!(path, "[\"not\",\"a\",\"message\"]\n")
+  test "adapter round-trips unicode content through SQLite without corruption" do
+    session_id = unique_session("unicode-robustness")
+    unicode_content = "Hello 🐶 世界 café — 'quotes' & <tags>"
 
-    assert {:error, {:invalid_store_record, :not_a_map}} =
-             Tet.list_messages(unique_session("non-map"), store_path: path)
+    assert {:ok, _result} =
+             Tet.ask(unicode_content, provider: :mock, session_id: session_id)
+
+    assert {:ok, [user_msg, _assistant_msg]} = Tet.list_messages(session_id)
+    assert user_msg.content == unicode_content
+
+    assert {:ok, events} = Tet.list_events(session_id)
+    assert length(events) > 0
+    assert Enum.all?(events, &is_binary(&1.session_id))
   end
 
   defp collect_tet_events(session_id, acc \\ []) do
@@ -463,13 +449,6 @@ defmodule Tet.ChatTest do
     after
       50 -> Enum.reverse(acc)
     end
-  end
-
-  defp tmp_path(tmp_root, name), do: Path.join(tmp_root, "#{name}.jsonl")
-
-  defp unique_tmp_root(prefix) do
-    suffix = "#{System.pid()}-#{System.system_time(:nanosecond)}-#{unique_integer()}"
-    Path.join(System.tmp_dir!(), "#{prefix}-#{suffix}")
   end
 
   defp router_key_for(candidate_count, expected_index) do

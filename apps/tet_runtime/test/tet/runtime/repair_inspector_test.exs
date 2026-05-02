@@ -462,6 +462,11 @@ defmodule Tet.Runtime.RepairInspectorTest do
   # ── Hook integration with HookManager ─────────────────────────────────
 
   describe "HookManager integration" do
+    setup do
+      Tet.Store.Memory.reset()
+      :ok
+    end
+
     test "registers and executes as a pre-hook" do
       hook = RepairInspector.build_hook()
 
