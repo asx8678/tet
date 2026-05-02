@@ -50,8 +50,9 @@ defmodule Tet.StandaloneBoundaryTest do
     assert report.core.application == :tet_core
     assert report.runtime.application == :tet_runtime
     assert report.store.application == :tet_store_sqlite
-    assert report.store.readable?
-    assert report.store.writable?
+    assert report.store.status == :ok
+    assert is_binary(report.store.journal_mode)
+    assert is_integer(report.store.schema_version)
     assert report.provider.provider == :mock
     assert report.release_boundary.status == :ok
     assert Enum.map(report.checks, & &1.name) == [:config, :store, :provider, :release_boundary]
