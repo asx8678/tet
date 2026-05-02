@@ -462,6 +462,118 @@ defmodule Tet.MigrationTest do
       report = Migration.report(m)
       refute String.contains?(report, "Skipped / Manual-Review")
     end
+
+    test "redacts sk-... values on unknown keys regardless of key name" do
+      # An unknown key whose VALUE looks like a secret (sk- prefix) must be redacted
+      # even though the key name itself is not sensitive
+      {:ok, m} = Migration.new(@basic_attrs)
+
+      legacy = Map.merge(@legacy_config, %{"totally_innocent_key" => "sk-abc123ABCDEFGHIJ"})
+      m = Migration.analyze(m, legacy)
+      report = Migration.report(m)
+
+      # The raw secret value must NOT appear in the report
+      refute String.contains?(report, "sk-abc123ABCDEFGHIJ")
+    end
+  end
+
+  describe "execute/1" do
+    test "returns error for dry_run mode" do
+      {:ok, m} = Migration.new(@basic_attrs)
+      assert {:error, {:cannot_execute_in_dry_run, _}} = Migration.execute(m)
+    end
+
+    test "returns not_safe_to_execute when plan has warnings (preflight check)" do
+      {:ok, m} =
+        Migration.new(Map.merge(@basic_attrs, %{mode: :execute}))
+
+      # Inject a warning that would come from analyzing unsafe keys like system_prompt
+      m = %{m | warnings: ["Unsafe key 'system_prompt' requires manual review"]}
+
+      assert {:error, :not_safe_to_execute} = Migration.execute(m)
+    end
+
+    test "returns not_safe_to_execute when raw_warnings present (preflight check)" do
+      {:ok, m} =
+        Migration.new(Map.merge(@basic_attrs, %{mode: :execute}))
+
+      m = %{m | raw_warnings: ["Unknown key 'sketchy' contains serialized data"]}
+
+      assert {:error, :not_safe_to_execute} = Migration.execute(m)
+    end
+
+    test "returns not_safe_to_execute when items have serialized data (preflight check)" do
+      {:ok, m} =
+        Migration.new(Map.merge(@basic_attrs, %{mode: :execute}))
+
+      m = %{m | items: [%{key: "evil", value: "%{__struct__: Bad}"}]}
+
+      assert {:error, :not_safe_to_execute} = Migration.execute(m)
+    end
+
+    test "backup is NOT created if preflight checks fail" do
+      tmp_dir = System.tmp_dir!()
+      unique = :erlang.unique_integer([:positive])
+      target = Path.join(tmp_dir, "exec_target_#{unique}.json")
+      backup = Path.join(tmp_dir, "exec_backup_#{unique}.bak")
+
+      File.write!(target, "{\"model\": \"gpt-4\"}")
+
+      try do
+        {:ok, m} =
+          Migration.new(%{
+            source_path: target,
+            target_path: target,
+            backup_path: backup,
+            mode: :execute
+          })
+
+        # Add a warning to fail preflight
+        m = %{m | warnings: ["Unsafe key 'system_prompt' requires manual review"]}
+
+        assert {:error, :not_safe_to_execute} = Migration.execute(m)
+        # Backup should NOT have been created since preflight failed
+        refute File.exists?(backup)
+      after
+        File.rm(target)
+        File.rm_rf(backup)
+      end
+    end
+
+    test "executes successfully with clean migration and real files" do
+      tmp_dir = System.tmp_dir!()
+      unique = :erlang.unique_integer([:positive])
+      source = Path.join(tmp_dir, "exec_source_#{unique}.json")
+      target = Path.join(tmp_dir, "exec_target_#{unique}.json")
+      backup = Path.join(tmp_dir, "exec_backup_#{unique}.bak")
+
+      legacy = %{"model" => "gpt-4", "timeout" => "30"}
+      File.write!(source, Jason.encode!(legacy))
+      File.write!(target, "{\"existing\": true}")
+
+      try do
+        {:ok, m} =
+          Migration.new(%{
+            source_path: source,
+            target_path: target,
+            backup_path: backup,
+            mode: :execute
+          })
+
+        m = Migration.analyze(m, legacy)
+
+        assert {:ok, result} = Migration.execute(m)
+        assert result.status == :executed
+        # Backup should exist
+        assert File.exists?(backup)
+        # Target should be updated
+        assert File.exists?(target)
+      after
+        File.rm(source)
+        File.rm(target)
+        File.rm_rf(backup)
+      end
+    end
   end
 
   describe "full workflow" do

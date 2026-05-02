@@ -195,8 +195,9 @@ defmodule Tet.Migration do
   end
 
   def execute(%__MODULE__{mode: :execute} = migration) do
-    with true <- SafetyCheck.safe_to_execute?(migration),
-         {:ok, migration} <- create_backup(migration) do
+    with :ok <- preflight_checks(migration),
+         {:ok, migration} <- create_backup(migration),
+         true <- SafetyCheck.safe_to_execute?(migration) do
       # Write mapped config to target_path
       {:ok, mapped, _unsafe, _unknown} = ConfigMapper.map_config(read_legacy_config(migration))
 
@@ -207,6 +208,15 @@ defmodule Tet.Migration do
     else
       false -> {:error, :not_safe_to_execute}
       {:error, reason} -> {:error, reason}
+    end
+  end
+
+  defp preflight_checks(migration) do
+    cond do
+      SafetyCheck.check_serialized_data(migration) != [] -> {:error, :not_safe_to_execute}
+      migration.raw_warnings != [] -> {:error, :not_safe_to_execute}
+      migration.warnings != [] -> {:error, :not_safe_to_execute}
+      true -> :ok
     end
   end
 
@@ -364,12 +374,25 @@ defmodule Tet.Migration do
   defp status_line(%__MODULE__{status: :failed}), do: "✗ Migration failed."
 
   # Redact sensitive values before placing in reports
+  defp redact_value(key, value) when is_binary(value) do
+    if Tet.Redactor.sensitive_key?(key) or looks_like_secret?(value) do
+      redact_sensitive(value)
+    else
+      value
+    end
+  end
+
   defp redact_value(key, value) do
     if Tet.Redactor.sensitive_key?(key) do
       redact_sensitive(value)
     else
       value
     end
+  end
+
+  defp looks_like_secret?(value) when is_binary(value) do
+    String.match?(value, ~r/^(sk-|Bearer |ghp_|gho_|AKIA)[A-Za-z0-9]/) or
+      (String.length(value) > 20 and Regex.match?(~r/^[A-Za-z0-9+\/]{20,}={0,2}$/, value))
   end
 
   defp redact_sensitive(value) when is_binary(value) do

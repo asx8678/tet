@@ -255,6 +255,7 @@ defmodule Tet.Migration.SafetyCheck do
     check_backup_exists(plan) == :ok and
       check_serialized_data(plan) == [] and
       plan.raw_warnings == [] and
+      plan.warnings == [] and
       warnings(plan) == []
   end
 

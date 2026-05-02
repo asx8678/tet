@@ -393,6 +393,29 @@ defmodule Tet.Migration.SafetyCheckTest do
       end
     end
 
+    test "false for execute mode with plan warnings (e.g. unsafe key like system_prompt)" do
+      tmp_path =
+        System.tmp_dir!()
+        |> Path.join("migration_plan_warn_#{:erlang.unique_integer([:positive])}.bak")
+
+      File.write!(tmp_path, "backup data")
+
+      try do
+        m =
+          build_migration(
+            mode: :execute,
+            backup_path: tmp_path,
+            items: [%{key: "model", value: "gpt-4"}],
+            warnings: ["Unsafe key 'system_prompt' requires manual review"],
+            raw_warnings: []
+          )
+
+        refute SafetyCheck.safe_to_execute?(m)
+      after
+        File.rm(tmp_path)
+      end
+    end
+
     test "false for unknown mode" do
       m = build_migration(mode: :invalid)
       refute SafetyCheck.safe_to_execute?(m)
