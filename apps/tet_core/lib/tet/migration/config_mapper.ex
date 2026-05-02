@@ -59,15 +59,19 @@ defmodule Tet.Migration.ConfigMapper do
   Maps a legacy config map to the new Tet config structure.
 
   Only compatible keys are mapped. Unsafe keys are collected separately
-  for manual review. Returns `{:ok, mapped, unsafe_found}` where `mapped`
-  is the new config map and `unsafe_found` is a list of unsafe keys present
-  in the legacy config.
+  for manual review. Unknown keys (neither compatible nor unsafe) are
+  collected in the third element of the return tuple.
+
+  Returns `{:ok, mapped, unsafe_found, unknown_found}` where:
+  - `mapped` is the new config map
+  - `unsafe_found` is a list of unsafe keys present in the legacy config
+  - `unknown_found` is a list of unknown keys present in the legacy config
   """
-  @spec map_config(map()) :: {:ok, map(), [binary()]}
+  @spec map_config(map()) :: {:ok, map(), [binary()], [binary()]}
   def map_config(legacy_config) when is_map(legacy_config) do
-    {mapped, unsafe_found} =
+    {mapped, unsafe_found, unknown_found} =
       legacy_config
-      |> Enum.reduce({%{}, []}, fn {key, value}, {acc, unsafe_acc} ->
+      |> Enum.reduce({%{}, [], []}, fn {key, value}, {acc, unsafe_acc, unknown_acc} ->
         key_str = stringify(key)
 
         cond do
@@ -75,55 +79,49 @@ defmodule Tet.Migration.ConfigMapper do
             {section, new_key} = @compatible[key_str]
             transformed = transform_value(key_str, value)
             new_map = put_in_section(acc, section, new_key, transformed)
-            {new_map, unsafe_acc}
+            {new_map, unsafe_acc, unknown_acc}
 
           key_str in @unsafe ->
-            {acc, [key_str | unsafe_acc]}
+            {acc, [key_str | unsafe_acc], unknown_acc}
 
           true ->
-            {acc, unsafe_acc}
+            {acc, unsafe_acc, [key_str | unknown_acc]}
         end
       end)
 
-    {:ok, mapped, Enum.reverse(unsafe_found)}
+    {:ok, mapped, Enum.reverse(unsafe_found), Enum.reverse(unknown_found)}
   end
 
   @doc """
   Transforms a single legacy value to the new format for the given key.
 
   Returns the transformed value. Falls back to the original value if no
-  special transform is needed.
+  special transform is needed. Numeric parsing is strict — trailing
+  content after the number is rejected (e.g., "30 seconds" → "30 seconds",
+  not 30).
   """
   @spec transform_value(binary(), term()) :: term()
   def transform_value("verbose", value) when is_boolean(value), do: value
   def transform_value("verbose", value) when is_binary(value), do: value in ~w(true yes 1)
+
   def transform_value("auto_save", value) when is_boolean(value), do: value
   def transform_value("auto_save", value) when is_binary(value), do: value in ~w(true yes 1)
 
   def transform_value("auto_save_interval", value) when is_binary(value) do
-    case Integer.parse(value) do
-      {int, _rest} when int > 0 -> int
-      _ -> value
-    end
+    parse_strict_int(value)
   end
 
   def transform_value("timeout", value) when is_binary(value) do
-    case Integer.parse(value) do
-      {int, _rest} when int > 0 -> int
-      _ -> value
-    end
+    parse_strict_int(value)
   end
 
   def transform_value("max_tokens", value) when is_binary(value) do
-    case Integer.parse(value) do
-      {int, _rest} when int > 0 -> int
-      _ -> value
-    end
+    parse_strict_int(value)
   end
 
   def transform_value("temperature", value) when is_binary(value) do
     case Float.parse(value) do
-      {float, _rest} when float >= 0.0 and float <= 2.0 -> float
+      {float, ""} when float >= 0.0 and float <= 2.0 -> float
       _ -> value
     end
   end
@@ -131,6 +129,13 @@ defmodule Tet.Migration.ConfigMapper do
   def transform_value(_key, value), do: value
 
   # ── Private helpers ──────────────────────────────────────────────────────
+
+  defp parse_strict_int(value) do
+    case Integer.parse(value) do
+      {int, ""} when int > 0 -> int
+      _ -> value
+    end
+  end
 
   defp put_in_section(config, section, key, value) do
     section_str = Atom.to_string(section)

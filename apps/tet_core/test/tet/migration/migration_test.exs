@@ -35,6 +35,8 @@ defmodule Tet.MigrationTest do
       assert m.status == :pending
       assert m.items == []
       assert m.warnings == []
+      assert m.raw_warnings == []
+      assert m.skipped_items == []
     end
 
     test "accepts atom keys" do
@@ -67,6 +69,19 @@ defmodule Tet.MigrationTest do
       assert {:error, :source_path_required} = Migration.new(%{target_path: "/tgt"})
     end
 
+    test "rejects nil source_path" do
+      assert {:error, :source_path_required} = Migration.new(%{source_path: nil})
+    end
+
+    test "rejects empty source_path" do
+      assert {:error, :source_path_required} = Migration.new(%{source_path: ""})
+    end
+
+    test "rejects string-keyed invalid mode" do
+      assert {:error, {:invalid_mode, :nuke}} =
+               Migration.new(%{"source_path" => "/src", "mode" => :nuke})
+    end
+
     test "rejects invalid mode" do
       assert {:error, {:invalid_mode, :nuke}} =
                Migration.new(%{source_path: "/src", mode: :nuke})
@@ -74,6 +89,16 @@ defmodule Tet.MigrationTest do
 
     test "rejects non-map input" do
       assert {:error, :invalid_attrs} = Migration.new("nope")
+    end
+
+    test "defaults force to false" do
+      assert {:ok, m} = Migration.new(@basic_attrs)
+      assert m.force == false
+    end
+
+    test "accepts force flag" do
+      assert {:ok, m} = Migration.new(Map.put(@basic_attrs, :force, true))
+      assert m.force == true
     end
   end
 
@@ -88,6 +113,7 @@ defmodule Tet.MigrationTest do
       api_key_item = Enum.find(result.items, &(&1.key == "api_key"))
       assert api_key_item.section == :provider
       assert api_key_item.new_key == "api_key"
+      # api_key value should be in item but NOT in reports
       assert api_key_item.transformed == "sk-test-123"
     end
 
@@ -129,6 +155,58 @@ defmodule Tet.MigrationTest do
       assert data_dir_item.section == :store
       assert data_dir_item.new_key == "path"
     end
+
+    test "scans raw legacy data before filtering and populates raw_warnings" do
+      {:ok, m} = Migration.new(@basic_attrs)
+
+      legacy =
+        Map.merge(@legacy_config, %{
+          "unknown_dangerous" => "%{__struct__: EvilModule, payload: :hack}"
+        })
+
+      result = Migration.analyze(m, legacy)
+
+      # Should have raw_warning about the unknown key with serialized data
+      assert length(result.raw_warnings) > 0
+      assert Enum.any?(result.raw_warnings, &String.contains?(&1, "unknown_dangerous"))
+    end
+
+    test "populates skipped_items for unknown keys" do
+      {:ok, m} = Migration.new(@basic_attrs)
+
+      legacy = Map.merge(@legacy_config, %{"totally_made_up" => "wat"})
+      result = Migration.analyze(m, legacy)
+
+      skipped = Enum.find(result.skipped_items, &(&1.key == "totally_made_up"))
+      assert skipped != nil
+      assert skipped.reason == :unknown_key
+    end
+
+    test "detects pickle magic bytes in unknown keys" do
+      {:ok, m} = Migration.new(@basic_attrs)
+
+      # Python pickle protocol 5 starts with 0x80
+      pickle_value = <<128, 5, 0, 0, 0>>
+      legacy = Map.merge(@legacy_config, %{"pickle_config" => pickle_value})
+
+      result = Migration.analyze(m, legacy)
+
+      skipped = Enum.find(result.skipped_items, &(&1.key == "pickle_config"))
+      assert skipped != nil
+      assert skipped.reason == :pickle_magic_bytes
+      assert Enum.any?(result.raw_warnings, &String.contains?(&1, "pickle"))
+    end
+
+    test "handles atom-keyed config items" do
+      {:ok, m} = Migration.new(@basic_attrs)
+
+      # Atom-keyed config should be normalized to string keys
+      result = Migration.analyze(m, %{model: "gpt-4", timeout: "30"})
+
+      assert length(result.items) == 2
+      assert Enum.any?(result.items, &(&1.key == "model"))
+      assert Enum.any?(result.items, &(&1.key == "timeout"))
+    end
   end
 
   describe "dry_run/1" do
@@ -148,20 +226,175 @@ defmodule Tet.MigrationTest do
       end
     end
 
-    test "adds serialized data warnings when present" do
+    test "does not duplicate plan warnings" do
+      {:ok, m} = Migration.new(@basic_attrs)
+      m = Migration.analyze(m, @legacy_config)
+
+      pre_dry_run_warning_count = length(m.warnings)
+      result = Migration.dry_run(m)
+
+      # SafetyCheck.warnings should not re-include plan warnings that already exist
+      # The only new warnings should be safety-specific ones
+      assert length(result.warnings) >= pre_dry_run_warning_count
+      # Verify no exact duplicates
+      assert length(result.warnings) == length(Enum.uniq(result.warnings))
+    end
+
+    test "adds serialized data warnings when present in items" do
       {:ok, m} = Migration.new(@basic_attrs)
 
+      # Use an item with a serialized pattern that will land in the items list
       legacy =
         Map.merge(@legacy_config, %{
-          "unsafe_item" => %{__struct__: SomeModule, data: "bad"}
+          "model" => "%{__struct__: SomeModule, data: \"bad\"}"
         })
 
       m = Migration.analyze(m, legacy)
       result = Migration.dry_run(m)
 
-      # The unsafe_item key won't be in compatible_keys, so it won't be in items
-      # This is fine — dry_run still completes
       assert result.status == :dry_run_complete
+    end
+
+    test "raw warnings for unknown serialized data persist through dry_run" do
+      {:ok, m} = Migration.new(@basic_attrs)
+
+      legacy =
+        Map.merge(@legacy_config, %{
+          "unknown_sketchy" => "Code.eval_string(\"IO.puts(:pwned)\")"
+        })
+
+      m = Migration.analyze(m, legacy)
+      result = Migration.dry_run(m)
+
+      assert result.status == :dry_run_complete
+      assert Enum.any?(result.warnings, &String.contains?(&1, "unknown_sketchy"))
+    end
+  end
+
+  describe "create_backup/1" do
+    test "returns error when target_path is nil" do
+      {:ok, m} = Migration.new(%{source_path: "/src", backup_path: "/bak"})
+      assert {:error, :no_target_path} = Migration.create_backup(m)
+    end
+
+    test "returns error when backup_path is nil" do
+      {:ok, m} = Migration.new(%{source_path: "/src", target_path: "/tgt"})
+      assert {:error, :no_backup_path} = Migration.create_backup(m)
+    end
+
+    test "returns ok when target does not exist (fresh install)" do
+      {:ok, m} =
+        Migration.new(%{
+          source_path: "/src",
+          target_path: "/tmp/nonexistent_target_#{:erlang.unique_integer([:positive])}.json",
+          backup_path: "/tmp/backup_#{:erlang.unique_integer([:positive])}.bak"
+        })
+
+      assert {:ok, _} = Migration.create_backup(m)
+    end
+
+    test "creates backup from existing target file" do
+      tmp_dir = System.tmp_dir!()
+      unique = :erlang.unique_integer([:positive])
+      target = Path.join(tmp_dir, "migration_target_#{unique}.json")
+      backup = Path.join(tmp_dir, "migration_backup_#{unique}.bak")
+
+      File.write!(target, "{\"model\": \"gpt-4\"}")
+
+      try do
+        {:ok, m} =
+          Migration.new(%{
+            source_path: "/src",
+            target_path: target,
+            backup_path: backup
+          })
+
+        assert {:ok, _} = Migration.create_backup(m)
+        assert File.exists?(backup)
+        assert File.read!(backup) == "{\"model\": \"gpt-4\"}"
+      after
+        File.rm(target)
+        File.rm(backup)
+      end
+    end
+
+    test "refuses to overwrite existing backup without force" do
+      tmp_dir = System.tmp_dir!()
+      unique = :erlang.unique_integer([:positive])
+      target = Path.join(tmp_dir, "migration_target_#{unique}.json")
+      backup = Path.join(tmp_dir, "migration_backup_#{unique}.bak")
+
+      File.write!(target, "{\"model\": \"gpt-4\"}")
+      File.write!(backup, "old backup")
+
+      try do
+        {:ok, m} =
+          Migration.new(%{
+            source_path: "/src",
+            target_path: target,
+            backup_path: backup
+          })
+
+        assert {:error, {:backup_already_exists, ^backup}} = Migration.create_backup(m)
+        # Original backup untouched
+        assert File.read!(backup) == "old backup"
+      after
+        File.rm(target)
+        File.rm(backup)
+      end
+    end
+
+    test "overwrites existing backup with force: true" do
+      tmp_dir = System.tmp_dir!()
+      unique = :erlang.unique_integer([:positive])
+      target = Path.join(tmp_dir, "migration_target_#{unique}.json")
+      backup = Path.join(tmp_dir, "migration_backup_#{unique}.bak")
+
+      File.write!(target, "{\"model\": \"gpt-4\"}")
+      File.write!(backup, "old backup")
+
+      try do
+        {:ok, m} =
+          Migration.new(%{
+            source_path: "/src",
+            target_path: target,
+            backup_path: backup,
+            force: true
+          })
+
+        assert {:ok, _} = Migration.create_backup(m)
+        assert File.read!(backup) == "{\"model\": \"gpt-4\"}"
+      after
+        File.rm(target)
+        File.rm(backup)
+      end
+    end
+
+    test "creates backup directory if it does not exist" do
+      tmp_dir = System.tmp_dir!()
+      unique = :erlang.unique_integer([:positive])
+      target = Path.join(tmp_dir, "migration_target_#{unique}.json")
+      backup_dir = Path.join(tmp_dir, "migration_backup_dir_#{unique}")
+      backup = Path.join(backup_dir, "config.bak")
+
+      File.write!(target, "{\"model\": \"gpt-4\"}")
+
+      try do
+        {:ok, m} =
+          Migration.new(%{
+            source_path: "/src",
+            target_path: target,
+            backup_path: backup
+          })
+
+        refute File.exists?(backup_dir)
+        assert {:ok, _} = Migration.create_backup(m)
+        assert File.exists?(backup)
+        assert File.read!(backup) == "{\"model\": \"gpt-4\"}"
+      after
+        File.rm(target)
+        File.rm_rf(backup_dir)
+      end
     end
   end
 
@@ -177,6 +410,19 @@ defmodule Tet.MigrationTest do
       assert String.contains?(report, "/etc/legacy/config.json")
       assert String.contains?(report, "dry_run")
       assert String.contains?(report, "dry_run_complete")
+    end
+
+    test "redacts sensitive values like API keys" do
+      {:ok, m} = Migration.new(@basic_attrs)
+      m = Migration.analyze(m, @legacy_config)
+      m = Migration.dry_run(m)
+
+      report = Migration.report(m)
+
+      # The raw API key should NEVER appear in the report
+      refute String.contains?(report, "sk-test-123")
+      # Instead, partial preview like "sk-t...123" should appear
+      assert String.contains?(report, "api_key")
     end
 
     test "shows no-items message when empty" do
@@ -199,6 +445,23 @@ defmodule Tet.MigrationTest do
 
       assert String.contains?(report, "Not yet analyzed")
     end
+
+    test "includes skipped items section when present" do
+      {:ok, m} = Migration.new(@basic_attrs)
+      m = Migration.analyze(m, Map.merge(@legacy_config, %{"weird_key" => "value"}))
+
+      report = Migration.report(m)
+      assert String.contains?(report, "Skipped / Manual-Review Items")
+      assert String.contains?(report, "weird_key")
+    end
+
+    test "no skipped items section when clean" do
+      {:ok, m} = Migration.new(@basic_attrs)
+      m = Migration.analyze(m, %{"model" => "gpt-4"})
+
+      report = Migration.report(m)
+      refute String.contains?(report, "Skipped / Manual-Review")
+    end
   end
 
   describe "full workflow" do
@@ -215,6 +478,8 @@ defmodule Tet.MigrationTest do
 
       report = Migration.report(m)
       assert String.contains?(report, "Dry-run complete")
+      # No raw API key leaked
+      refute String.contains?(report, "sk-test-123")
     end
 
     test "only compatible keys produce items" do

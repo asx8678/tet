@@ -65,7 +65,7 @@ defmodule Tet.Migration.ConfigMapperTest do
         "base_url" => "https://api.example.com"
       }
 
-      assert {:ok, mapped, []} = ConfigMapper.map_config(legacy)
+      assert {:ok, mapped, [], []} = ConfigMapper.map_config(legacy)
       assert mapped["provider"]["api_key"] == "sk-test"
       assert mapped["provider"]["model"] == "gpt-4"
       assert mapped["provider"]["base_url"] == "https://api.example.com"
@@ -79,7 +79,7 @@ defmodule Tet.Migration.ConfigMapperTest do
         "auto_save" => "yes"
       }
 
-      assert {:ok, mapped, []} = ConfigMapper.map_config(legacy)
+      assert {:ok, mapped, [], []} = ConfigMapper.map_config(legacy)
       assert mapped["store"]["path"] == "/data"
       assert mapped["session"]["path"] == "/sessions"
       assert mapped["logging"]["verbose"] == true
@@ -93,22 +93,23 @@ defmodule Tet.Migration.ConfigMapperTest do
         "shell_whitelist" => ["rm"]
       }
 
-      assert {:ok, _mapped, unsafe} = ConfigMapper.map_config(legacy)
+      assert {:ok, _mapped, unsafe, []} = ConfigMapper.map_config(legacy)
       assert "system_prompt" in unsafe
       assert "shell_whitelist" in unsafe
       assert "model" not in unsafe
     end
 
-    test "ignores unknown keys silently" do
+    test "collects unknown keys separately" do
       legacy = %{"model" => "gpt-4", "totally_made_up" => "wat"}
 
-      assert {:ok, mapped, []} = ConfigMapper.map_config(legacy)
+      assert {:ok, mapped, [], unknown} = ConfigMapper.map_config(legacy)
       assert mapped["provider"]["model"] == "gpt-4"
       refute Map.has_key?(mapped, "totally_made_up")
+      assert "totally_made_up" in unknown
     end
 
     test "handles empty config" do
-      assert {:ok, %{}, []} = ConfigMapper.map_config(%{})
+      assert {:ok, %{}, [], []} = ConfigMapper.map_config(%{})
     end
   end
 
@@ -145,13 +146,26 @@ defmodule Tet.Migration.ConfigMapperTest do
       assert ConfigMapper.transform_value("timeout", "30") == 30
     end
 
+    test "rejects timeout with trailing text (strict parsing)" do
+      # Integer.parse("30 seconds") => {30, " seconds"} — should NOT return 30
+      assert ConfigMapper.transform_value("timeout", "30 seconds") == "30 seconds"
+    end
+
     test "converts max_tokens string to integer" do
       assert ConfigMapper.transform_value("max_tokens", "4096") == 4096
+    end
+
+    test "rejects max_tokens with trailing text" do
+      assert ConfigMapper.transform_value("max_tokens", "4096 tokens") == "4096 tokens"
     end
 
     test "converts temperature string to float" do
       assert ConfigMapper.transform_value("temperature", "0.7") == 0.7
       assert ConfigMapper.transform_value("temperature", "2.0") == 2.0
+    end
+
+    test "rejects temperature with trailing text" do
+      assert ConfigMapper.transform_value("temperature", "0.7 degrees") == "0.7 degrees"
     end
 
     test "rejects out-of-range temperature" do
