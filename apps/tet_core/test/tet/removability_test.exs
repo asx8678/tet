@@ -6,13 +6,21 @@ defmodule Tet.RemovabilityTest do
   describe "web_deps/0" do
     test "returns the known web/Phoenix dependency atoms" do
       assert Removability.web_deps() == [
+               :bandit,
+               :cowboy,
+               :cowlib,
                :phoenix,
-               :phoenix_html,
-               :phoenix_live_view,
-               :phoenix_live_dashboard,
                :phoenix_ecto,
+               :phoenix_html,
+               :phoenix_live_dashboard,
+               :phoenix_live_view,
+               :phoenix_pubsub,
+               :plug,
                :plug_cowboy,
-               :bandit
+               :ranch,
+               :thousand_island,
+               :websock,
+               :websock_adapter
              ]
     end
   end
@@ -23,7 +31,6 @@ defmodule Tet.RemovabilityTest do
                :tet_core,
                :tet_runtime,
                :tet_cli,
-               :tet_store_memory,
                :tet_store_sqlite
              ]
     end
@@ -73,6 +80,23 @@ defmodule Tet.RemovabilityTest do
     test "detects all known web deps when they are all present" do
       web = Removability.web_deps()
       deps = Enum.map(web, fn dep -> {dep, "~> 1.0"} end)
+
+      assert {:error, ^web} = Removability.check_standalone_deps(deps)
+    end
+
+    test "handles 3-tuple dependency specs like {:phoenix, \"~> 1.7\", only: :dev}" do
+      deps = [
+        {:jason, "~> 1.0"},
+        {:phoenix, "~> 1.7", only: :dev},
+        {:plug, "~> 1.15", only: [:dev, :test]}
+      ]
+
+      assert {:error, [:phoenix, :plug]} = Removability.check_standalone_deps(deps)
+    end
+
+    test "detects all web deps in 3-tuple form" do
+      web = Removability.web_deps()
+      deps = Enum.map(web, fn dep -> {dep, "~> 1.0", only: :dev} end)
 
       assert {:error, ^web} = Removability.check_standalone_deps(deps)
     end
@@ -201,6 +225,11 @@ defmodule Tet.RemovabilityTest do
 
     test "unknown app returns empty list" do
       assert Removability.deps_for_app(:nonexistent) == []
+    end
+
+    test "returns empty list when MixProject module is not loaded (e.g. after teardown)" do
+      # Simulate the safe behaviour: nil/unknown module => []
+      assert Removability.deps_for_app(:non_existent_app) == []
     end
   end
 end
