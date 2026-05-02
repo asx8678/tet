@@ -226,6 +226,10 @@ defmodule Tet.SecurityPolicy.Evaluator do
     workspace = Map.get(context, :workspace_root, "/workspace")
 
     cond do
+      # Null bytes in paths are always denied — defense in depth
+      is_binary(path) and String.contains?(path, <<0>>) ->
+        {:denied, :sandbox_null_byte_in_path}
+
       mutation_action?(norm, context) ->
         {:denied, :sandbox_read_only}
 
@@ -245,10 +249,17 @@ defmodule Tet.SecurityPolicy.Evaluator do
     path = effective_path(context)
     workspace = Map.get(context, :workspace_root, "/workspace")
 
-    if is_binary(path) and not path_under_workspace?(path, workspace) do
-      {:denied, :sandbox_workspace_only}
-    else
-      :allowed
+    cond do
+      # Null bytes in paths are always denied — they can cause truncation
+      # in C-based filesystem APIs and are a hallmark of path injection attacks.
+      is_binary(path) and String.contains?(path, <<0>>) ->
+        {:denied, :sandbox_null_byte_in_path}
+
+      is_binary(path) and not path_under_workspace?(path, workspace) ->
+        {:denied, :sandbox_workspace_only}
+
+      true ->
+        :allowed
     end
   end
 

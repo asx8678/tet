@@ -62,6 +62,7 @@ defmodule Tet.Umbrella.MixProject do
       "standalone.check": [
         "format --check-formatted",
         "web.facade_contract",
+        "security.compliance",
         "test",
         &check_release_closure/1
       ],
@@ -69,7 +70,8 @@ defmodule Tet.Umbrella.MixProject do
       "web.removability": [&check_web_removability/1],
       "release.acceptance": [&check_release_acceptance/1],
       "release.standalone": ["release tet_standalone --overwrite"],
-      "smoke.first_mile": [&smoke_first_mile/1]
+      "smoke.first_mile": [&smoke_first_mile/1],
+      "security.compliance": ["test apps/tet_core/test/tet/security"]
     ]
   end
 

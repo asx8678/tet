@@ -150,6 +150,44 @@ defmodule Tet.Security.ComplianceSuiteTest do
           )
       end
     end
+
+    test "encoded traversal vectors are blocked after normalization" do
+      alias Tet.Security.PathFuzzer
+      alias Tet.SecurityPolicy.Evaluator
+      alias Tet.SecurityPolicy.Profile
+
+      profile =
+        Profile.new!(%{
+          approval_mode: :auto_approve,
+          sandbox_profile: :workspace_only,
+          allow_paths: ["/workspace/**"]
+        })
+
+      encoded_attacks = [
+        "..%2f..%2f..%2fetc%2fpasswd",
+        "%2e%2e%2f%2e%2e%2f%2e%2e%2fetc%2fpasswd",
+        "..%252f..%252fetc%252fpasswd"
+      ]
+
+      for raw <- encoded_attacks do
+        normalized = PathFuzzer.normalize_encoded_path(raw)
+        context = %{path: normalized, workspace_root: "/workspace"}
+        result = Evaluator.check_sandbox(:read, context, profile)
+
+        assert match?({:denied, _}, result),
+               "Encoded traversal not blocked: raw=#{inspect(raw)} normalized=#{inspect(normalized)} got=#{inspect(result)}"
+      end
+    end
+
+    test "null-byte payloads are present and blocked" do
+      alias Tet.Security.PathFuzzer
+
+      attacks = PathFuzzer.generate_traversal_attempts()
+      nul_attacks = Enum.filter(attacks, &String.contains?(&1, <<0>>))
+
+      assert length(nul_attacks) > 0,
+             "Expected null-byte payloads in traversal attempts, got 0"
+    end
   end
 
   describe "sandbox_boundary_enforcement check" do
@@ -218,6 +256,84 @@ defmodule Tet.Security.ComplianceSuiteTest do
         {:ok, _meta} -> :ok
         {:error, meta} -> flunk("Redacted region patch check failed: #{inspect(meta.failures)}")
       end
+    end
+
+    test "patches with [REDACTED] in old_str are rejected by Patch.propose" do
+      alias Tet.Patch
+
+      result =
+        Patch.propose(%{
+          workspace_path: "/workspace",
+          operations: [
+            %{
+              kind: :modify,
+              file_path: "config/prod.exs",
+              old_str: "api_key=[REDACTED]",
+              new_str: "api_key=sk-new"
+            }
+          ]
+        })
+
+      assert match?({:error, {:invalid_operation, :redacted_region_in_old_str}}, result),
+             "Patch with [REDACTED] in old_str should be rejected, got: #{inspect(result)}"
+    end
+
+    test "patches with [REDACTED] in content are rejected" do
+      alias Tet.Patch
+
+      result =
+        Patch.propose(%{
+          workspace_path: "/workspace",
+          operations: [
+            %{
+              kind: :modify,
+              file_path: "config/prod.exs",
+              content: "api_key=[REDACTED]\nport=443"
+            }
+          ]
+        })
+
+      assert match?({:error, {:invalid_operation, :redacted_region_in_content}}, result),
+             "Patch with [REDACTED] in content should be rejected, got: #{inspect(result)}"
+    end
+
+    test "patches with [REDACTED] in replacements are rejected" do
+      alias Tet.Patch
+
+      result =
+        Patch.propose(%{
+          workspace_path: "/workspace",
+          operations: [
+            %{
+              kind: :modify,
+              file_path: "config/prod.exs",
+              replacements: [%{old_str: "db_pass=[REDACTED]", new_str: "db_pass=new"}]
+            }
+          ]
+        })
+
+      assert match?({:error, {:invalid_operation, :redacted_region_in_replacements}}, result),
+             "Patch with [REDACTED] in replacements should be rejected, got: #{inspect(result)}"
+    end
+
+    test "clean patches without [REDACTED] are allowed" do
+      alias Tet.Patch
+
+      result =
+        Patch.propose(%{
+          workspace_path: "/workspace",
+          operations: [
+            %{
+              kind: :modify,
+              file_path: "lib/app.ex",
+              old_str: "defmodule App",
+              new_str: "defmodule MyApp"
+            }
+          ]
+        })
+
+      assert match?({:ok, _}, result),
+             "Clean patch should be accepted, got: #{inspect(result)}"
     end
   end
 end

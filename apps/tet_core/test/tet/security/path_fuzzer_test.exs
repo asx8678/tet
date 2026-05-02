@@ -44,13 +44,63 @@ defmodule Tet.Security.PathFuzzerTest do
     end
 
     test "includes edge cases" do
-      attacks = PathFuzzer.generate_traversal_attempts()
-      assert "" in attacks, "Expected empty string in edge cases"
+      _attacks = PathFuzzer.generate_traversal_attempts()
+      # Benign edge cases are now in a separate list
+      assert Enum.any?(PathFuzzer.benign_edge_cases(), &(&1 == ""))
     end
 
     test "no duplicate attacks" do
       attacks = PathFuzzer.generate_traversal_attempts()
       assert attacks == Enum.uniq(attacks), "Duplicate attacks found"
+    end
+
+    test "includes null-byte payloads" do
+      attacks = PathFuzzer.generate_traversal_attempts()
+
+      assert Enum.any?(attacks, &String.contains?(&1, <<0>>)),
+             "Expected null-byte payloads in traversal attempts"
+    end
+
+    test "includes URL-encoded null-byte variants" do
+      attacks = PathFuzzer.generate_traversal_attempts()
+
+      assert Enum.any?(attacks, &String.contains?(&1, "%00")),
+             "Expected %00 null-byte encoded variants"
+    end
+
+    test "benign_edge_cases/0 returns non-attack inputs" do
+      benign = PathFuzzer.benign_edge_cases()
+      assert is_list(benign)
+      assert "" in benign
+      assert "." in benign
+      # None of the benign cases should contain traversal markers
+      for b <- benign do
+        refute String.contains?(b, "../"), "Benign edge case contains traversal: #{inspect(b)}"
+      end
+    end
+  end
+
+  describe "normalize_encoded_path/1" do
+    test "decodes single-layer URL encoding" do
+      assert PathFuzzer.normalize_encoded_path("..%2f..%2fetc%2fpasswd") == "../../etc/passwd"
+    end
+
+    test "decodes dot encoding" do
+      assert PathFuzzer.normalize_encoded_path("%2e%2e%2f") == "../"
+    end
+
+    test "recursively decodes double-encoded paths" do
+      # %252e → %2e → .
+      result = PathFuzzer.normalize_encoded_path("%252e%252e%252f")
+      assert result == "../"
+    end
+
+    test "passes through non-encoded paths unchanged" do
+      assert PathFuzzer.normalize_encoded_path("lib/app.ex") == "lib/app.ex"
+    end
+
+    test "decodes %00 null bytes" do
+      assert PathFuzzer.normalize_encoded_path("file%00.exe") == "file\0.exe"
     end
   end
 

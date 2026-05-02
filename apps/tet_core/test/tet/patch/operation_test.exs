@@ -321,4 +321,86 @@ defmodule Tet.Patch.OperationTest do
       assert Operation.kinds() == [:create, :modify, :delete]
     end
   end
+
+  describe "redacted region detection" do
+    test "rejects modify with [REDACTED] in old_str" do
+      assert {:error, {:invalid_operation, :redacted_region_in_old_str}} =
+               Operation.new(%{
+                 kind: :modify,
+                 file_path: "config/prod.exs",
+                 old_str: "api_key=[REDACTED]",
+                 new_str: "api_key=sk-new"
+               })
+    end
+
+    test "rejects modify with [REDACTED] in content" do
+      assert {:error, {:invalid_operation, :redacted_region_in_content}} =
+               Operation.new(%{
+                 kind: :modify,
+                 file_path: "config/prod.exs",
+                 content: "db_url=[REDACTED]\nport=443"
+               })
+    end
+
+    test "rejects modify with [REDACTED] in replacements" do
+      assert {:error, {:invalid_operation, :redacted_region_in_replacements}} =
+               Operation.new(%{
+                 kind: :modify,
+                 file_path: "config/prod.exs",
+                 replacements: [%{old_str: "secret=[REDACTED]", new_str: "secret=new"}]
+               })
+    end
+
+    test "rejects lowercase [redacted] marker" do
+      assert {:error, {:invalid_operation, :redacted_region_in_old_str}} =
+               Operation.new(%{
+                 kind: :modify,
+                 file_path: "config/dev.exs",
+                 old_str: "key=[redacted]",
+                 new_str: "key=dev"
+               })
+    end
+
+    test "allows clean modify operations without redacted markers" do
+      assert {:ok, _op} =
+               Operation.new(%{
+                 kind: :modify,
+                 file_path: "lib/app.ex",
+                 old_str: "defmodule App",
+                 new_str: "defmodule MyApp"
+               })
+    end
+
+    test "allows create operations (no old content to redact)" do
+      assert {:ok, _op} =
+               Operation.new(%{
+                 kind: :create,
+                 file_path: "lib/new_file.ex",
+                 content: "defmodule NewFile do\nend\n"
+               })
+    end
+  end
+
+  describe "contains_redacted_marker?/1" do
+    test "detects [REDACTED] marker" do
+      assert Operation.contains_redacted_marker?("api_key=[REDACTED]")
+    end
+
+    test "detects [redacted] marker" do
+      assert Operation.contains_redacted_marker?("key=[redacted]")
+    end
+
+    test "detects [REDACTED with suffix" do
+      assert Operation.contains_redacted_marker?("[REDACTED api_key]")
+    end
+
+    test "returns false for clean strings" do
+      refute Operation.contains_redacted_marker?("api_key=sk-abc123")
+      refute Operation.contains_redacted_marker?("normal content")
+    end
+
+    test "returns false for nil" do
+      refute Operation.contains_redacted_marker?(nil)
+    end
+  end
 end
