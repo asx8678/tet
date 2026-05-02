@@ -157,6 +157,31 @@ defmodule TetCLI.ReleaseLeanPackageTest do
       assert "tet_cli" in release_apps
       assert "tet_runtime" in release_apps
     end
+
+    @tag :release_check
+    test "tet_web release builds and includes web app" do
+      {_output, 0} =
+        System.cmd("mix", ["release", "tet_web", "--overwrite"],
+          env: [{"MIX_ENV", "prod"}],
+          cd: @root
+        )
+
+      release_lib = Path.join(@root, "_build/prod/rel/tet_web/lib")
+
+      release_apps =
+        release_lib
+        |> File.ls!()
+        |> Enum.map(&(String.split(&1, "-") |> List.first()))
+
+      # Web release includes standalone apps plus tet_web_phoenix
+      assert "tet_core" in release_apps
+      assert "tet_cli" in release_apps
+      assert "tet_runtime" in release_apps
+      assert "tet_web_phoenix" in release_apps
+
+      # tet_store_memory is optional and not required in the web release
+      # but if present, that's fine (it's harmless)
+    end
   end
 
   # ────────────────────────────────────────────────────────────────
@@ -244,16 +269,32 @@ defmodule TetCLI.ReleaseLeanPackageTest do
              "Boundary validation took #{duration_us}μs, expected < 1s"
     end
 
-    test "release metadata references only standalone apps" do
+    test "release metadata references standalone and web apps correctly" do
       umbrella_mix = File.read!(Path.join(@root, "mix.exs"))
 
       # Verify the standalone applications declaration
       assert umbrella_mix =~ "tet_core: :permanent"
       assert umbrella_mix =~ "tet_store_sqlite: :permanent"
-      assert umbrella_mix =~ "tet_store_memory: :temporary"
       assert umbrella_mix =~ "tet_runtime: :permanent"
       assert umbrella_mix =~ "tet_cli: :permanent"
-      refute umbrella_mix =~ "tet_web_phoenix:"
+
+      # tet_web_phoenix should NOT be in @standalone_applications
+      standalone_section = Regex.run(~r/@standalone_applications\s*\[[^\]]+\]/s, umbrella_mix)
+
+      assert standalone_section != nil
+
+      refute hd(standalone_section) =~ "tet_web_phoenix",
+             "tet_web_phoenix must not appear in @standalone_applications"
+
+      # tet_web_phoenix SHOULD be in @web_applications
+      assert umbrella_mix =~ "tet_web_phoenix: :permanent",
+             "tet_web_phoenix must be in @web_applications for tet_web release"
+
+      # Verify standalone release section references the right apps
+      assert umbrella_mix =~ "applications: @standalone_applications"
+      assert umbrella_mix =~ "tet_standalone:"
+      assert umbrella_mix =~ "tet_web:"
+      assert umbrella_mix =~ "applications: @web_applications"
     end
   end
 

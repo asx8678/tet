@@ -15,6 +15,9 @@ defmodule Tet.Release.DependencyClosure do
   Given a list of umbrella app names, returns the full transitive
   dependency closure (including the apps themselves).
 
+  Raises `ArgumentError` if any app name is not in the known umbrella
+  dependency graph, to catch typos or stale references early.
+
   ## Example
 
       iex> DependencyClosure.compute([:tet_cli])
@@ -23,6 +26,7 @@ defmodule Tet.Release.DependencyClosure do
   @spec compute([atom()]) :: [atom()]
   def compute(apps) when is_list(apps) do
     graph = Release.umbrella_dep_graph()
+    assert_known_apps!(apps, graph)
     do_compute(apps, graph, MapSet.new())
   end
 
@@ -79,6 +83,20 @@ defmodule Tet.Release.DependencyClosure do
 
   # ── Private ──────────────────────────────────────────────────────────────
 
+  # Fail fast: every app name must be in the known umbrella dep graph.
+  # Unknown names are NOT silently treated as dependency-free leaves;
+  # that would mask typos or stale config drift.
+  defp assert_known_apps!(apps, graph) do
+    unknown = Enum.reject(apps, &Map.has_key?(graph, &1))
+
+    if unknown != [] do
+      raise ArgumentError,
+            "unknown umbrella app(s) in dependency closure: #{inspect(unknown)}"
+    end
+
+    :ok
+  end
+
   defp do_compute([], _graph, visited), do: MapSet.to_list(visited) |> Enum.sort()
 
   defp do_compute([app | rest], graph, visited) do
@@ -86,7 +104,8 @@ defmodule Tet.Release.DependencyClosure do
       do_compute(rest, graph, visited)
     else
       visited = MapSet.put(visited, app)
-      direct_deps = Map.get(graph, app, [])
+      # Safe: assert_known_apps! already validated all app names
+      direct_deps = Map.fetch!(graph, app)
       do_compute(direct_deps ++ rest, graph, visited)
     end
   end

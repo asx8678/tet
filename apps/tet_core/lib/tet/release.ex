@@ -203,36 +203,11 @@ defmodule Tet.Release do
 
   @doc """
   Verifies that the standalone release does not transitively depend on
-  any web apps. Returns `:ok` or `{:error, [String.t()]}`.
+  any web apps. Delegates to `DependencyClosure.verify_no_web_in_standalone/0`.
+  Returns `:ok` or `{:error, [String.t()]}`.
   """
   @spec verify_independence() :: :ok | {:error, [String.t()]}
   def verify_independence do
-    standalone_closure = DependencyClosure.compute(@standalone_apps)
-    web_closure = DependencyClosure.compute(@web_apps)
-
-    case DependencyClosure.overlap(standalone_closure, web_closure) do
-      [] ->
-        :ok
-
-      # Web apps themselves showing up in standalone closure is the problem,
-      # but since standalone apps DON'T depend on web apps, overlap will be
-      # the shared *non-web* deps (like tet_core). That's fine.
-      # We specifically check: no web app appears in standalone closure.
-      _ ->
-        check_forbidden_in_closure(standalone_closure)
-    end
-  end
-
-  defp check_forbidden_in_closure(closure) do
-    leaked =
-      Enum.filter(closure, fn app ->
-        app in @web_apps or app in @forbidden_standalone_exact or
-          Enum.any?(@forbidden_standalone_prefixes, &String.starts_with?(Atom.to_string(app), &1))
-      end)
-
-    case leaked do
-      [] -> :ok
-      _ -> {:error, ["standalone closure contains forbidden web deps: #{inspect(leaked)}"]}
-    end
+    DependencyClosure.verify_no_web_in_standalone()
   end
 end

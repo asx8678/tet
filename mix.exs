@@ -5,10 +5,11 @@ defmodule Tet.Umbrella.MixProject do
   @standalone_applications [
     tet_core: :permanent,
     tet_store_sqlite: :permanent,
-    tet_store_memory: :temporary,
     tet_runtime: :permanent,
     tet_cli: :permanent
   ]
+
+  @web_applications @standalone_applications ++ [tet_web_phoenix: :permanent]
   @forbidden_standalone_exact [
     :cowboy,
     :cowlib,
@@ -133,6 +134,11 @@ defmodule Tet.Umbrella.MixProject do
         include_executables_for: [:unix],
         overlays: ["rel/overlays"],
         steps: [:assemble, &assert_standalone_release!/1]
+      ],
+      tet_web: [
+        applications: @web_applications,
+        include_executables_for: [:unix],
+        overlays: ["rel/overlays"]
       ]
     ]
   end

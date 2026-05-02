@@ -4,32 +4,14 @@ defmodule Tet.Runtime.Boundary do
 
   These helpers keep the release/application closure explicit and give tests a
   single place to reject accidental web-adapter drift.
+
+  Forbidden application lists are sourced from `Tet.Release` (the canonical
+  authority) rather than duplicated here, to prevent stale drift.
   """
 
+  alias Tet.Release
+
   @standalone_applications [:tet_core, :tet_store_sqlite, :tet_runtime, :tet_cli]
-
-  @forbidden_exact [
-    :cowboy,
-    :cowlib,
-    :plug,
-    :plug_cowboy,
-    :ranch,
-    :tet_web,
-    :tet_web_phoenix,
-    :websock,
-    :websock_adapter
-  ]
-
-  @forbidden_prefixes [
-    "bandit",
-    "cowboy",
-    "live_view",
-    "phoenix",
-    "plug",
-    "tet_web",
-    "thousand_island",
-    "websock"
-  ]
 
   @optional_adapter_applications [:tet_web_phoenix]
 
@@ -75,8 +57,8 @@ defmodule Tet.Runtime.Boundary do
   def forbidden_application?(application) when is_atom(application) do
     name = Atom.to_string(application)
 
-    application in @forbidden_exact or
-      Enum.any?(@forbidden_prefixes, &String.starts_with?(name, &1))
+    application in Release.forbidden_standalone_exact() or
+      Enum.any?(Release.forbidden_standalone_prefixes(), &String.starts_with?(name, &1))
   end
 
   defp application_name({application, _description, _version}), do: application

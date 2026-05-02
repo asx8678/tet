@@ -52,6 +52,16 @@ defmodule Tet.Release.DependencyClosureTest do
       assert DependencyClosure.compute([]) == []
     end
 
+    test "raises on unknown app name instead of treating as dependency-free leaf" do
+      assert_raise ArgumentError, ~r/unknown umbrella app/, fn ->
+        DependencyClosure.compute([:tet_nonexistent])
+      end
+
+      assert_raise ArgumentError, ~r/unknown umbrella app/, fn ->
+        DependencyClosure.compute([:tet_core, :bogus_app])
+      end
+    end
+
     test "standalone apps closure does not include web apps" do
       result = DependencyClosure.compute(Release.standalone_apps())
 

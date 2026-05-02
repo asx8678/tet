@@ -155,4 +155,92 @@ defmodule Tet.ReleaseTest do
       assert :ok == Release.verify_independence()
     end
   end
+
+  describe "config agreement with mix.exs" do
+    @root Path.expand("../../../../..", __DIR__)
+
+    test "Tet.Release.standalone_apps/0 agrees with mix.exs @standalone_applications" do
+      mix_content = File.read!(Path.join(@root, "mix.exs"))
+
+      # Extract the app atoms from @standalone_applications in mix.exs
+      # Pattern: tet_core: :permanent, tet_store_sqlite: :permanent, ...
+      regex = ~r/@standalone_applications\s*\[([^\]]+)\]/
+      captures = Regex.run(regex, mix_content)
+
+      assert captures != nil, "Could not find @standalone_applications in mix.exs"
+
+      mix_apps =
+        captures
+        |> List.last()
+        |> String.split(",")
+        |> Enum.map(&String.trim/1)
+        |> Enum.map(fn entry ->
+          [app_name | _] = String.split(entry, ":")
+          String.trim(app_name) |> String.to_atom()
+        end)
+        |> Enum.sort()
+
+      release_apps = Release.standalone_apps() |> Enum.sort()
+
+      assert mix_apps == release_apps,
+             "mix.exs @standalone_applications #{inspect(mix_apps)} does not match " <>
+               "Tet.Release.standalone_apps/0 #{inspect(release_apps)}"
+    end
+
+    test "Tet.Release forbidden lists agree with mix.exs forbidden lists" do
+      mix_content = File.read!(Path.join(@root, "mix.exs"))
+
+      # Extract @forbidden_standalone_exact
+      exact_regex = ~r/@forbidden_standalone_exact\s*\[([^\]]+)\]/s
+      exact_captures = Regex.run(exact_regex, mix_content)
+
+      assert exact_captures != nil,
+             "Could not find @forbidden_standalone_exact in mix.exs"
+
+      mix_exact =
+        exact_captures
+        |> List.last()
+        |> String.split(",")
+        |> Enum.map(&String.trim/1)
+        |> Enum.reject(&(&1 == ""))
+        |> Enum.map(fn entry ->
+          entry |> String.trim_leading(":") |> String.to_atom()
+        end)
+        |> Enum.sort()
+
+      release_exact = Release.forbidden_standalone_exact() |> Enum.sort()
+
+      assert mix_exact == release_exact,
+             "mix.exs @forbidden_standalone_exact #{inspect(mix_exact)} does not match " <>
+               "Tet.Release.forbidden_standalone_exact/0 #{inspect(release_exact)}"
+    end
+
+    test "Tet.Release forbidden prefixes agree with mix.exs forbidden prefixes" do
+      mix_content = File.read!(Path.join(@root, "mix.exs"))
+
+      # Extract @forbidden_standalone_prefixes
+      prefix_regex = ~r/@forbidden_standalone_prefixes\s*\[([^\]]+)\]/s
+      prefix_captures = Regex.run(prefix_regex, mix_content)
+
+      assert prefix_captures != nil,
+             "Could not find @forbidden_standalone_prefixes in mix.exs"
+
+      mix_prefixes =
+        prefix_captures
+        |> List.last()
+        |> String.split(",")
+        |> Enum.map(&String.trim/1)
+        |> Enum.reject(&(&1 == ""))
+        |> Enum.map(fn entry ->
+          entry |> String.trim(~s{"}) |> String.trim(~s{'})
+        end)
+        |> Enum.sort()
+
+      release_prefixes = Release.forbidden_standalone_prefixes() |> Enum.sort()
+
+      assert mix_prefixes == release_prefixes,
+             "mix.exs @forbidden_standalone_prefixes #{inspect(mix_prefixes)} does not match " <>
+               "Tet.Release.forbidden_standalone_prefixes/0 #{inspect(release_prefixes)}"
+    end
+  end
 end
