@@ -19,17 +19,17 @@ defmodule Tet.Store.SQLite.Schema.Approval do
   @primary_key {:id, :string, autogenerate: false}
 
   schema "approvals" do
-    field :session_id, :string
-    field :task_id, :string
-    field :tool_run_id, :string
-    field :short_id, :string
-    field :status, :string
-    field :reason, :string, default: ""
-    field :diff_artifact_id, :string
-    field :metadata, :binary
-    field :created_at, :integer
-    field :updated_at, :integer
-    field :resolved_at, :integer
+    field(:session_id, :string)
+    field(:task_id, :string)
+    field(:tool_run_id, :string)
+    field(:short_id, :string)
+    field(:status, :string)
+    field(:reason, :string, default: "")
+    field(:diff_artifact_id, :string)
+    field(:metadata, :binary)
+    field(:created_at, :integer)
+    field(:updated_at, :integer)
+    field(:resolved_at, :integer)
   end
 
   @required ~w(id session_id tool_run_id status diff_artifact_id created_at updated_at)a

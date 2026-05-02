@@ -15,11 +15,11 @@ defmodule Tet.Store.SQLite.Schema.PromptHistoryEntry do
   @primary_key {:id, :string, autogenerate: false}
 
   schema "prompt_history_entries" do
-    field :version, :string
-    field :created_at, :integer
-    field :request, :binary
-    field :result, :binary
-    field :metadata, :binary
+    field(:version, :string)
+    field(:created_at, :integer)
+    field(:request, :binary)
+    field(:result, :binary)
+    field(:metadata, :binary)
   end
 
   @required ~w(id version created_at request result)a

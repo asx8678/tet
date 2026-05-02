@@ -471,7 +471,9 @@ defmodule Tet.Store.SQLite do
       Schema.Artifact
       |> where([a], a.session_id == ^session_id)
       |> then(fn q ->
-        if task_id, do: where(q, [a], fragment("json_extract(metadata, '$.task_id') = ?", ^task_id)), else: q
+        if task_id,
+          do: where(q, [a], fragment("json_extract(metadata, '$.task_id') = ?", ^task_id)),
+          else: q
       end)
       |> order_by([a], desc: a.created_at)
 
@@ -514,8 +516,15 @@ defmodule Tet.Store.SQLite do
   @impl true
   def delete_checkpoint(id, _opts) when is_binary(id) do
     case Repo.get(Schema.Checkpoint, id) do
-      nil -> {:error, :checkpoint_not_found}
-      row -> Repo.delete(row) |> then(fn {:ok, _} -> {:ok, :ok}; err -> err end)
+      nil ->
+        {:error, :checkpoint_not_found}
+
+      row ->
+        Repo.delete(row)
+        |> then(fn
+          {:ok, _} -> {:ok, :ok}
+          err -> err
+        end)
     end
   end
 
@@ -616,8 +625,9 @@ defmodule Tet.Store.SQLite do
 
     if idem_key && workflow_id do
       case Repo.one(
-             from s in Schema.WorkflowStep,
+             from(s in Schema.WorkflowStep,
                where: s.workflow_id == ^workflow_id and s.idempotency_key == ^idem_key
+             )
            ) do
         nil -> insert_workflow_step(attrs)
         existing -> {:ok, Schema.WorkflowStep.to_core_struct(existing)}
@@ -769,11 +779,12 @@ defmodule Tet.Store.SQLite do
     # Atomic: select oldest pending + update to running in one transaction.
     Repo.transaction(fn ->
       case Repo.one(
-             from r in Schema.Repair,
+             from(r in Schema.Repair,
                where: r.status == "pending",
                order_by: [asc: r.created_at],
                limit: 1,
                lock: "FOR UPDATE"
+             )
            ) do
         nil ->
           nil
@@ -1008,7 +1019,7 @@ defmodule Tet.Store.SQLite do
       sid = message.session_id
 
       max_seq =
-        Repo.one(from m in Schema.Message, where: m.session_id == ^sid, select: max(m.seq)) || 0
+        Repo.one(from(m in Schema.Message, where: m.session_id == ^sid, select: max(m.seq))) || 0
 
       new_seq = max_seq + 1
 
@@ -1031,7 +1042,7 @@ defmodule Tet.Store.SQLite do
       sid = event.session_id
 
       max_seq =
-        Repo.one(from e in Schema.Event, where: e.session_id == ^sid, select: max(e.seq)) || 0
+        Repo.one(from(e in Schema.Event, where: e.session_id == ^sid, select: max(e.seq))) || 0
 
       new_seq = max_seq + 1
       event = %{event | seq: new_seq, sequence: new_seq}

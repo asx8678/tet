@@ -17,16 +17,16 @@ defmodule Tet.Store.SQLite.Schema.Artifact do
   @primary_key {:id, :string, autogenerate: false}
 
   schema "artifacts" do
-    field :workspace_id, :string
-    field :session_id, :string
-    field :short_id, :string
-    field :kind, :string
-    field :sha256, :string
-    field :size_bytes, :integer
-    field :inline_blob, :binary
-    field :path, :string
-    field :metadata, :binary
-    field :created_at, :integer
+    field(:workspace_id, :string)
+    field(:session_id, :string)
+    field(:short_id, :string)
+    field(:kind, :string)
+    field(:sha256, :string)
+    field(:size_bytes, :integer)
+    field(:inline_blob, :binary)
+    field(:path, :string)
+    field(:metadata, :binary)
+    field(:created_at, :integer)
   end
 
   @required ~w(id workspace_id kind sha256 size_bytes created_at)a

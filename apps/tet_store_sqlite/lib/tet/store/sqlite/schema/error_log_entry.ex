@@ -13,16 +13,16 @@ defmodule Tet.Store.SQLite.Schema.ErrorLogEntry do
   @primary_key {:id, :string, autogenerate: false}
 
   schema "error_log" do
-    field :session_id, :string
-    field :task_id, :string
-    field :kind, :string
-    field :message, :string
-    field :stacktrace, :string
-    field :context, :binary
-    field :status, :string, default: "open"
-    field :resolved_at, :integer
-    field :metadata, :binary
-    field :created_at, :integer
+    field(:session_id, :string)
+    field(:task_id, :string)
+    field(:kind, :string)
+    field(:message, :string)
+    field(:stacktrace, :string)
+    field(:context, :binary)
+    field(:status, :string, default: "open")
+    field(:resolved_at, :integer)
+    field(:metadata, :binary)
+    field(:created_at, :integer)
   end
 
   @required ~w(id session_id kind message status created_at)a

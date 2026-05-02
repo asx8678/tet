@@ -14,18 +14,18 @@ defmodule Tet.Store.SQLite.Schema.ToolRun do
   @primary_key {:id, :string, autogenerate: false}
 
   schema "tool_runs" do
-    field :session_id, :string
-    field :task_id, :string
-    field :tool_name, :string
-    field :read_or_write, :string
-    field :args, :binary
-    field :result, :binary
-    field :status, :string
-    field :block_reason, :string
-    field :changed_files, :binary
-    field :metadata, :binary
-    field :started_at, :integer
-    field :finished_at, :integer
+    field(:session_id, :string)
+    field(:task_id, :string)
+    field(:tool_name, :string)
+    field(:read_or_write, :string)
+    field(:args, :binary)
+    field(:result, :binary)
+    field(:status, :string)
+    field(:block_reason, :string)
+    field(:changed_files, :binary)
+    field(:metadata, :binary)
+    field(:started_at, :integer)
+    field(:finished_at, :integer)
   end
 
   @required ~w(id session_id tool_name read_or_write status)a

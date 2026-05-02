@@ -17,19 +17,19 @@ defmodule Tet.Store.SQLite.Schema.WorkflowStep do
   @primary_key {:id, :string, autogenerate: false}
 
   schema "workflow_steps" do
-    field :workflow_id, :string
-    field :step_name, :string
-    field :idempotency_key, :string
-    field :input, :binary
-    field :output, :binary
-    field :error, :binary
-    field :status, :string
-    field :attempt, :integer, default: 1
-    field :metadata, :binary
-    field :started_at, :integer
-    field :committed_at, :integer
-    field :failed_at, :integer
-    field :cancelled_at, :integer
+    field(:workflow_id, :string)
+    field(:step_name, :string)
+    field(:idempotency_key, :string)
+    field(:input, :binary)
+    field(:output, :binary)
+    field(:error, :binary)
+    field(:status, :string)
+    field(:attempt, :integer, default: 1)
+    field(:metadata, :binary)
+    field(:started_at, :integer)
+    field(:committed_at, :integer)
+    field(:failed_at, :integer)
+    field(:cancelled_at, :integer)
   end
 
   @required ~w(id workflow_id step_name idempotency_key status started_at)a

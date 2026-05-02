@@ -14,14 +14,14 @@ defmodule Tet.Store.SQLite.Schema.Autosave do
   @primary_key {:checkpoint_id, :string, autogenerate: false}
 
   schema "autosaves" do
-    field :session_id, :string
-    field :saved_at, :integer
-    field :messages, :binary
-    field :attachments, :binary
-    field :prompt_metadata, :binary
-    field :prompt_debug, :binary
-    field :prompt_debug_text, :string, default: ""
-    field :metadata, :binary
+    field(:session_id, :string)
+    field(:saved_at, :integer)
+    field(:messages, :binary)
+    field(:attachments, :binary)
+    field(:prompt_metadata, :binary)
+    field(:prompt_debug, :binary)
+    field(:prompt_debug_text, :string, default: "")
+    field(:metadata, :binary)
   end
 
   @required ~w(checkpoint_id session_id saved_at)a

@@ -13,13 +13,13 @@ defmodule Tet.Store.SQLite.Schema.Workspace do
   @primary_key {:id, :string, autogenerate: false}
 
   schema "workspaces" do
-    field :name, :string
-    field :root_path, :string
-    field :tet_dir_path, :string
-    field :trust_state, :string
-    field :metadata, :binary
-    field :created_at, :integer
-    field :updated_at, :integer
+    field(:name, :string)
+    field(:root_path, :string)
+    field(:tet_dir_path, :string)
+    field(:trust_state, :string)
+    field(:metadata, :binary)
+    field(:created_at, :integer)
+    field(:updated_at, :integer)
   end
 
   @required ~w(id name root_path tet_dir_path trust_state created_at updated_at)a

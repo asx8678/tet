@@ -14,15 +14,15 @@ defmodule Tet.Store.SQLite.Schema.Task do
   @primary_key {:id, :string, autogenerate: false}
 
   schema "tasks" do
-    field :session_id, :string
-    field :short_id, :string
-    field :title, :string
-    field :kind, :string, default: "agent_task"
-    field :status, :string
-    field :payload, :binary
-    field :metadata, :binary
-    field :created_at, :integer
-    field :updated_at, :integer
+    field(:session_id, :string)
+    field(:short_id, :string)
+    field(:title, :string)
+    field(:kind, :string, default: "agent_task")
+    field(:status, :string)
+    field(:payload, :binary)
+    field(:metadata, :binary)
+    field(:created_at, :integer)
+    field(:updated_at, :integer)
   end
 
   @required ~w(id session_id title status created_at updated_at)a

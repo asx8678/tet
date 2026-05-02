@@ -13,13 +13,13 @@ defmodule Tet.Store.SQLite.Schema.Checkpoint do
   @primary_key {:id, :string, autogenerate: false}
 
   schema "checkpoints" do
-    field :session_id, :string
-    field :task_id, :string
-    field :workflow_id, :string
-    field :sha256, :string
-    field :state_snapshot, :binary
-    field :metadata, :binary
-    field :created_at, :integer
+    field(:session_id, :string)
+    field(:task_id, :string)
+    field(:workflow_id, :string)
+    field(:sha256, :string)
+    field(:state_snapshot, :binary)
+    field(:metadata, :binary)
+    field(:created_at, :integer)
   end
 
   @required ~w(id session_id created_at)a

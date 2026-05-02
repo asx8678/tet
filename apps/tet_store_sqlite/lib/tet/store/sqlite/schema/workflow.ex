@@ -13,14 +13,14 @@ defmodule Tet.Store.SQLite.Schema.Workflow do
   @primary_key {:id, :string, autogenerate: false}
 
   schema "workflows" do
-    field :session_id, :string
-    field :task_id, :string
-    field :status, :string
-    field :claimed_by, :string
-    field :claim_expires_at, :integer
-    field :metadata, :binary
-    field :created_at, :integer
-    field :updated_at, :integer
+    field(:session_id, :string)
+    field(:task_id, :string)
+    field(:status, :string)
+    field(:claimed_by, :string)
+    field(:claim_expires_at, :integer)
+    field(:metadata, :binary)
+    field(:created_at, :integer)
+    field(:updated_at, :integer)
   end
 
   @required ~w(id session_id status created_at updated_at)a
