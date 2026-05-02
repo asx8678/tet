@@ -95,6 +95,33 @@ defmodule Tet.Release do
   @doc "Returns the prefix-forbidden list for standalone releases."
   def forbidden_standalone_prefixes, do: @forbidden_standalone_prefixes
 
+  @doc "Returns true if the given application is forbidden in standalone releases."
+  @spec forbidden_standalone_application?(atom()) :: boolean()
+  def forbidden_standalone_application?(application) when is_atom(application) do
+    name = Atom.to_string(application)
+
+    application in @forbidden_standalone_exact or
+      Enum.any?(@forbidden_standalone_prefixes, &String.starts_with?(name, &1))
+  end
+
+  @doc """
+  Mix.Release step that raises if any forbidden web applications leaked
+  into a standalone release. Wire into `steps:` in mix.exs.
+  """
+  @spec assert_standalone_release!(Mix.Release.t()) :: Mix.Release.t()
+  def assert_standalone_release!(%Mix.Release{} = release) do
+    leaked =
+      release.applications
+      |> Map.keys()
+      |> Enum.filter(&forbidden_standalone_application?/1)
+
+    if leaked != [] do
+      Mix.raise("tet_standalone release contains forbidden web applications: #{inspect(leaked)}")
+    end
+
+    release
+  end
+
   # ── Constructors ────────────────────────────────────────────────────────
 
   @doc "Returns a standalone (CLI-only) release configuration."
@@ -185,15 +212,9 @@ defmodule Tet.Release do
   defp validate_apps(errors, _), do: ["apps must be a non-empty list" | errors]
 
   defp validate_no_forbidden_in_standalone(errors, %{mode: :standalone, apps: apps}) do
-    leaked =
-      Enum.filter(apps, fn app ->
-        app in @forbidden_standalone_exact or
-          Enum.any?(@forbidden_standalone_prefixes, &String.starts_with?(Atom.to_string(app), &1))
-      end)
-
-    case leaked do
+    case Enum.filter(apps, &forbidden_standalone_application?/1) do
       [] -> errors
-      _ -> ["standalone release contains forbidden web apps: #{inspect(leaked)}" | errors]
+      leaked -> ["standalone release contains forbidden web apps: #{inspect(leaked)}" | errors]
     end
   end
 
