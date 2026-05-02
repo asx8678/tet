@@ -170,6 +170,7 @@ run_positive_gate() {
   copy_repo_to "$sandbox"
   remove_optional_web_apps "$sandbox"
 
+  run_in "$sandbox" mix deps.get
   run_in "$sandbox" env MIX_ENV=test mix compile --warnings-as-errors
   run_in "$sandbox" env MIX_ENV=test mix standalone.check
 

@@ -157,7 +157,7 @@ defmodule Tet.ReleaseTest do
   end
 
   describe "config agreement with mix.exs" do
-    @root Path.expand("../../../../..", __DIR__)
+    @root Path.expand("../../../..", __DIR__)
 
     test "Tet.Release.standalone_apps/0 agrees with mix.exs @standalone_applications" do
       mix_content = File.read!(Path.join(@root, "mix.exs"))
