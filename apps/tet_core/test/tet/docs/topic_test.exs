@@ -56,7 +56,7 @@ defmodule Tet.Docs.TopicTest do
       topic = Topic.build(:config)
       assert topic.id == :config
       assert topic.title == "Configuration"
-      assert "tet config validate" in topic.related_commands
+      assert "tet doctor" in topic.related_commands
     end
 
     test "builds :profiles topic correctly" do
@@ -105,6 +105,72 @@ defmodule Tet.Docs.TopicTest do
       topic = Topic.build(:release)
       assert topic.id == :release
       assert topic.title == "Release Management"
+    end
+  end
+
+  describe "string_to_id/0" do
+    test "returns a map of all topic strings to atoms" do
+      map = Topic.string_to_id()
+      assert map["cli"] == :cli
+      assert map["config"] == :config
+      assert map["profiles"] == :profiles
+      assert map["release"] == :release
+      assert map_size(map) == 10
+    end
+  end
+
+  describe "lookup/1" do
+    test "returns {:ok, id} for valid string" do
+      assert {:ok, :cli} = Topic.lookup("cli")
+      assert {:ok, :security} = Topic.lookup("security")
+    end
+
+    test "returns :error for unknown string" do
+      assert Topic.lookup("nonexistent") == :error
+    end
+
+    test "is case-sensitive" do
+      assert Topic.lookup("CLI") == :error
+    end
+  end
+
+  describe "safety warnings and verification commands" do
+    test "every topic has at least one safety warning" do
+      topics = Topic.build_all()
+
+      for topic <- topics do
+        assert topic.safety_warnings != [],
+               "Topic #{topic.id} has no safety warnings — every topic must have at least one"
+      end
+    end
+
+    test "every topic has at least one verification command" do
+      topics = Topic.build_all()
+
+      for topic <- topics do
+        assert topic.verification_commands != [],
+               "Topic #{topic.id} has no verification commands — every topic must have at least one"
+      end
+    end
+
+    test "each safety warning is a non-empty string" do
+      topics = Topic.build_all()
+
+      for topic <- topics do
+        Enum.each(topic.safety_warnings, fn warning ->
+          assert is_binary(warning) and String.length(warning) > 0
+        end)
+      end
+    end
+
+    test "each verification command is a non-empty string" do
+      topics = Topic.build_all()
+
+      for topic <- topics do
+        Enum.each(topic.verification_commands, fn cmd ->
+          assert is_binary(cmd) and String.length(cmd) > 0
+        end)
+      end
     end
   end
 end

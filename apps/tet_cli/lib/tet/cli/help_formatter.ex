@@ -1,4 +1,4 @@
-defmodule Tet.Docs.HelpFormatter do
+defmodule Tet.CLI.HelpFormatter do
   @moduledoc """
   CLI help text formatting — BD-0073.
 

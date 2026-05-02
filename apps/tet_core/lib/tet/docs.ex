@@ -31,7 +31,7 @@ defmodule Tet.Docs do
   @doc """
   Searches all topics for a given string, matching against title and content.
 
-  Returns a list of matching topic structs. Case-insensitive fuzzy match.
+  Returns a list of matching topic structs. Case-insensitive substring match.
   """
   @spec search(String.t()) :: [Topic.t()]
   def search(query) when is_binary(query) do

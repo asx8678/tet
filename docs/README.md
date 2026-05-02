@@ -3,8 +3,9 @@
 This repository contains the minimal Elixir umbrella/release scaffold plus the
 standalone streaming chat, session resume, event timeline shell,
 autosave/restore checkpoints, compacted context, editable model registry
-schema, read-only tool contracts, Prompt Lab model/history storage, and doctor
-diagnostics path. It includes the optional web facade contract from `tet-db6.7` /
+schema, read-only tool contracts, Prompt Lab model/history storage, doctor
+diagnostics path, and the documentation set / CLI help system from `tet-db6.73` /
+`BD-0073`. It includes the optional web facade contract from `tet-db6.7` /
 `BD-0007`, the event timeline shell from `tet-db6.8` / `BD-0008`, the web
 removability gate from `tet-db6.9` / `BD-0009`, the prompt-layer contract from
 `tet-db6.10` / `BD-0010`, autosave/restore checkpoints from `tet-db6.11` /
@@ -641,6 +642,29 @@ not included in debug output, while normal session messages are still persisted
 as messages because they are the chat history being restored. If prompt metadata
 contains sensitive operational values, keep them out of caller metadata or rely
 on the redacted debug artifact for inspection.
+
+## Documentation set and CLI help (BD-0073)
+
+BD-0073 adds a topic-based documentation system accessible via `tet help`.
+Ten documentation topics cover CLI usage, configuration, profiles, tools, MCP,
+remote operations, repair/self-healing, security policy, migration, and release
+management.
+
+Each topic includes:
+
+- Descriptive content with safety warnings
+- Real commands that exist today (verified against the current CLI)
+- Future/planned commands clearly marked
+- Verification commands (mix test paths, tools scripts)
+
+The documentation system is implemented in:
+
+- `apps/tet_core/lib/tet/docs.ex` — Documentation registry
+- `apps/tet_core/lib/tet/docs/topic.ex` — Topic struct and builders
+- `apps/tet_cli/lib/tet/cli/help_formatter.ex` — CLI formatting
+
+See [BD-0073 — Documentation Set and CLI Help](BD-0073_DOCUMENTATION_AND_CLI_HELP.md)
+for the full topic listing.
 
 ## Architecture notes preserved
 

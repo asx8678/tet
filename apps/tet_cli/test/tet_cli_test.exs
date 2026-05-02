@@ -205,6 +205,53 @@ defmodule Tet.CLITest do
     assert output =~ "usage: tet ask [--session SESSION_ID] PROMPT"
   end
 
+  describe "help command" do
+    test "help without topic shows help text and lists available topics" do
+      output = capture_io(fn -> assert Tet.CLI.run(["help"]) == 0 end)
+
+      assert output =~ "tet - standalone"
+      assert output =~ "Available help topics:"
+    end
+
+    test "help topics lists all topics with descriptions" do
+      output = capture_io(fn -> assert Tet.CLI.run(["help", "topics"]) == 0 end)
+
+      assert output =~ "Available help topics:"
+      assert output =~ "cli"
+      assert output =~ "config"
+      assert output =~ "profiles"
+      assert output =~ "release"
+    end
+
+    test "help <topic> shows formatted topic" do
+      output = capture_io(fn -> assert Tet.CLI.run(["help", "config"]) == 0 end)
+
+      assert output =~ "## Configuration"
+      assert output =~ "⚠  Safety warnings:"
+      assert output =~ "Verification commands:"
+    end
+
+    test "help <topic> for security shows safety warnings" do
+      output = capture_io(fn -> assert Tet.CLI.run(["help", "security"]) == 0 end)
+
+      assert output =~ "## Security Policy"
+      assert output =~ "⚠  Safety warnings:"
+    end
+
+    test "help with unknown topic returns error 64" do
+      output = capture_io(:stderr, fn -> assert Tet.CLI.run(["help", "does-not-exist"]) == 64 end)
+
+      assert output =~ "unknown help topic: does-not-exist"
+      assert output =~ "available topics:"
+    end
+
+    test "--help works same as help" do
+      output = capture_io(fn -> assert Tet.CLI.run(["--help"]) == 0 end)
+
+      assert output =~ "tet - standalone"
+    end
+  end
+
   test "unknown commands return a deterministic usage error" do
     output = capture_io(:stderr, fn -> assert Tet.CLI.run(["web"]) == 64 end)
 
