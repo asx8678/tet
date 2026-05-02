@@ -2,18 +2,15 @@ defmodule Tet.Store.SQLite do
   @moduledoc """
   Default standalone store boundary backed by Ecto/SQLite3.
 
-  Core callbacks (workspace, session, message, event, transaction) use
-  `Tet.Store.SQLite.Repo` and Ecto schemas. Non-core callbacks (autosaves,
-  prompt history, artifacts, checkpoints, errors, repairs, workflows,
-  findings, persistent memories, project lessons) remain JSONL-backed
-  until tet-3fp rewrites them.
+  All callbacks use `Tet.Store.SQLite.Repo` and Ecto schemas.
+  JSONL is dead. Long live Repo. 🐶
   """
 
   @behaviour Tet.Store
 
   import Ecto.Query
 
-  alias Tet.Store.SQLite.Jsonl
+  alias Tet.Store.SQLite.Connection
   alias Tet.Store.SQLite.Repo
   alias Tet.Store.SQLite.Schema
 
@@ -21,49 +18,33 @@ defmodule Tet.Store.SQLite do
 
   @impl true
   def boundary do
-    defaults = Jsonl.defaults()
-
     %{
       application: :tet_store_sqlite,
       adapter: __MODULE__,
-      status: :local_jsonl,
-      path: defaults.path,
-      autosave_path: defaults.autosave_path,
-      events_path: defaults.events_path,
-      prompt_history_path: defaults.prompt_history_path,
-      format: :jsonl
+      status: :sqlite,
+      database_path: Connection.default_database_path(),
+      format: :sqlite
     }
   end
 
   @impl true
-  def health(opts) when is_list(opts) do
-    path = Jsonl.path(opts)
-    directory = Path.dirname(path)
-    directory_existed? = File.dir?(directory)
+  def health(_opts) do
+    try do
+      snapshot = Connection.pragma_snapshot!()
+      schema_version = query_schema_version()
 
-    result =
-      with :ok <- File.mkdir_p(directory),
-           :ok <- Jsonl.assert_readable(path),
-           :ok <- Jsonl.assert_writable(directory) do
-        {:ok,
-         boundary()
-         |> Map.merge(%{
-           path: path,
-           autosave_path: Jsonl.autosave_path(opts),
-           events_path: Jsonl.events_path(opts),
-           prompt_history_path: Jsonl.prompt_history_path(opts),
-           directory: directory,
-           status: :ok,
-           readable?: true,
-           writable?: true,
-           started?: Jsonl.started?()
-         })}
-      else
-        {:error, reason} -> {:error, {:store_unhealthy, path, reason}}
-      end
-
-    Jsonl.cleanup_created_directory(directory, directory_existed?)
-    result
+      {:ok,
+       boundary()
+       |> Map.merge(%{
+         status: :ok,
+         journal_mode: snapshot.journal_mode,
+         auto_vacuum: snapshot.auto_vacuum,
+         schema_version: schema_version,
+         started?: app_started?()
+       })}
+    rescue
+      e -> {:error, {:store_unhealthy, Connection.default_database_path(), Exception.message(e)}}
+    end
   end
 
   # ── Transaction ────────────────────────────────────────────────────────
@@ -243,10 +224,7 @@ defmodule Tet.Store.SQLite do
 
   @impl true
   def emit_event(attrs) when is_map(attrs) do
-    attrs =
-      attrs
-      |> ensure_id()
-      |> ensure_created_at()
+    attrs = attrs |> ensure_id() |> ensure_created_at()
 
     with {:ok, event} <- Tet.Event.new(attrs) do
       insert_event_with_seq(event)
@@ -255,10 +233,7 @@ defmodule Tet.Store.SQLite do
 
   @impl true
   def append_event(attrs, _opts) when is_map(attrs) do
-    attrs =
-      attrs
-      |> ensure_id()
-      |> ensure_created_at()
+    attrs = attrs |> ensure_id() |> ensure_created_at()
 
     with {:ok, event} <- Tet.Event.new(attrs) do
       insert_event_with_seq(event)
@@ -266,9 +241,7 @@ defmodule Tet.Store.SQLite do
   end
 
   @impl true
-  def save_event(%Tet.Event{} = event, _opts) do
-    insert_event_with_seq(event)
-  end
+  def save_event(%Tet.Event{} = event, _opts), do: insert_event_with_seq(event)
 
   @impl true
   def get_event(event_id, _opts) when is_binary(event_id) do
@@ -292,443 +265,709 @@ defmodule Tet.Store.SQLite do
 
   def list_events(nil, _opts), do: {:ok, []}
 
-  # ── Non-core stubs (still not implemented) ────────────────────────────
+  # ── Task ──────────────────────────────────────────────────────────────
 
   @impl true
-  def create_task(_attrs), do: {:error, {:not_implemented, :create_task}}
+  def create_task(attrs) when is_map(attrs) do
+    now = DateTime.utc_now()
 
-  @impl true
-  def record_tool_run(_attrs), do: {:error, {:not_implemented, :record_tool_run}}
+    attrs =
+      attrs
+      |> ensure_id()
+      |> Map.put_new(:created_at, now)
+      |> Map.put_new(:updated_at, now)
+      |> Map.put_new(:status, :active)
 
-  @impl true
-  def update_tool_run(_id, _attrs), do: {:error, {:not_implemented, :update_tool_run}}
-
-  @impl true
-  def create_approval(_attrs), do: {:error, {:not_implemented, :create_approval}}
-
-  @impl true
-  def resolve_approval(_id, _resolution, _attrs),
-    do: {:error, {:not_implemented, :resolve_approval}}
-
-  @impl true
-  def get_approval(_id), do: {:error, {:not_implemented, :get_approval}}
-
-  @impl true
-  def list_approvals(_session_id, _opts), do: {:error, {:not_implemented, :list_approvals}}
-
-  # ── Non-core JSONL callbacks ──────────────────────────────────────────
-
-  @impl true
-  def save_autosave(%Tet.Autosave{} = autosave, opts) when is_list(opts) do
-    Jsonl.append_record(Jsonl.autosave_path(opts), autosave, &Tet.Autosave.to_map/1)
+    with {:ok, task} <- Tet.Task.new(attrs) do
+      task
+      |> Schema.Task.from_core_struct()
+      |> Schema.Task.changeset()
+      |> Repo.insert()
+      |> repo_result(&Schema.Task.to_core_struct/1)
+    end
   end
 
+  # ── Tool Runs ─────────────────────────────────────────────────────────
+
   @impl true
-  def load_autosave(session_id, opts) when is_binary(session_id) and is_list(opts) do
-    with {:ok, autosaves} <- Jsonl.read_autosaves(Jsonl.autosave_path(opts)) do
-      autosaves
-      |> Enum.filter(&(&1.session_id == session_id))
-      |> Enum.sort(&Jsonl.checkpoint_newer_or_equal?/2)
-      |> case do
-        [] -> {:error, :autosave_not_found}
-        [latest | _] -> {:ok, latest}
-      end
+  def record_tool_run(attrs) when is_map(attrs) do
+    attrs = attrs |> ensure_id()
+
+    with {:ok, tool_run} <- Tet.ToolRun.new(attrs) do
+      tool_run
+      |> Schema.ToolRun.from_core_struct()
+      |> Schema.ToolRun.changeset()
+      |> Repo.insert()
+      |> repo_result(&Schema.ToolRun.to_core_struct/1)
     end
   end
 
   @impl true
-  def list_autosaves(opts) when is_list(opts) do
-    with {:ok, autosaves} <- Jsonl.read_autosaves(Jsonl.autosave_path(opts)) do
-      {:ok, Enum.sort(autosaves, &Jsonl.checkpoint_newer_or_equal?/2)}
+  def update_tool_run(id, attrs) when is_binary(id) and is_map(attrs) do
+    case Repo.get(Schema.ToolRun, id) do
+      nil ->
+        {:error, :tool_run_not_found}
+
+      row ->
+        row
+        |> Schema.ToolRun.changeset(prepare_tool_run_update(attrs))
+        |> Repo.update()
+        |> repo_result(&Schema.ToolRun.to_core_struct/1)
+    end
+  end
+
+  # ── Approvals ─────────────────────────────────────────────────────────
+
+  @impl true
+  def create_approval(attrs) when is_map(attrs) do
+    now = DateTime.utc_now()
+
+    attrs =
+      attrs
+      |> ensure_id()
+      |> Map.put_new(:created_at, now)
+      |> Map.put_new(:status, :pending)
+
+    with {:ok, approval} <- Tet.Approval.Approval.new(attrs) do
+      approval
+      |> Schema.Approval.from_core_struct()
+      |> Schema.Approval.changeset()
+      |> Repo.insert()
+      |> repo_result(&Schema.Approval.to_core_struct/1)
     end
   end
 
   @impl true
-  def save_prompt_history(%Tet.PromptLab.HistoryEntry{} = entry, opts) when is_list(opts) do
-    Jsonl.append_record(
-      Jsonl.prompt_history_path(opts),
-      entry,
-      &Tet.PromptLab.HistoryEntry.to_map/1
-    )
-  end
+  def resolve_approval(id, resolution, attrs)
+      when is_binary(id) and is_atom(resolution) and is_map(attrs) do
+    now = DateTime.utc_now()
 
-  @impl true
-  def list_prompt_history(opts) when is_list(opts) do
-    with {:ok, history} <- Jsonl.read_prompt_history(Jsonl.prompt_history_path(opts)) do
-      {:ok, Enum.sort(history, &Jsonl.history_newer_or_equal?/2)}
+    case Repo.get(Schema.Approval, id) do
+      nil ->
+        {:error, :approval_not_found}
+
+      row ->
+        row
+        |> Schema.Approval.changeset(%{
+          status: Atom.to_string(resolution),
+          reason: Map.get(attrs, :reason, Map.get(attrs, :rationale, "")),
+          resolved_at: DateTime.to_unix(now),
+          updated_at: DateTime.to_unix(now)
+        })
+        |> Repo.update()
+        |> repo_result(&Schema.Approval.to_core_struct/1)
     end
   end
 
   @impl true
-  def fetch_prompt_history(id, opts) when is_binary(id) and is_list(opts) do
-    Jsonl.find_by_id(
-      Jsonl.prompt_history_path(opts),
-      &Jsonl.read_prompt_history/1,
-      id,
-      :prompt_history_not_found
-    )
-  end
-
-  # -- Artifacts --
-
-  @impl true
-  def create_artifact(attrs, opts) when is_map(attrs) and is_list(opts) do
-    with {:ok, artifact} <- Tet.ShellPolicy.Artifact.new(attrs) do
-      Jsonl.append_record(
-        Jsonl.artifacts_path(opts),
-        artifact,
-        &Tet.ShellPolicy.Artifact.to_map/1
-      )
+  def get_approval(id) when is_binary(id) do
+    case Repo.get(Schema.Approval, id) do
+      nil -> {:error, :approval_not_found}
+      row -> {:ok, Schema.Approval.to_core_struct(row)}
     end
   end
 
   @impl true
-  def get_artifact(id, opts) when is_binary(id) and is_list(opts) do
-    Jsonl.find_by_id(Jsonl.artifacts_path(opts), &Jsonl.read_artifacts/1, id, :artifact_not_found)
+  def list_approvals(session_id, _opts) when is_binary(session_id) do
+    approvals =
+      Schema.Approval
+      |> where([a], a.session_id == ^session_id)
+      |> order_by([a], desc: a.created_at)
+      |> Repo.all()
+      |> Enum.map(&Schema.Approval.to_core_struct/1)
+
+    {:ok, approvals}
+  end
+
+  # ── Autosaves ─────────────────────────────────────────────────────────
+
+  @impl true
+  def save_autosave(%Tet.Autosave{} = autosave, _opts) do
+    autosave
+    |> Schema.Autosave.from_core_struct()
+    |> Schema.Autosave.changeset()
+    |> Repo.insert()
+    |> repo_result(&Schema.Autosave.to_core_struct/1)
+  end
+
+  @impl true
+  def load_autosave(session_id, _opts) when is_binary(session_id) do
+    case Schema.Autosave
+         |> where([a], a.session_id == ^session_id)
+         |> order_by([a], desc: a.saved_at)
+         |> limit(1)
+         |> Repo.one() do
+      nil -> {:error, :autosave_not_found}
+      row -> {:ok, Schema.Autosave.to_core_struct(row)}
+    end
+  end
+
+  @impl true
+  def list_autosaves(_opts) do
+    autosaves =
+      Schema.Autosave
+      |> order_by([a], desc: a.saved_at)
+      |> Repo.all()
+      |> Enum.map(&Schema.Autosave.to_core_struct/1)
+
+    {:ok, autosaves}
+  end
+
+  # ── Prompt History ────────────────────────────────────────────────────
+
+  @impl true
+  def save_prompt_history(%Tet.PromptLab.HistoryEntry{} = entry, _opts) do
+    entry
+    |> Schema.PromptHistoryEntry.from_core_struct()
+    |> Schema.PromptHistoryEntry.changeset()
+    |> Repo.insert()
+    |> repo_result(&Schema.PromptHistoryEntry.to_core_struct/1)
+  end
+
+  @impl true
+  def list_prompt_history(_opts) do
+    entries =
+      Schema.PromptHistoryEntry
+      |> order_by([e], desc: e.created_at)
+      |> Repo.all()
+      |> Enum.map(&Schema.PromptHistoryEntry.to_core_struct/1)
+
+    {:ok, entries}
+  end
+
+  @impl true
+  def fetch_prompt_history(id, _opts) when is_binary(id) do
+    case Repo.get(Schema.PromptHistoryEntry, id) do
+      nil -> {:error, :prompt_history_not_found}
+      row -> {:ok, Schema.PromptHistoryEntry.to_core_struct(row)}
+    end
+  end
+
+  # ── Artifacts ─────────────────────────────────────────────────────────
+
+  @impl true
+  def create_artifact(attrs, _opts) when is_map(attrs) do
+    attrs = attrs |> ensure_id() |> ensure_created_at()
+
+    attrs
+    |> Schema.Artifact.changeset()
+    |> Repo.insert()
+    |> repo_result(&Schema.Artifact.to_core_struct/1)
+  end
+
+  @impl true
+  def get_artifact(id, _opts) when is_binary(id) do
+    case Repo.get(Schema.Artifact, id) do
+      nil -> {:error, :artifact_not_found}
+      row -> {:ok, Schema.Artifact.to_core_struct(row)}
+    end
   end
 
   @impl true
   def list_artifacts(session_id, opts) when is_binary(session_id) and is_list(opts) do
-    with {:ok, artifacts} <- Jsonl.read_artifacts(Jsonl.artifacts_path(opts)) do
-      task_id = Keyword.get(opts, :task_id)
+    task_id = Keyword.get(opts, :task_id)
 
-      filtered =
-        Enum.filter(artifacts, fn a ->
-          Jsonl.match_session?(a, session_id) and Jsonl.match_task?(a, task_id)
-        end)
+    query =
+      Schema.Artifact
+      |> where([a], a.session_id == ^session_id)
+      |> then(fn q ->
+        if task_id, do: where(q, [a], fragment("json_extract(metadata, '$.task_id') = ?", ^task_id)), else: q
+      end)
+      |> order_by([a], desc: a.created_at)
 
-      {:ok, filtered}
-    end
+    {:ok, query |> Repo.all() |> Enum.map(&Schema.Artifact.to_core_struct/1)}
   end
 
-  # -- Checkpoints --
+  # ── Checkpoints ───────────────────────────────────────────────────────
 
   @impl true
-  def save_checkpoint(attrs, opts) when is_map(attrs) and is_list(opts) do
+  def save_checkpoint(attrs, _opts) when is_map(attrs) do
     with {:ok, cp} <- Tet.Checkpoint.new(attrs) do
-      Jsonl.append_record(Jsonl.checkpoints_path(opts), cp, &Tet.Checkpoint.to_map/1)
+      cp
+      |> Schema.Checkpoint.from_core_struct()
+      |> Schema.Checkpoint.changeset()
+      |> Repo.insert()
+      |> repo_result(&Schema.Checkpoint.to_core_struct/1)
     end
   end
 
   @impl true
-  def get_checkpoint(id, opts) when is_binary(id) and is_list(opts) do
-    Jsonl.find_by_id(
-      Jsonl.checkpoints_path(opts),
-      &Jsonl.read_checkpoints/1,
-      id,
-      :checkpoint_not_found
-    )
-  end
-
-  @impl true
-  def list_checkpoints(session_id, opts) when is_binary(session_id) and is_list(opts) do
-    with {:ok, cps} <- Jsonl.read_checkpoints(Jsonl.checkpoints_path(opts)) do
-      {:ok, Enum.filter(cps, &(&1.session_id == session_id))}
+  def get_checkpoint(id, _opts) when is_binary(id) do
+    case Repo.get(Schema.Checkpoint, id) do
+      nil -> {:error, :checkpoint_not_found}
+      row -> {:ok, Schema.Checkpoint.to_core_struct(row)}
     end
   end
 
   @impl true
-  def delete_checkpoint(id, opts) when is_binary(id) and is_list(opts) do
-    path = Jsonl.checkpoints_path(opts)
+  def list_checkpoints(session_id, _opts) when is_binary(session_id) do
+    checkpoints =
+      Schema.Checkpoint
+      |> where([c], c.session_id == ^session_id)
+      |> order_by([c], desc: c.created_at)
+      |> Repo.all()
+      |> Enum.map(&Schema.Checkpoint.to_core_struct/1)
 
-    with {:ok, cps} <- Jsonl.read_checkpoints(path) do
-      Jsonl.rewrite(path, Enum.reject(cps, &(&1.id == id)), &Tet.Checkpoint.to_map/1)
-    end
-  end
-
-  # -- Workflow steps --
-
-  @impl true
-  def append_step(attrs, opts) when is_map(attrs) and is_list(opts) do
-    with {:ok, step} <- Tet.WorkflowStep.new(attrs) do
-      Jsonl.append_record(Jsonl.workflow_steps_path(opts), step, &Tet.WorkflowStep.to_map/1)
-    end
+    {:ok, checkpoints}
   end
 
   @impl true
-  def get_steps(session_id, opts) when is_binary(session_id) and is_list(opts) do
-    with {:ok, steps} <- Jsonl.read_workflow_steps(Jsonl.workflow_steps_path(opts)) do
-      {:ok, Enum.filter(steps, &(&1.session_id == session_id))}
+  def delete_checkpoint(id, _opts) when is_binary(id) do
+    case Repo.get(Schema.Checkpoint, id) do
+      nil -> {:error, :checkpoint_not_found}
+      row -> Repo.delete(row) |> then(fn {:ok, _} -> {:ok, :ok}; err -> err end)
     end
   end
 
-  # -- Error log --
-
-  @impl true
-  def log_error(attrs, opts) when is_map(attrs) and is_list(opts) do
-    attrs = Tet.Store.Helpers.ensure_created_at(attrs)
-
-    with {:ok, entry} <- Tet.ErrorLog.new(attrs) do
-      Jsonl.append_record(Jsonl.error_log_path(opts), entry, &Tet.ErrorLog.to_map/1)
-    end
-  end
-
-  @impl true
-  def list_errors(session_id, opts) when is_binary(session_id) and is_list(opts) do
-    with {:ok, errors} <- Jsonl.read_error_log(Jsonl.error_log_path(opts)) do
-      {:ok, Enum.filter(errors, &(&1.session_id == session_id))}
-    end
-  end
-
-  @impl true
-  def get_error(id, opts) when is_binary(id) and is_list(opts) do
-    Jsonl.find_by_id(Jsonl.error_log_path(opts), &Jsonl.read_error_log/1, id, :error_not_found)
-  end
-
-  @impl true
-  def resolve_error(error_id, opts) when is_binary(error_id) and is_list(opts) do
-    path = Jsonl.error_log_path(opts)
-
-    with {:ok, errors} <- Jsonl.read_error_log(path) do
-      case Enum.find(errors, &(&1.id == error_id)) do
-        nil ->
-          {:error, :error_not_found}
-
-        entry ->
-          resolved = Tet.ErrorLog.resolve(entry, DateTime.utc_now())
-          remaining = Enum.reject(errors, &(&1.id == error_id)) ++ [resolved]
-
-          case Jsonl.rewrite(path, remaining, &Tet.ErrorLog.to_map/1) do
-            {:ok, :ok} -> {:ok, resolved}
-            {:error, reason} -> {:error, {:resolve_error_write_failed, reason}}
-          end
-      end
-    end
-  end
-
-  # -- Repair queue --
-
-  @impl true
-  def enqueue_repair(attrs, opts) when is_map(attrs) and is_list(opts) do
-    attrs = Tet.Store.Helpers.ensure_created_at(attrs)
-
-    with {:ok, repair} <- Tet.Repair.new(attrs) do
-      Jsonl.append_record(Jsonl.repairs_path(opts), repair, &Tet.Repair.to_map/1)
-    end
-  end
-
-  @impl true
-  def dequeue_repair(opts) when is_list(opts) do
-    path = Jsonl.repairs_path(opts)
-
-    with {:ok, repairs} <- Jsonl.read_repairs(path) do
-      repairs
-      |> Enum.filter(&(&1.status == :pending))
-      |> Enum.sort_by(& &1.created_at)
-      |> case do
-        [] ->
-          {:ok, nil}
-
-        [%Tet.Repair{} = repair | _] ->
-          running = %{repair | status: :running, started_at: DateTime.utc_now()}
-          remaining = Enum.reject(repairs, &(&1.id == repair.id)) ++ [running]
-
-          with {:ok, :ok} <- Jsonl.rewrite(path, remaining, &Tet.Repair.to_map/1) do
-            {:ok, running}
-          end
-      end
-    end
-  end
-
-  @impl true
-  def update_repair(repair_id, attrs, opts)
-      when is_binary(repair_id) and is_map(attrs) and is_list(opts) do
-    path = Jsonl.repairs_path(opts)
-
-    with {:ok, repairs} <- Jsonl.read_repairs(path) do
-      case Enum.find(repairs, &(&1.id == repair_id)) do
-        nil ->
-          {:error, :repair_not_found}
-
-        repair ->
-          case Tet.Store.Helpers.merge_repair_attrs(repair, attrs) do
-            {:ok, updated} ->
-              remaining = Enum.reject(repairs, &(&1.id == repair_id)) ++ [updated]
-
-              with {:ok, :ok} <- Jsonl.rewrite(path, remaining, &Tet.Repair.to_map/1) do
-                {:ok, updated}
-              end
-
-            {:error, reason} ->
-              {:error, reason}
-          end
-      end
-    end
-  end
-
-  @impl true
-  def list_repairs(opts) when is_list(opts) do
-    with {:ok, repairs} <- Jsonl.read_repairs(Jsonl.repairs_path(opts)) do
-      session_id = Keyword.get(opts, :session_id)
-      status = Keyword.get(opts, :status)
-
-      filtered =
-        repairs
-        |> Tet.Store.Helpers.maybe_filter_by_session(session_id)
-        |> Tet.Store.Helpers.maybe_filter_by_status(status)
-
-      {:ok, filtered}
-    end
-  end
-
-  # -- Workflows --
+  # ── Workflows ─────────────────────────────────────────────────────────
 
   @impl true
   def create_workflow(attrs) when is_map(attrs) do
-    with {:ok, workflow} <- Tet.Workflow.new(attrs), do: {:ok, workflow}
+    now = DateTime.utc_now()
+
+    attrs =
+      attrs
+      |> ensure_id()
+      |> Map.put_new(:created_at, now)
+      |> Map.put_new(:updated_at, now)
+      |> Map.put_new(:status, :running)
+
+    with {:ok, workflow} <- Tet.Workflow.new(attrs) do
+      workflow
+      |> Schema.Workflow.from_core_struct()
+      |> Schema.Workflow.changeset()
+      |> Repo.insert()
+      |> repo_result(&Schema.Workflow.to_core_struct/1)
+    end
   end
 
   @impl true
-  def update_workflow_status(_id, _status),
-    do: {:error, {:not_implemented, :update_workflow_status}}
+  def update_workflow_status(id, status) when is_binary(id) do
+    case Repo.get(Schema.Workflow, id) do
+      nil ->
+        {:error, :workflow_not_found}
+
+      row ->
+        now = DateTime.to_unix(DateTime.utc_now())
+
+        row
+        |> Schema.Workflow.changeset(%{status: to_string(status), updated_at: now})
+        |> Repo.update()
+        |> repo_result(&Schema.Workflow.to_core_struct/1)
+    end
+  end
 
   @impl true
-  def get_workflow(_id), do: {:error, {:not_implemented, :get_workflow}}
+  def get_workflow(id) when is_binary(id) do
+    case Repo.get(Schema.Workflow, id) do
+      nil -> {:error, :workflow_not_found}
+      row -> {:ok, Schema.Workflow.to_core_struct(row)}
+    end
+  end
 
   @impl true
-  def start_step(_attrs), do: {:error, {:not_implemented, :start_step}}
+  def list_pending_workflows do
+    workflows =
+      Schema.Workflow
+      |> where([w], w.status in ["running", "paused_for_approval"])
+      |> order_by([w], asc: w.updated_at)
+      |> Repo.all()
+      |> Enum.map(&Schema.Workflow.to_core_struct/1)
+
+    {:ok, workflows}
+  end
 
   @impl true
-  def commit_step(_id, _output), do: {:error, {:not_implemented, :commit_step}}
+  def claim_workflow(id, node, ttl) when is_binary(id) do
+    now = DateTime.utc_now()
+    expires_at = DateTime.add(now, ttl, :millisecond) |> DateTime.to_unix()
+
+    case Repo.get(Schema.Workflow, id) do
+      nil ->
+        {:error, :workflow_not_found}
+
+      row ->
+        row
+        |> Schema.Workflow.changeset(%{
+          claimed_by: to_string(node),
+          claim_expires_at: expires_at,
+          updated_at: DateTime.to_unix(now)
+        })
+        |> Repo.update()
+        |> case do
+          {:ok, _} -> {:ok, :claimed}
+          {:error, cs} -> {:error, {:changeset_error, cs}}
+        end
+    end
+  end
+
+  # ── Workflow Steps ────────────────────────────────────────────────────
 
   @impl true
-  def fail_step(_id, _error), do: {:error, {:not_implemented, :fail_step}}
+  def start_step(attrs) when is_map(attrs) do
+    attrs =
+      attrs
+      |> ensure_id()
+      |> Map.put_new(:status, :started)
+      |> Map.put_new(:started_at, DateTime.utc_now())
+
+    idem_key = Map.get(attrs, :idempotency_key)
+    workflow_id = Map.get(attrs, :workflow_id)
+
+    if idem_key && workflow_id do
+      case Repo.one(
+             from s in Schema.WorkflowStep,
+               where: s.workflow_id == ^workflow_id and s.idempotency_key == ^idem_key
+           ) do
+        nil -> insert_workflow_step(attrs)
+        existing -> {:ok, Schema.WorkflowStep.to_core_struct(existing)}
+      end
+    else
+      insert_workflow_step(attrs)
+    end
+  end
 
   @impl true
-  def cancel_step(_id), do: {:error, {:not_implemented, :cancel_step}}
+  def commit_step(id, output) when is_binary(id) do
+    update_step(id, %{
+      output: Schema.JsonField.encode(output),
+      status: "committed",
+      committed_at: DateTime.to_unix(DateTime.utc_now())
+    })
+  end
 
   @impl true
-  def list_pending_workflows, do: {:ok, []}
+  def fail_step(id, error) when is_binary(id) do
+    update_step(id, %{
+      error: Schema.JsonField.encode(error),
+      status: "failed",
+      failed_at: DateTime.to_unix(DateTime.utc_now())
+    })
+  end
+
+  @impl true
+  def cancel_step(id) when is_binary(id) do
+    update_step(id, %{
+      status: "cancelled",
+      cancelled_at: DateTime.to_unix(DateTime.utc_now())
+    })
+  end
 
   @impl true
   def list_steps(workflow_id) when is_binary(workflow_id), do: list_steps(workflow_id, [])
 
   @impl true
-  def list_steps(workflow_id, opts) when is_binary(workflow_id) and is_list(opts) do
-    with {:ok, steps} <- Jsonl.read_workflow_steps(Jsonl.workflow_steps_path(opts)) do
-      {:ok, Enum.filter(steps, &(&1.workflow_id == workflow_id))}
+  def list_steps(workflow_id, _opts) when is_binary(workflow_id) do
+    steps =
+      Schema.WorkflowStep
+      |> where([s], s.workflow_id == ^workflow_id)
+      |> order_by([s], asc: s.started_at)
+      |> Repo.all()
+      |> Enum.map(&Schema.WorkflowStep.to_core_struct/1)
+
+    {:ok, steps}
+  end
+
+  @impl true
+  def append_step(attrs, _opts) when is_map(attrs) do
+    attrs =
+      attrs
+      |> ensure_id()
+      |> Map.put_new(:status, :started)
+      |> Map.put_new(:started_at, DateTime.utc_now())
+
+    insert_workflow_step(attrs)
+  end
+
+  @impl true
+  def get_steps(session_id, _opts) when is_binary(session_id) do
+    # Workflow steps don't have session_id directly — join through workflows.
+    steps =
+      from(s in Schema.WorkflowStep,
+        join: w in Schema.Workflow,
+        on: s.workflow_id == w.id,
+        where: w.session_id == ^session_id,
+        order_by: [asc: s.started_at]
+      )
+      |> Repo.all()
+      |> Enum.map(&Schema.WorkflowStep.to_core_struct/1)
+
+    {:ok, steps}
+  end
+
+  # ── Error Log ─────────────────────────────────────────────────────────
+
+  @impl true
+  def log_error(attrs, _opts) when is_map(attrs) do
+    attrs = attrs |> ensure_id() |> Tet.Store.Helpers.ensure_created_at()
+
+    with {:ok, entry} <- Tet.ErrorLog.new(attrs) do
+      entry
+      |> Schema.ErrorLogEntry.from_core_struct()
+      |> Schema.ErrorLogEntry.changeset()
+      |> Repo.insert()
+      |> repo_result(&Schema.ErrorLogEntry.to_core_struct/1)
     end
   end
 
   @impl true
-  def claim_workflow(_id, _node, _ttl), do: {:ok, :claimed}
+  def list_errors(session_id, _opts) when is_binary(session_id) do
+    errors =
+      Schema.ErrorLogEntry
+      |> where([e], e.session_id == ^session_id)
+      |> order_by([e], desc: e.created_at)
+      |> Repo.all()
+      |> Enum.map(&Schema.ErrorLogEntry.to_core_struct/1)
 
-  # -- Findings --
+    {:ok, errors}
+  end
 
   @impl true
-  def record_finding(attrs, opts) when is_map(attrs) and is_list(opts) do
-    attrs = Tet.Store.Helpers.ensure_created_at(attrs)
-
-    with {:ok, finding} <- Tet.Finding.new(attrs) do
-      Jsonl.append_record(Jsonl.findings_path(opts), finding, &Tet.Finding.to_map/1)
+  def get_error(id, _opts) when is_binary(id) do
+    case Repo.get(Schema.ErrorLogEntry, id) do
+      nil -> {:error, :error_not_found}
+      row -> {:ok, Schema.ErrorLogEntry.to_core_struct(row)}
     end
   end
 
   @impl true
-  def get_finding(id, opts) when is_binary(id) and is_list(opts) do
-    Jsonl.find_by_id(Jsonl.findings_path(opts), &Jsonl.read_findings/1, id, :finding_not_found)
+  def resolve_error(error_id, _opts) when is_binary(error_id) do
+    now = DateTime.utc_now()
+
+    case Repo.get(Schema.ErrorLogEntry, error_id) do
+      nil ->
+        {:error, :error_not_found}
+
+      row ->
+        row
+        |> Schema.ErrorLogEntry.changeset(%{
+          status: "resolved",
+          resolved_at: DateTime.to_unix(now)
+        })
+        |> Repo.update()
+        |> repo_result(&Schema.ErrorLogEntry.to_core_struct/1)
+    end
   end
 
+  # ── Repair Queue ──────────────────────────────────────────────────────
+
   @impl true
-  def list_findings(session_id, opts) when is_binary(session_id) and is_list(opts) do
-    with {:ok, findings} <- Jsonl.read_findings(Jsonl.findings_path(opts)) do
-      {:ok, Enum.filter(findings, &(&1.session_id == session_id))}
+  def enqueue_repair(attrs, _opts) when is_map(attrs) do
+    attrs = attrs |> ensure_id() |> Tet.Store.Helpers.ensure_created_at()
+
+    with {:ok, repair} <- Tet.Repair.new(attrs) do
+      repair
+      |> Schema.Repair.from_core_struct()
+      |> Schema.Repair.changeset()
+      |> Repo.insert()
+      |> repo_result(&Schema.Repair.to_core_struct/1)
     end
   end
 
   @impl true
-  def update_finding(finding_id, attrs, opts)
-      when is_binary(finding_id) and is_map(attrs) and is_list(opts) do
-    path = Jsonl.findings_path(opts)
-
-    with {:ok, findings} <- Jsonl.read_findings(path) do
-      case Enum.find(findings, &(&1.id == finding_id)) do
+  def dequeue_repair(_opts) do
+    # Atomic: select oldest pending + update to running in one transaction.
+    Repo.transaction(fn ->
+      case Repo.one(
+             from r in Schema.Repair,
+               where: r.status == "pending",
+               order_by: [asc: r.created_at],
+               limit: 1,
+               lock: "FOR UPDATE"
+           ) do
         nil ->
-          {:error, :finding_not_found}
+          nil
 
-        finding ->
-          case Tet.Store.Helpers.merge_finding_attrs(finding, attrs) do
-            {:ok, updated} ->
-              remaining = Enum.reject(findings, &(&1.id == finding_id)) ++ [updated]
+        row ->
+          now = DateTime.to_unix(DateTime.utc_now())
 
-              with {:ok, :ok} <- Jsonl.rewrite(path, remaining, &Tet.Finding.to_map/1) do
-                {:ok, updated}
-              end
-
-            {:error, reason} ->
-              {:error, reason}
+          case row
+               |> Schema.Repair.changeset(%{status: "running", started_at: now})
+               |> Repo.update() do
+            {:ok, updated} -> Schema.Repair.to_core_struct(updated)
+            {:error, cs} -> Repo.rollback({:changeset_error, cs})
           end
       end
+    end)
+    |> case do
+      {:ok, nil} -> {:ok, nil}
+      {:ok, repair} -> {:ok, repair}
+      {:error, reason} -> {:error, reason}
     end
   end
 
-  # -- Persistent memory --
+  @impl true
+  def update_repair(repair_id, attrs, _opts)
+      when is_binary(repair_id) and is_map(attrs) do
+    case Repo.get(Schema.Repair, repair_id) do
+      nil ->
+        {:error, :repair_not_found}
+
+      row ->
+        core = Schema.Repair.to_core_struct(row)
+
+        with {:ok, updated} <- Tet.Store.Helpers.merge_repair_attrs(core, attrs) do
+          changeset_attrs = Schema.Repair.from_core_struct(updated)
+
+          row
+          |> Schema.Repair.changeset(changeset_attrs)
+          |> Repo.update()
+          |> repo_result(&Schema.Repair.to_core_struct/1)
+        end
+    end
+  end
 
   @impl true
-  def store_persistent_memory(attrs, opts) when is_map(attrs) and is_list(opts) do
-    attrs = Tet.Store.Helpers.ensure_created_at(attrs)
+  def list_repairs(opts) when is_list(opts) do
+    session_id = Keyword.get(opts, :session_id)
+    status = Keyword.get(opts, :status)
+
+    repairs =
+      Schema.Repair
+      |> then(fn q ->
+        if session_id, do: where(q, [r], r.session_id == ^session_id), else: q
+      end)
+      |> then(fn q ->
+        if status, do: where(q, [r], r.status == ^to_string(status)), else: q
+      end)
+      |> order_by([r], asc: r.created_at)
+      |> Repo.all()
+      |> Enum.map(&Schema.Repair.to_core_struct/1)
+
+    {:ok, repairs}
+  end
+
+  # ── Findings ──────────────────────────────────────────────────────────
+
+  @impl true
+  def record_finding(attrs, _opts) when is_map(attrs) do
+    attrs = attrs |> ensure_id() |> Tet.Store.Helpers.ensure_created_at()
+
+    with {:ok, finding} <- Tet.Finding.new(attrs) do
+      finding
+      |> Schema.Finding.from_core_struct()
+      |> Schema.Finding.changeset()
+      |> Repo.insert()
+      |> repo_result(&Schema.Finding.to_core_struct/1)
+    end
+  end
+
+  @impl true
+  def get_finding(id, _opts) when is_binary(id) do
+    case Repo.get(Schema.Finding, id) do
+      nil -> {:error, :finding_not_found}
+      row -> {:ok, Schema.Finding.to_core_struct(row)}
+    end
+  end
+
+  @impl true
+  def list_findings(session_id, _opts) when is_binary(session_id) do
+    findings =
+      Schema.Finding
+      |> where([f], f.session_id == ^session_id)
+      |> order_by([f], desc: f.created_at)
+      |> Repo.all()
+      |> Enum.map(&Schema.Finding.to_core_struct/1)
+
+    {:ok, findings}
+  end
+
+  @impl true
+  def update_finding(finding_id, attrs, _opts)
+      when is_binary(finding_id) and is_map(attrs) do
+    case Repo.get(Schema.Finding, finding_id) do
+      nil ->
+        {:error, :finding_not_found}
+
+      row ->
+        core = Schema.Finding.to_core_struct(row)
+
+        with {:ok, updated} <- Tet.Store.Helpers.merge_finding_attrs(core, attrs) do
+          changeset_attrs = Schema.Finding.from_core_struct(updated)
+
+          row
+          |> Schema.Finding.changeset(changeset_attrs)
+          |> Repo.update()
+          |> repo_result(&Schema.Finding.to_core_struct/1)
+        end
+    end
+  end
+
+  # ── Persistent Memory ────────────────────────────────────────────────
+
+  @impl true
+  def store_persistent_memory(attrs, _opts) when is_map(attrs) do
+    attrs = attrs |> ensure_id() |> Tet.Store.Helpers.ensure_created_at()
 
     with {:ok, entry} <- Tet.PersistentMemory.new(attrs) do
-      Jsonl.append_record(
-        Jsonl.persistent_memories_path(opts),
-        entry,
-        &Tet.PersistentMemory.to_map/1
-      )
+      entry
+      |> Schema.PersistentMemory.from_core_struct()
+      |> Schema.PersistentMemory.changeset()
+      |> Repo.insert()
+      |> repo_result(&Schema.PersistentMemory.to_core_struct/1)
     end
   end
 
   @impl true
-  def get_persistent_memory(id, opts) when is_binary(id) and is_list(opts) do
-    Jsonl.find_by_id(
-      Jsonl.persistent_memories_path(opts),
-      &Jsonl.read_persistent_memories/1,
-      id,
-      :persistent_memory_not_found
-    )
-  end
-
-  @impl true
-  def list_persistent_memories(session_id, opts)
-      when is_binary(session_id) and is_list(opts) do
-    with {:ok, entries} <- Jsonl.read_persistent_memories(Jsonl.persistent_memories_path(opts)) do
-      {:ok, Enum.filter(entries, &(&1.session_id == session_id))}
+  def get_persistent_memory(id, _opts) when is_binary(id) do
+    case Repo.get(Schema.PersistentMemory, id) do
+      nil -> {:error, :persistent_memory_not_found}
+      row -> {:ok, Schema.PersistentMemory.to_core_struct(row)}
     end
   end
 
-  # -- Project lessons --
+  @impl true
+  def list_persistent_memories(session_id, _opts) when is_binary(session_id) do
+    entries =
+      Schema.PersistentMemory
+      |> where([pm], pm.session_id == ^session_id)
+      |> order_by([pm], desc: pm.created_at)
+      |> Repo.all()
+      |> Enum.map(&Schema.PersistentMemory.to_core_struct/1)
+
+    {:ok, entries}
+  end
+
+  # ── Project Lessons ───────────────────────────────────────────────────
 
   @impl true
-  def store_project_lesson(attrs, opts) when is_map(attrs) and is_list(opts) do
-    attrs = Tet.Store.Helpers.ensure_created_at(attrs)
+  def store_project_lesson(attrs, _opts) when is_map(attrs) do
+    attrs = attrs |> ensure_id() |> Tet.Store.Helpers.ensure_created_at()
 
     with {:ok, lesson} <- Tet.ProjectLesson.new(attrs) do
-      Jsonl.append_record(
-        Jsonl.project_lessons_path(opts),
-        lesson,
-        &Tet.ProjectLesson.to_map/1
-      )
+      lesson
+      |> Schema.ProjectLesson.from_core_struct()
+      |> Schema.ProjectLesson.changeset()
+      |> Repo.insert()
+      |> repo_result(&Schema.ProjectLesson.to_core_struct/1)
     end
   end
 
   @impl true
-  def get_project_lesson(id, opts) when is_binary(id) and is_list(opts) do
-    Jsonl.find_by_id(
-      Jsonl.project_lessons_path(opts),
-      &Jsonl.read_project_lessons/1,
-      id,
-      :project_lesson_not_found
-    )
+  def get_project_lesson(id, _opts) when is_binary(id) do
+    case Repo.get(Schema.ProjectLesson, id) do
+      nil -> {:error, :project_lesson_not_found}
+      row -> {:ok, Schema.ProjectLesson.to_core_struct(row)}
+    end
   end
 
   @impl true
   def list_project_lessons(opts) when is_list(opts) do
-    with {:ok, lessons} <- Jsonl.read_project_lessons(Jsonl.project_lessons_path(opts)) do
-      category = Keyword.get(opts, :category)
-      {:ok, Tet.Store.Helpers.maybe_filter_lessons_by_category(lessons, category)}
-    end
+    category = Keyword.get(opts, :category)
+
+    lessons =
+      Schema.ProjectLesson
+      |> then(fn q ->
+        if category, do: where(q, [pl], pl.category == ^to_string(category)), else: q
+      end)
+      |> order_by([pl], desc: pl.created_at)
+      |> Repo.all()
+      |> Enum.map(&Schema.ProjectLesson.to_core_struct/1)
+
+    {:ok, lessons}
   end
 
-  # ── Repo helpers (private) ────────────────────────────────────────────
+  # ── Private helpers ───────────────────────────────────────────────────
 
   defp ensure_id(attrs) do
     case Tet.Entity.fetch_value(attrs, :id) do
@@ -821,6 +1060,29 @@ defmodule Tet.Store.SQLite do
     end)
   end
 
+  defp insert_workflow_step(attrs) do
+    with {:ok, step} <- Tet.WorkflowStep.new(attrs) do
+      step
+      |> Schema.WorkflowStep.from_core_struct()
+      |> Schema.WorkflowStep.changeset()
+      |> Repo.insert()
+      |> repo_result(&Schema.WorkflowStep.to_core_struct/1)
+    end
+  end
+
+  defp update_step(id, update_attrs) do
+    case Repo.get(Schema.WorkflowStep, id) do
+      nil ->
+        {:error, :step_not_found}
+
+      row ->
+        row
+        |> Schema.WorkflowStep.changeset(update_attrs)
+        |> Repo.update()
+        |> repo_result(&Schema.WorkflowStep.to_core_struct/1)
+    end
+  end
+
   defp prepare_session_update(attrs) do
     now_unix = DateTime.to_unix(DateTime.utc_now())
 
@@ -829,6 +1091,16 @@ defmodule Tet.Store.SQLite do
     |> maybe_encode_json(:metadata)
     |> coerce_timestamps([:started_at, :updated_at])
     |> Map.put(:updated_at, now_unix)
+  end
+
+  defp prepare_tool_run_update(attrs) do
+    attrs
+    |> atomify_to_string([:status, :read_or_write, :block_reason])
+    |> maybe_encode_json(:args)
+    |> maybe_encode_json(:result)
+    |> maybe_encode_json(:changed_files)
+    |> maybe_encode_json(:metadata)
+    |> coerce_timestamps([:started_at, :finished_at])
   end
 
   defp atomify_to_string(attrs, keys) do
@@ -843,6 +1115,7 @@ defmodule Tet.Store.SQLite do
   defp maybe_encode_json(attrs, key) do
     case Map.get(attrs, key) do
       v when is_map(v) -> Map.put(attrs, key, Schema.JsonField.encode(v))
+      v when is_list(v) -> Map.put(attrs, key, Schema.JsonField.encode(v))
       _ -> attrs
     end
   end
@@ -870,5 +1143,18 @@ defmodule Tet.Store.SQLite do
       nil -> Map.put(attrs, key, DateTime.to_unix(DateTime.utc_now()))
       _ -> attrs
     end
+  end
+
+  defp query_schema_version do
+    case Ecto.Adapters.SQL.query(Repo, "PRAGMA schema_version;", [], log: false) do
+      {:ok, %{rows: [[v]]}} -> v
+      _ -> nil
+    end
+  end
+
+  defp app_started? do
+    Enum.any?(Application.started_applications(), fn {app, _, _} ->
+      app == :tet_store_sqlite
+    end)
   end
 end
