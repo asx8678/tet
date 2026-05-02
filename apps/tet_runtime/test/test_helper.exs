@@ -125,6 +125,10 @@ end
 
 ExUnit.start()
 
-# Configure Ecto Sandbox for SQLite Repo test isolation.
-# Manual mode: each test that needs the DB must explicitly checkout.
-Ecto.Adapters.SQL.Sandbox.mode(Tet.Store.SQLite.Repo, :manual)
+# Ensure SQLite store is started with a fresh temp DB for runtime tests.
+db = Path.join(System.tmp_dir!(), "tet_runtime_test.sqlite")
+for ext <- ["", "-shm", "-wal"], do: File.rm(db <> ext)
+
+Application.put_env(:tet_store_sqlite, :database_path, db)
+Application.put_env(:tet_store_sqlite, Tet.Store.SQLite.Repo, database: db, pool_size: 1)
+{:ok, _} = Application.ensure_all_started(:tet_store_sqlite)

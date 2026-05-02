@@ -7,5 +7,4 @@ config :tet_store_sqlite,
 
 config :tet_store_sqlite, Tet.Store.SQLite.Repo,
   database: Path.join(System.tmp_dir!(), "tet_test.sqlite"),
-  pool: Ecto.Adapters.SQL.Sandbox,
   pool_size: 1
