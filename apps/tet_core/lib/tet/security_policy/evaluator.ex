@@ -554,7 +554,7 @@ defmodule Tet.SecurityPolicy.Evaluator do
   # --- Private: workspace path check ---
 
   defp path_under_workspace?(path, workspace_root) do
-    root = workspace_root |> Path.expand() |> normalise_path()
+    root = workspace_root |> Path.expand() |> canonicalise_path()
 
     expanded =
       if Path.type(path) == :absolute do
@@ -562,7 +562,7 @@ defmodule Tet.SecurityPolicy.Evaluator do
       else
         Path.expand(path, root)
       end
-      |> normalise_path()
+      |> canonicalise_path()
 
     expanded == root or String.starts_with?(expanded, root <> "/")
   end
