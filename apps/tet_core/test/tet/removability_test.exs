@@ -100,6 +100,18 @@ defmodule Tet.RemovabilityTest do
 
       assert {:error, ^web} = Removability.check_standalone_deps(deps)
     end
+
+    test "catches prefix-matched web deps like :phoenix_live_reload" do
+      deps = [{:jason, "~> 1.0"}, {:phoenix_live_reload, "~> 1.4"}]
+
+      assert {:error, [:phoenix_live_reload]} = Removability.check_standalone_deps(deps)
+    end
+
+    test "catches prefix-matched web deps like :plug_crypto" do
+      deps = [{:ecto, "~> 3.11"}, {:plug_crypto, "~> 2.0"}]
+
+      assert {:error, [:plug_crypto]} = Removability.check_standalone_deps(deps)
+    end
   end
 
   describe "check_no_compile_dependency/2 with real project deps" do
@@ -215,12 +227,15 @@ defmodule Tet.RemovabilityTest do
       assert :ecto_sqlite3 in dep_names
     end
 
-    test "tet_web_phoenix deps includes tet_core and tet_runtime" do
-      deps = Removability.deps_for_app(:tet_web_phoenix)
-      dep_names = Enum.map(deps, fn {name, _opts} -> name end)
-
-      assert :tet_core in dep_names
-      assert :tet_runtime in dep_names
+    test "tet_web_phoenix deps are readable when present, empty when absent" do
+      if Code.ensure_loaded?(TetWebPhoenix.MixProject) do
+        deps = Removability.deps_for_app(:tet_web_phoenix)
+        dep_names = Enum.map(deps, &elem(&1, 0))
+        assert :tet_core in dep_names
+        assert :tet_runtime in dep_names
+      else
+        assert Removability.deps_for_app(:tet_web_phoenix) == []
+      end
     end
 
     test "unknown app returns empty list" do

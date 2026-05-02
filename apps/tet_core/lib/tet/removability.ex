@@ -31,6 +31,16 @@ defmodule Tet.Removability do
     :websock_adapter
   ]
 
+  @web_dep_prefixes [
+    "bandit",
+    "cowboy",
+    "phoenix",
+    "plug",
+    "tet_web",
+    "thousand_island",
+    "websock"
+  ]
+
   @doc """
   Returns the list of web/Phoenix dependency names that must never appear
   in standalone (non-web) apps.
@@ -82,8 +92,8 @@ defmodule Tet.Removability do
     violations =
       deps_list
       |> Enum.filter(fn
-        {app, _} when is_atom(app) -> app in @web_deps
-        {app, _, _} when is_atom(app) -> app in @web_deps
+        {app, _} when is_atom(app) -> web_dep?(app)
+        {app, _, _} when is_atom(app) -> web_dep?(app)
         _ -> false
       end)
       |> Enum.map(&elem(&1, 0))
@@ -156,6 +166,12 @@ defmodule Tet.Removability do
     else
       []
     end
+  end
+
+  # Returns true when the atom is a known web dep or matches a web dep prefix.
+  defp web_dep?(app) when is_atom(app) do
+    name = Atom.to_string(app)
+    app in @web_deps or Enum.any?(@web_dep_prefixes, &String.starts_with?(name, &1))
   end
 
   # Matches a dependency tuple against a target atom.
