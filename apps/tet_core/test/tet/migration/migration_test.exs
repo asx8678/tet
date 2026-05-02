@@ -475,6 +475,25 @@ defmodule Tet.MigrationTest do
       # The raw secret value must NOT appear in the report
       refute String.contains?(report, "sk-abc123ABCDEFGHIJ")
     end
+
+    test "redacts secret-looking values across multiple patterns in skipped items" do
+      {:ok, m} = Migration.new(@basic_attrs)
+
+      secrets = %{
+        "unknown_pk" => "pk-live-SECRET1234567890abc",
+        "unknown_pat" => "github_pat_AABBCCDDEE1234567890FF"
+      }
+
+      m = Migration.analyze(m, Map.merge(@legacy_config, secrets))
+      report = Migration.report(m)
+
+      # Full secrets must NOT leak into the report
+      refute String.contains?(report, "pk-live-SECRET1234567890abc")
+      refute String.contains?(report, "github_pat_AABBCCDDEE1234567890FF")
+      # Key names should still be visible for context
+      assert String.contains?(report, "unknown_pk")
+      assert String.contains?(report, "unknown_pat")
+    end
   end
 
   describe "execute/1" do

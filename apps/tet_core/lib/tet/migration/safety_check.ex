@@ -151,43 +151,11 @@ defmodule Tet.Migration.SafetyCheck do
   @doc """
   Creates a backup of the current target config file.
 
-  Creates the backup directory if needed, copies the target file to the
-  backup path. Will not overwrite an existing backup unless `force: true`
-  is set on the migration struct.
-
-  Returns `{:ok, migration}` on success or `{:error, reason}` on failure.
+  Delegates to `Tet.Migration.create_backup/1` — single source of truth
+  for backup creation logic.
   """
   @spec create_backup(Migration.t()) :: {:ok, Migration.t()} | {:error, term()}
-  def create_backup(%Migration{target_path: nil}), do: {:error, :no_target_path}
-  def create_backup(%Migration{backup_path: nil}), do: {:error, :no_backup_path}
-
-  def create_backup(
-        %Migration{target_path: target, backup_path: backup, force: force} = migration
-      ) do
-    cond do
-      not File.exists?(target) ->
-        # No target file yet — fresh install, nothing to back up
-        {:ok, migration}
-
-      File.exists?(backup) and not force ->
-        {:error, {:backup_already_exists, backup}}
-
-      true ->
-        backup
-        |> Path.dirname()
-        |> File.mkdir_p()
-        |> case do
-          :ok ->
-            case File.cp(target, backup) do
-              :ok -> {:ok, migration}
-              {:error, reason} -> {:error, {:backup_copy_failed, reason}}
-            end
-
-          {:error, reason} ->
-            {:error, {:backup_dir_failed, reason}}
-        end
-    end
-  end
+  defdelegate create_backup(migration), to: Tet.Migration
 
   # ── Warnings ─────────────────────────────────────────────────────────────
 

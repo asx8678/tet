@@ -420,5 +420,28 @@ defmodule Tet.Migration.SafetyCheckTest do
       m = build_migration(mode: :invalid)
       refute SafetyCheck.safe_to_execute?(m)
     end
+
+    test "false when plan has manual-review warnings from unknown keys" do
+      tmp_path =
+        System.tmp_dir!()
+        |> Path.join("migration_manual_review_#{:erlang.unique_integer([:positive])}.bak")
+
+      File.write!(tmp_path, "backup data")
+
+      try do
+        m =
+          build_migration(
+            mode: :execute,
+            backup_path: tmp_path,
+            items: [%{key: "model", value: "gpt-4"}],
+            warnings: ["Unknown key 'unknown_provider_key' requires manual review"],
+            raw_warnings: []
+          )
+
+        refute SafetyCheck.safe_to_execute?(m)
+      after
+        File.rm(tmp_path)
+      end
+    end
   end
 end

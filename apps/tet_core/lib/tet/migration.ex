@@ -382,18 +382,22 @@ defmodule Tet.Migration do
     end
   end
 
-  defp redact_value(key, value) do
-    if Tet.Redactor.sensitive_key?(key) do
-      redact_sensitive(value)
-    else
-      value
-    end
+  defp redact_value(key, value) when is_map(value) do
+    Map.new(value, fn {k, v} -> {k, redact_value(k, v)} end)
   end
 
-  defp looks_like_secret?(value) when is_binary(value) do
-    String.match?(value, ~r/^(sk-|Bearer |ghp_|gho_|AKIA)[A-Za-z0-9]/) or
-      (String.length(value) > 20 and Regex.match?(~r/^[A-Za-z0-9+\/]{20,}={0,2}$/, value))
+  defp redact_value(key, value) when is_list(value) do
+    Enum.map(value, fn v -> redact_value(key, v) end)
   end
+
+  defp redact_value(_key, value), do: value
+
+  defp looks_like_secret?(value) when is_binary(value) do
+    String.match?(value, ~r/^(sk-|pk-|Bearer |token-|key-|ghp_|gho_|github_pat_|AKIA)/i) or
+      (String.length(value) > 20 and String.match?(value, ~r/^[A-Za-z0-9_\-]{20,}$/))
+  end
+
+  defp looks_like_secret?(_), do: false
 
   defp redact_sensitive(value) when is_binary(value) do
     Tet.Secrets.partial_preview(value)
