@@ -1,530 +1,301 @@
 defmodule Tet.Store.SQLite do
   @moduledoc """
-  Default standalone store boundary.
+  Default standalone store boundary backed by Ecto/SQLite3.
 
-  This phase keeps the adapter dependency-free and persists chat messages,
-  autosave checkpoints, runtime timeline events, Prompt Lab history entries,
-  artifacts, checkpoints, error log entries, and repair queue entries
-  as JSON Lines. The app/module name remains the default store boundary
-  reserved by the scaffold; a later storage ticket can replace the file format
-  with true SQLite without changing callers of `Tet.Store`.
+  Core callbacks (workspace, session, message, event, transaction) use
+  `Tet.Store.SQLite.Repo` and Ecto schemas. Non-core callbacks (autosaves,
+  prompt history, artifacts, checkpoints, errors, repairs, workflows,
+  findings, persistent memories, project lessons) remain JSONL-backed
+  until tet-3fp rewrites them.
   """
 
   @behaviour Tet.Store
 
-  @default_path ".tet/messages.jsonl"
-  @default_autosave_filename "autosaves.jsonl"
-  @default_prompt_history_filename "prompt_history.jsonl"
-  @default_events_path ".tet/events.jsonl"
-  @default_artifacts_path ".tet/artifacts.jsonl"
-  @default_checkpoints_path ".tet/checkpoints.jsonl"
-  @default_error_log_path ".tet/error_log.jsonl"
-  @default_workflow_steps_path ".tet/workflow_steps.jsonl"
-  @default_repairs_path ".tet/repairs.jsonl"
-  @default_findings_path ".tet/findings.jsonl"
-  @default_persistent_memories_path ".tet/persistent_memories.jsonl"
-  @default_project_lessons_path ".tet/project_lessons.jsonl"
+  import Ecto.Query
+
+  alias Tet.Store.SQLite.Jsonl
+  alias Tet.Store.SQLite.Repo
+  alias Tet.Store.SQLite.Schema
+
+  # ── Boundary & Health ─────────────────────────────────────────────────
 
   @impl true
   def boundary do
+    defaults = Jsonl.defaults()
+
     %{
       application: :tet_store_sqlite,
       adapter: __MODULE__,
       status: :local_jsonl,
-      path: @default_path,
-      autosave_path: default_autosave_path(@default_path),
-      events_path: derive_events_path(@default_path),
-      prompt_history_path: default_prompt_history_path(@default_path),
+      path: defaults.path,
+      autosave_path: defaults.autosave_path,
+      events_path: defaults.events_path,
+      prompt_history_path: defaults.prompt_history_path,
       format: :jsonl
     }
   end
 
   @impl true
   def health(opts) when is_list(opts) do
-    path = path(opts)
-    autosave_path = autosave_path(opts)
-    events_path = events_path(opts)
-    prompt_history_path = prompt_history_path(opts)
+    path = Jsonl.path(opts)
     directory = Path.dirname(path)
     directory_existed? = File.dir?(directory)
 
     result =
       with :ok <- File.mkdir_p(directory),
-           :ok <- assert_readable(path),
-           :ok <- assert_writable(directory) do
+           :ok <- Jsonl.assert_readable(path),
+           :ok <- Jsonl.assert_writable(directory) do
         {:ok,
          boundary()
          |> Map.merge(%{
            path: path,
-           autosave_path: autosave_path,
-           events_path: events_path,
-           prompt_history_path: prompt_history_path,
+           autosave_path: Jsonl.autosave_path(opts),
+           events_path: Jsonl.events_path(opts),
+           prompt_history_path: Jsonl.prompt_history_path(opts),
            directory: directory,
            status: :ok,
            readable?: true,
            writable?: true,
-           started?: started?()
+           started?: Jsonl.started?()
          })}
       else
         {:error, reason} -> {:error, {:store_unhealthy, path, reason}}
       end
 
-    cleanup_created_directory(directory, directory_existed?)
+    Jsonl.cleanup_created_directory(directory, directory_existed?)
     result
   end
 
-  # -- Compatibility callbacks (scaffold-era) --
+  # ── Transaction ────────────────────────────────────────────────────────
 
   @impl true
-  def save_message(%Tet.Message{} = message, opts) when is_list(opts) do
-    path = path(opts)
-    line = message |> Tet.Message.to_map() |> encode_json!()
+  def transaction(fun) when is_function(fun, 0) do
+    Repo.transaction(fn ->
+      case fun.() do
+        {:ok, value} -> value
+        {:error, reason} -> Repo.rollback(reason)
+        value -> value
+      end
+    end)
+  end
 
-    with :ok <- File.mkdir_p(Path.dirname(path)),
-         :ok <- File.write(path, [line, "\n"], [:append]) do
-      {:ok, message}
+  # ── Workspace (Repo-backed) ───────────────────────────────────────────
+
+  @impl true
+  def create_workspace(attrs) when is_map(attrs) do
+    now = DateTime.utc_now()
+
+    attrs =
+      attrs
+      |> ensure_id()
+      |> Map.put_new(:created_at, now)
+      |> Map.put_new(:updated_at, now)
+
+    with {:ok, workspace} <- Tet.Workspace.new(attrs) do
+      workspace
+      |> Schema.Workspace.from_core_struct()
+      |> Schema.Workspace.changeset()
+      |> Repo.insert()
+      |> repo_result(&Schema.Workspace.to_core_struct/1)
     end
   end
 
   @impl true
-  def list_messages(session_id, opts) when is_binary(session_id) and is_list(opts) do
-    with {:ok, messages} <- read_messages(path(opts)) do
-      {:ok, Enum.filter(messages, &(&1.session_id == session_id))}
+  def get_workspace(id) when is_binary(id) do
+    case Repo.get(Schema.Workspace, id) do
+      nil -> {:error, :workspace_not_found}
+      row -> {:ok, Schema.Workspace.to_core_struct(row)}
+    end
+  end
+
+  @impl true
+  def set_trust(id, trust_state) when is_binary(id) do
+    case Repo.get(Schema.Workspace, id) do
+      nil ->
+        {:error, :workspace_not_found}
+
+      row ->
+        row
+        |> Schema.Workspace.changeset(%{
+          trust_state: to_string(trust_state),
+          updated_at: DateTime.to_unix(DateTime.utc_now())
+        })
+        |> Repo.update()
+        |> repo_result(&Schema.Workspace.to_core_struct/1)
+    end
+  end
+
+  # ── Session (Repo-backed) ─────────────────────────────────────────────
+
+  @impl true
+  def create_session(attrs) when is_map(attrs) do
+    now = DateTime.utc_now()
+
+    attrs =
+      attrs
+      |> ensure_id()
+      |> ensure_short_id()
+      |> Map.put_new(:created_at, DateTime.to_iso8601(now))
+      |> Map.put_new(:updated_at, DateTime.to_iso8601(now))
+      |> Map.put_new(:mode, :chat)
+      |> Map.put_new(:status, :idle)
+
+    with {:ok, session} <- Tet.Session.new(attrs) do
+      session
+      |> Schema.Session.from_core_struct()
+      |> Schema.Session.changeset()
+      |> Repo.insert()
+      |> repo_result(&Schema.Session.to_core_struct/1)
+    end
+  end
+
+  @impl true
+  def update_session(id, attrs) when is_binary(id) and is_map(attrs) do
+    case Repo.get(Schema.Session, id) do
+      nil ->
+        {:error, :session_not_found}
+
+      row ->
+        row
+        |> Schema.Session.changeset(prepare_session_update(attrs))
+        |> Repo.update()
+        |> repo_result(&Schema.Session.to_core_struct/1)
+    end
+  end
+
+  @impl true
+  def get_session(id) when is_binary(id) do
+    case Repo.get(Schema.Session, id) do
+      nil -> {:error, :session_not_found}
+      row -> {:ok, Schema.Session.to_core_struct(row)}
     end
   end
 
   @impl true
   def list_sessions(opts) when is_list(opts) do
-    with {:ok, messages} <- read_messages(path(opts)) do
-      sessions =
-        messages
-        |> Enum.group_by(& &1.session_id)
-        |> Enum.map(fn {session_id, session_messages} ->
-          {:ok, session} = Tet.Session.from_messages(session_id, session_messages)
-          session
-        end)
-        |> Enum.sort(&session_newer_or_equal?/2)
+    sessions =
+      Schema.Session
+      |> order_by([s], desc: s.created_at)
+      |> Repo.all()
+      |> Enum.map(&Schema.Session.to_core_struct/1)
 
-      {:ok, sessions}
-    end
+    {:ok, sessions}
   end
 
   @impl true
   def list_sessions(workspace_id) when is_binary(workspace_id) do
-    _workspace_id = workspace_id
-    {:error, {:not_implemented, :list_sessions}}
+    sessions =
+      Schema.Session
+      |> where([s], s.workspace_id == ^workspace_id)
+      |> order_by([s], desc: s.created_at)
+      |> Repo.all()
+      |> Enum.map(&Schema.Session.to_core_struct/1)
+
+    {:ok, sessions}
   end
 
   @impl true
-  def fetch_session(session_id, opts) when is_binary(session_id) and is_list(opts) do
-    with {:ok, messages} <- list_messages(session_id, opts) do
-      Tet.Session.from_messages(session_id, messages)
+  def list_sessions_with_opts(opts) when is_list(opts), do: list_sessions(opts)
+
+  @impl true
+  def fetch_session(session_id, _opts) when is_binary(session_id) do
+    case Repo.get(Schema.Session, session_id) do
+      nil -> {:error, :session_not_found}
+      row -> {:ok, Schema.Session.to_core_struct(row)}
     end
   end
 
-  @impl true
-  def save_autosave(%Tet.Autosave{} = autosave, opts) when is_list(opts) do
-    path = autosave_path(opts)
-    line = autosave |> Tet.Autosave.to_map() |> encode_json!()
-
-    with :ok <- File.mkdir_p(Path.dirname(path)),
-         :ok <- File.write(path, [line, "\n"], [:append]) do
-      {:ok, autosave}
-    end
-  end
-
-  @impl true
-  def load_autosave(session_id, opts) when is_binary(session_id) and is_list(opts) do
-    with {:ok, autosaves} <- read_autosaves(autosave_path(opts)) do
-      autosaves
-      |> Enum.filter(&(&1.session_id == session_id))
-      |> Enum.sort(&checkpoint_newer_or_equal?/2)
-      |> case do
-        [] -> {:error, :autosave_not_found}
-        [latest | _rest] -> {:ok, latest}
-      end
-    end
-  end
-
-  @impl true
-  def list_autosaves(opts) when is_list(opts) do
-    with {:ok, autosaves} <- read_autosaves(autosave_path(opts)) do
-      {:ok, Enum.sort(autosaves, &checkpoint_newer_or_equal?/2)}
-    end
-  end
-
-  @impl true
-  def save_event(%Tet.Event{} = event, opts) when is_list(opts) do
-    path = events_path(opts)
-
-    with {:ok, event} <- assign_event_sequence(event, path),
-         line = event |> Tet.Event.to_map() |> encode_json!(),
-         :ok <- File.mkdir_p(Path.dirname(path)),
-         :ok <- File.write(path, [line, "\n"], [:append]) do
-      {:ok, event}
-    end
-  end
-
-  @impl true
-  def list_events(session_id, opts)
-      when (is_binary(session_id) or is_nil(session_id)) and is_list(opts) do
-    with {:ok, events} <- read_events(events_path(opts)) do
-      {:ok, Enum.filter(events, &event_matches_session?(&1, session_id))}
-    end
-  end
-
-  @impl true
-  def save_prompt_history(%Tet.PromptLab.HistoryEntry{} = history, opts) when is_list(opts) do
-    path = prompt_history_path(opts)
-    line = history |> Tet.PromptLab.HistoryEntry.to_map() |> encode_json!()
-
-    with :ok <- File.mkdir_p(Path.dirname(path)),
-         :ok <- File.write(path, [line, "\n"], [:append]) do
-      {:ok, history}
-    end
-  end
-
-  @impl true
-  def list_prompt_history(opts) when is_list(opts) do
-    with {:ok, history} <- read_prompt_history(prompt_history_path(opts)) do
-      {:ok, Enum.sort(history, &history_newer_or_equal?/2)}
-    end
-  end
-
-  @impl true
-  def fetch_prompt_history(history_id, opts) when is_binary(history_id) and is_list(opts) do
-    with {:ok, history} <- read_prompt_history(prompt_history_path(opts)) do
-      history
-      |> Enum.find(&(&1.id == history_id))
-      |> case do
-        nil -> {:error, :prompt_history_not_found}
-        entry -> {:ok, entry}
-      end
-    end
-  end
-
-  # -- BD-0034: Event Log --
-
-  @impl true
-  def append_event(attrs, opts) when is_map(attrs) and is_list(opts) do
-    path = events_path(opts)
-
-    with {:ok, event} <- Tet.Event.new(attrs),
-         {:ok, event} <- assign_event_sequence(event, path),
-         line = event |> Tet.Event.to_map() |> encode_json!(),
-         :ok <- File.mkdir_p(Path.dirname(path)),
-         :ok <- File.write(path, [line, "\n"], [:append]) do
-      {:ok, event}
-    end
-  end
-
-  @impl true
-  def get_event(event_id, opts) when is_binary(event_id) and is_list(opts) do
-    with {:ok, events} <- read_events(events_path(opts)) do
-      events
-      |> Enum.find(&(&1.id == event_id))
-      |> case do
-        nil -> {:error, :event_not_found}
-        event -> {:ok, event}
-      end
-    end
-  end
-
-  # -- BD-0034: Artifacts --
-
-  @impl true
-  def create_artifact(attrs, opts) when is_map(attrs) and is_list(opts) do
-    path = artifacts_path(opts)
-
-    with {:ok, artifact} <- Tet.ShellPolicy.Artifact.new(attrs),
-         line = artifact |> Tet.ShellPolicy.Artifact.to_map() |> encode_json!(),
-         :ok <- File.mkdir_p(Path.dirname(path)),
-         :ok <- File.write(path, [line, "\n"], [:append]) do
-      {:ok, artifact}
-    end
-  end
-
-  @impl true
-  def get_artifact(artifact_id, opts) when is_binary(artifact_id) and is_list(opts) do
-    path = artifacts_path(opts)
-
-    with {:ok, artifacts} <- read_artifacts(path) do
-      artifacts
-      |> Enum.find(&(&1.id == artifact_id))
-      |> case do
-        nil -> {:error, :artifact_not_found}
-        artifact -> {:ok, artifact}
-      end
-    end
-  end
-
-  @impl true
-  def list_artifacts(session_id, opts) when is_binary(session_id) and is_list(opts) do
-    path = artifacts_path(opts)
-
-    with {:ok, artifacts} <- read_artifacts(path) do
-      task_id = Keyword.get(opts, :task_id)
-
-      filtered =
-        artifacts
-        |> Enum.filter(fn artifact ->
-          match_session?(artifact, session_id) and match_task?(artifact, task_id)
-        end)
-
-      {:ok, filtered}
-    end
-  end
-
-  # -- BD-0034: Checkpoints --
-
-  @impl true
-  def save_checkpoint(attrs, opts) when is_map(attrs) and is_list(opts) do
-    path = checkpoints_path(opts)
-
-    with {:ok, checkpoint} <- Tet.Checkpoint.new(attrs),
-         line = checkpoint |> Tet.Checkpoint.to_map() |> encode_json!(),
-         :ok <- File.mkdir_p(Path.dirname(path)),
-         :ok <- File.write(path, [line, "\n"], [:append]) do
-      {:ok, checkpoint}
-    end
-  end
-
-  @impl true
-  def get_checkpoint(checkpoint_id, opts) when is_binary(checkpoint_id) and is_list(opts) do
-    with {:ok, checkpoints} <- read_checkpoints(checkpoints_path(opts)) do
-      checkpoints
-      |> Enum.find(&(&1.id == checkpoint_id))
-      |> case do
-        nil -> {:error, :checkpoint_not_found}
-        checkpoint -> {:ok, checkpoint}
-      end
-    end
-  end
-
-  @impl true
-  def list_checkpoints(session_id, opts) when is_binary(session_id) and is_list(opts) do
-    with {:ok, checkpoints} <- read_checkpoints(checkpoints_path(opts)) do
-      {:ok, Enum.filter(checkpoints, &(&1.session_id == session_id))}
-    end
-  end
-
-  @impl true
-  def delete_checkpoint(checkpoint_id, opts) when is_binary(checkpoint_id) and is_list(opts) do
-    path = checkpoints_path(opts)
-
-    with {:ok, checkpoints} <- read_checkpoints(path),
-         remaining <- Enum.reject(checkpoints, &(&1.id == checkpoint_id)) do
-      rewrite_jsonl(path, remaining, &Tet.Checkpoint.to_map/1)
-    end
-  end
-
-  # -- BD-0034: Workflow Steps --
-
-  @impl true
-  def append_step(attrs, opts) when is_map(attrs) and is_list(opts) do
-    path = workflow_steps_path(opts)
-
-    with {:ok, step} <- Tet.WorkflowStep.new(attrs),
-         line = step |> Tet.WorkflowStep.to_map() |> encode_json!(),
-         :ok <- File.mkdir_p(Path.dirname(path)),
-         :ok <- File.write(path, [line, "\n"], [:append]) do
-      {:ok, step}
-    end
-  end
-
-  @impl true
-  def get_steps(session_id, opts) when is_binary(session_id) and is_list(opts) do
-    with {:ok, steps} <- read_workflow_steps(workflow_steps_path(opts)) do
-      {:ok, Enum.filter(steps, &(&1.session_id == session_id))}
-    end
-  end
-
-  # -- BD-0034: Error Log --
-
-  @impl true
-  def log_error(attrs, opts) when is_map(attrs) and is_list(opts) do
-    attrs = Tet.Store.Helpers.ensure_created_at(attrs)
-    path = error_log_path(opts)
-
-    with {:ok, error_entry} <- Tet.ErrorLog.new(attrs),
-         line = error_entry |> Tet.ErrorLog.to_map() |> encode_json!(),
-         :ok <- File.mkdir_p(Path.dirname(path)),
-         :ok <- File.write(path, [line, "\n"], [:append]) do
-      {:ok, error_entry}
-    end
-  end
-
-  @impl true
-  def list_errors(session_id, opts) when is_binary(session_id) and is_list(opts) do
-    with {:ok, errors} <- read_error_log(error_log_path(opts)) do
-      {:ok, Enum.filter(errors, &(&1.session_id == session_id))}
-    end
-  end
-
-  @impl true
-  def get_error(error_id, opts) when is_binary(error_id) and is_list(opts) do
-    with {:ok, errors} <- read_error_log(error_log_path(opts)) do
-      errors
-      |> Enum.find(&(&1.id == error_id))
-      |> case do
-        nil -> {:error, :error_not_found}
-        error_entry -> {:ok, error_entry}
-      end
-    end
-  end
-
-  @impl true
-  def resolve_error(error_id, opts) when is_binary(error_id) and is_list(opts) do
-    path = error_log_path(opts)
-
-    with {:ok, errors} <- read_error_log(path) do
-      errors
-      |> Enum.find(&(&1.id == error_id))
-      |> case do
-        nil ->
-          {:error, :error_not_found}
-
-        error_entry ->
-          resolved_at = DateTime.utc_now()
-          resolved = Tet.ErrorLog.resolve(error_entry, resolved_at)
-          remaining = Enum.reject(errors, &(&1.id == error_id)) ++ [resolved]
-
-          case rewrite_jsonl(path, remaining, &Tet.ErrorLog.to_map/1) do
-            {:ok, :ok} -> {:ok, resolved}
-            {:error, reason} -> {:error, {:resolve_error_write_failed, reason}}
-          end
-      end
-    end
-  end
-
-  # -- BD-0034: Repair Queue --
-
-  @impl true
-  def enqueue_repair(attrs, opts) when is_map(attrs) and is_list(opts) do
-    attrs = Tet.Store.Helpers.ensure_created_at(attrs)
-    path = repairs_path(opts)
-
-    with {:ok, repair} <- Tet.Repair.new(attrs),
-         line = repair |> Tet.Repair.to_map() |> encode_json!(),
-         :ok <- File.mkdir_p(Path.dirname(path)),
-         :ok <- File.write(path, [line, "\n"], [:append]) do
-      {:ok, repair}
-    end
-  end
-
-  @impl true
-  def dequeue_repair(opts) when is_list(opts) do
-    path = repairs_path(opts)
-
-    with {:ok, repairs} <- read_repairs(path) do
-      repairs
-      |> Enum.filter(&(&1.status == :pending))
-      |> Enum.sort_by(& &1.created_at)
-      |> case do
-        [] ->
-          {:ok, nil}
-
-        [%Tet.Repair{} = repair | _rest] ->
-          now = DateTime.utc_now()
-          running = %{repair | status: :running, started_at: now}
-          remaining = Enum.reject(repairs, &(&1.id == repair.id)) ++ [running]
-
-          with {:ok, :ok} <- rewrite_jsonl(path, remaining, &Tet.Repair.to_map/1) do
-            {:ok, running}
-          end
-      end
-    end
-  end
-
-  @impl true
-  def update_repair(repair_id, attrs, opts)
-      when is_binary(repair_id) and is_map(attrs) and is_list(opts) do
-    path = repairs_path(opts)
-
-    with {:ok, repairs} <- read_repairs(path) do
-      repairs
-      |> Enum.find(&(&1.id == repair_id))
-      |> case do
-        nil ->
-          {:error, :repair_not_found}
-
-        repair ->
-          case Tet.Store.Helpers.merge_repair_attrs(repair, attrs) do
-            {:ok, updated} ->
-              remaining = Enum.reject(repairs, &(&1.id == repair_id)) ++ [updated]
-
-              with {:ok, :ok} <- rewrite_jsonl(path, remaining, &Tet.Repair.to_map/1) do
-                {:ok, updated}
-              end
-
-            {:error, reason} ->
-              {:error, reason}
-          end
-      end
-    end
-  end
-
-  @impl true
-  def list_repairs(opts) when is_list(opts) do
-    with {:ok, repairs} <- read_repairs(repairs_path(opts)) do
-      session_id = Keyword.get(opts, :session_id)
-      status = Keyword.get(opts, :status)
-
-      filtered =
-        repairs
-        |> Tet.Store.Helpers.maybe_filter_by_session(session_id)
-        |> Tet.Store.Helpers.maybe_filter_by_status(status)
-
-      {:ok, filtered}
-    end
-  end
-
-  # -- Required behaviour callbacks: stubs for pre-existing unimplemented callbacks --
-
-  @impl true
-  def transaction(fun) when is_function(fun, 0) do
-    # JSONL adapter: no real transaction semantics. Best-effort.
-    try do
-      case fun.() do
-        {:ok, value} -> {:ok, value}
-        {:error, reason} -> {:error, reason}
-        value -> {:ok, value}
-      end
-    rescue
-      exception -> {:error, {:caught, :error, exception}}
-    end
-  end
-
-  @impl true
-  def create_workspace(_attrs), do: {:error, {:not_implemented, :create_workspace}}
-
-  @impl true
-  def get_workspace(_id), do: {:error, {:not_implemented, :get_workspace}}
-
-  @impl true
-  def set_trust(_id, _trust_state), do: {:error, {:not_implemented, :set_trust}}
-
-  @impl true
-  def create_session(_attrs), do: {:error, {:not_implemented, :create_session}}
-
-  @impl true
-  def update_session(_id, _attrs), do: {:error, {:not_implemented, :update_session}}
-
-  @impl true
-  def get_session(_id), do: {:error, {:not_implemented, :get_session}}
-
-  @impl true
-  def list_sessions_with_opts(_opts), do: {:error, {:not_implemented, :list_sessions_with_opts}}
-
-  @impl true
-  def create_task(_attrs), do: {:error, {:not_implemented, :create_task}}
+  # ── Message (Repo-backed) ─────────────────────────────────────────────
 
   @impl true
   def append_message(attrs) when is_map(attrs) do
+    now = DateTime.utc_now()
+
+    attrs =
+      attrs
+      |> ensure_id()
+      |> Map.put_new(:created_at, now)
+      |> Map.put_new(:timestamp, DateTime.to_iso8601(now))
+
     with {:ok, message} <- Tet.Message.new(attrs) do
-      {:ok, message}
+      insert_message_with_seq(message)
     end
   end
+
+  @impl true
+  def save_message(%Tet.Message{} = message, _opts) do
+    insert_message_with_seq(message)
+  end
+
+  @impl true
+  def list_messages(session_id, _opts) when is_binary(session_id) do
+    messages =
+      Schema.Message
+      |> where([m], m.session_id == ^session_id)
+      |> order_by([m], asc: m.seq)
+      |> Repo.all()
+      |> Enum.map(&Schema.Message.to_core_struct/1)
+
+    {:ok, messages}
+  end
+
+  # ── Event (Repo-backed) ───────────────────────────────────────────────
+
+  @impl true
+  def emit_event(attrs) when is_map(attrs) do
+    attrs =
+      attrs
+      |> ensure_id()
+      |> ensure_created_at()
+
+    with {:ok, event} <- Tet.Event.new(attrs) do
+      insert_event_with_seq(event)
+    end
+  end
+
+  @impl true
+  def append_event(attrs, _opts) when is_map(attrs) do
+    attrs =
+      attrs
+      |> ensure_id()
+      |> ensure_created_at()
+
+    with {:ok, event} <- Tet.Event.new(attrs) do
+      insert_event_with_seq(event)
+    end
+  end
+
+  @impl true
+  def save_event(%Tet.Event{} = event, _opts) do
+    insert_event_with_seq(event)
+  end
+
+  @impl true
+  def get_event(event_id, _opts) when is_binary(event_id) do
+    case Repo.get(Schema.Event, event_id) do
+      nil -> {:error, :event_not_found}
+      row -> {:ok, Schema.Event.to_core_struct(row)}
+    end
+  end
+
+  @impl true
+  def list_events(session_id, _opts) when is_binary(session_id) do
+    events =
+      Schema.Event
+      |> where([e], e.session_id == ^session_id)
+      |> order_by([e], asc: e.seq)
+      |> Repo.all()
+      |> Enum.map(&Schema.Event.to_core_struct/1)
+
+    {:ok, events}
+  end
+
+  def list_events(nil, _opts), do: {:ok, []}
+
+  # ── Non-core stubs (still not implemented) ────────────────────────────
+
+  @impl true
+  def create_task(_attrs), do: {:error, {:not_implemented, :create_task}}
 
   @impl true
   def record_tool_run(_attrs), do: {:error, {:not_implemented, :record_tool_run}}
@@ -545,16 +316,266 @@ defmodule Tet.Store.SQLite do
   @impl true
   def list_approvals(_session_id, _opts), do: {:error, {:not_implemented, :list_approvals}}
 
+  # ── Non-core JSONL callbacks ──────────────────────────────────────────
+
   @impl true
-  def emit_event(attrs) when is_map(attrs) do
-    append_event(attrs, [])
+  def save_autosave(%Tet.Autosave{} = autosave, opts) when is_list(opts) do
+    Jsonl.append_record(Jsonl.autosave_path(opts), autosave, &Tet.Autosave.to_map/1)
   end
 
   @impl true
-  def create_workflow(attrs) when is_map(attrs) do
-    with {:ok, workflow} <- Tet.Workflow.new(attrs) do
-      {:ok, workflow}
+  def load_autosave(session_id, opts) when is_binary(session_id) and is_list(opts) do
+    with {:ok, autosaves} <- Jsonl.read_autosaves(Jsonl.autosave_path(opts)) do
+      autosaves
+      |> Enum.filter(&(&1.session_id == session_id))
+      |> Enum.sort(&Jsonl.checkpoint_newer_or_equal?/2)
+      |> case do
+        [] -> {:error, :autosave_not_found}
+        [latest | _] -> {:ok, latest}
+      end
     end
+  end
+
+  @impl true
+  def list_autosaves(opts) when is_list(opts) do
+    with {:ok, autosaves} <- Jsonl.read_autosaves(Jsonl.autosave_path(opts)) do
+      {:ok, Enum.sort(autosaves, &Jsonl.checkpoint_newer_or_equal?/2)}
+    end
+  end
+
+  @impl true
+  def save_prompt_history(%Tet.PromptLab.HistoryEntry{} = entry, opts) when is_list(opts) do
+    Jsonl.append_record(
+      Jsonl.prompt_history_path(opts),
+      entry,
+      &Tet.PromptLab.HistoryEntry.to_map/1
+    )
+  end
+
+  @impl true
+  def list_prompt_history(opts) when is_list(opts) do
+    with {:ok, history} <- Jsonl.read_prompt_history(Jsonl.prompt_history_path(opts)) do
+      {:ok, Enum.sort(history, &Jsonl.history_newer_or_equal?/2)}
+    end
+  end
+
+  @impl true
+  def fetch_prompt_history(id, opts) when is_binary(id) and is_list(opts) do
+    Jsonl.find_by_id(
+      Jsonl.prompt_history_path(opts),
+      &Jsonl.read_prompt_history/1,
+      id,
+      :prompt_history_not_found
+    )
+  end
+
+  # -- Artifacts --
+
+  @impl true
+  def create_artifact(attrs, opts) when is_map(attrs) and is_list(opts) do
+    with {:ok, artifact} <- Tet.ShellPolicy.Artifact.new(attrs) do
+      Jsonl.append_record(
+        Jsonl.artifacts_path(opts),
+        artifact,
+        &Tet.ShellPolicy.Artifact.to_map/1
+      )
+    end
+  end
+
+  @impl true
+  def get_artifact(id, opts) when is_binary(id) and is_list(opts) do
+    Jsonl.find_by_id(Jsonl.artifacts_path(opts), &Jsonl.read_artifacts/1, id, :artifact_not_found)
+  end
+
+  @impl true
+  def list_artifacts(session_id, opts) when is_binary(session_id) and is_list(opts) do
+    with {:ok, artifacts} <- Jsonl.read_artifacts(Jsonl.artifacts_path(opts)) do
+      task_id = Keyword.get(opts, :task_id)
+
+      filtered =
+        Enum.filter(artifacts, fn a ->
+          Jsonl.match_session?(a, session_id) and Jsonl.match_task?(a, task_id)
+        end)
+
+      {:ok, filtered}
+    end
+  end
+
+  # -- Checkpoints --
+
+  @impl true
+  def save_checkpoint(attrs, opts) when is_map(attrs) and is_list(opts) do
+    with {:ok, cp} <- Tet.Checkpoint.new(attrs) do
+      Jsonl.append_record(Jsonl.checkpoints_path(opts), cp, &Tet.Checkpoint.to_map/1)
+    end
+  end
+
+  @impl true
+  def get_checkpoint(id, opts) when is_binary(id) and is_list(opts) do
+    Jsonl.find_by_id(
+      Jsonl.checkpoints_path(opts),
+      &Jsonl.read_checkpoints/1,
+      id,
+      :checkpoint_not_found
+    )
+  end
+
+  @impl true
+  def list_checkpoints(session_id, opts) when is_binary(session_id) and is_list(opts) do
+    with {:ok, cps} <- Jsonl.read_checkpoints(Jsonl.checkpoints_path(opts)) do
+      {:ok, Enum.filter(cps, &(&1.session_id == session_id))}
+    end
+  end
+
+  @impl true
+  def delete_checkpoint(id, opts) when is_binary(id) and is_list(opts) do
+    path = Jsonl.checkpoints_path(opts)
+
+    with {:ok, cps} <- Jsonl.read_checkpoints(path) do
+      Jsonl.rewrite(path, Enum.reject(cps, &(&1.id == id)), &Tet.Checkpoint.to_map/1)
+    end
+  end
+
+  # -- Workflow steps --
+
+  @impl true
+  def append_step(attrs, opts) when is_map(attrs) and is_list(opts) do
+    with {:ok, step} <- Tet.WorkflowStep.new(attrs) do
+      Jsonl.append_record(Jsonl.workflow_steps_path(opts), step, &Tet.WorkflowStep.to_map/1)
+    end
+  end
+
+  @impl true
+  def get_steps(session_id, opts) when is_binary(session_id) and is_list(opts) do
+    with {:ok, steps} <- Jsonl.read_workflow_steps(Jsonl.workflow_steps_path(opts)) do
+      {:ok, Enum.filter(steps, &(&1.session_id == session_id))}
+    end
+  end
+
+  # -- Error log --
+
+  @impl true
+  def log_error(attrs, opts) when is_map(attrs) and is_list(opts) do
+    attrs = Tet.Store.Helpers.ensure_created_at(attrs)
+
+    with {:ok, entry} <- Tet.ErrorLog.new(attrs) do
+      Jsonl.append_record(Jsonl.error_log_path(opts), entry, &Tet.ErrorLog.to_map/1)
+    end
+  end
+
+  @impl true
+  def list_errors(session_id, opts) when is_binary(session_id) and is_list(opts) do
+    with {:ok, errors} <- Jsonl.read_error_log(Jsonl.error_log_path(opts)) do
+      {:ok, Enum.filter(errors, &(&1.session_id == session_id))}
+    end
+  end
+
+  @impl true
+  def get_error(id, opts) when is_binary(id) and is_list(opts) do
+    Jsonl.find_by_id(Jsonl.error_log_path(opts), &Jsonl.read_error_log/1, id, :error_not_found)
+  end
+
+  @impl true
+  def resolve_error(error_id, opts) when is_binary(error_id) and is_list(opts) do
+    path = Jsonl.error_log_path(opts)
+
+    with {:ok, errors} <- Jsonl.read_error_log(path) do
+      case Enum.find(errors, &(&1.id == error_id)) do
+        nil ->
+          {:error, :error_not_found}
+
+        entry ->
+          resolved = Tet.ErrorLog.resolve(entry, DateTime.utc_now())
+          remaining = Enum.reject(errors, &(&1.id == error_id)) ++ [resolved]
+
+          case Jsonl.rewrite(path, remaining, &Tet.ErrorLog.to_map/1) do
+            {:ok, :ok} -> {:ok, resolved}
+            {:error, reason} -> {:error, {:resolve_error_write_failed, reason}}
+          end
+      end
+    end
+  end
+
+  # -- Repair queue --
+
+  @impl true
+  def enqueue_repair(attrs, opts) when is_map(attrs) and is_list(opts) do
+    attrs = Tet.Store.Helpers.ensure_created_at(attrs)
+
+    with {:ok, repair} <- Tet.Repair.new(attrs) do
+      Jsonl.append_record(Jsonl.repairs_path(opts), repair, &Tet.Repair.to_map/1)
+    end
+  end
+
+  @impl true
+  def dequeue_repair(opts) when is_list(opts) do
+    path = Jsonl.repairs_path(opts)
+
+    with {:ok, repairs} <- Jsonl.read_repairs(path) do
+      repairs
+      |> Enum.filter(&(&1.status == :pending))
+      |> Enum.sort_by(& &1.created_at)
+      |> case do
+        [] ->
+          {:ok, nil}
+
+        [%Tet.Repair{} = repair | _] ->
+          running = %{repair | status: :running, started_at: DateTime.utc_now()}
+          remaining = Enum.reject(repairs, &(&1.id == repair.id)) ++ [running]
+
+          with {:ok, :ok} <- Jsonl.rewrite(path, remaining, &Tet.Repair.to_map/1) do
+            {:ok, running}
+          end
+      end
+    end
+  end
+
+  @impl true
+  def update_repair(repair_id, attrs, opts)
+      when is_binary(repair_id) and is_map(attrs) and is_list(opts) do
+    path = Jsonl.repairs_path(opts)
+
+    with {:ok, repairs} <- Jsonl.read_repairs(path) do
+      case Enum.find(repairs, &(&1.id == repair_id)) do
+        nil ->
+          {:error, :repair_not_found}
+
+        repair ->
+          case Tet.Store.Helpers.merge_repair_attrs(repair, attrs) do
+            {:ok, updated} ->
+              remaining = Enum.reject(repairs, &(&1.id == repair_id)) ++ [updated]
+
+              with {:ok, :ok} <- Jsonl.rewrite(path, remaining, &Tet.Repair.to_map/1) do
+                {:ok, updated}
+              end
+
+            {:error, reason} ->
+              {:error, reason}
+          end
+      end
+    end
+  end
+
+  @impl true
+  def list_repairs(opts) when is_list(opts) do
+    with {:ok, repairs} <- Jsonl.read_repairs(Jsonl.repairs_path(opts)) do
+      session_id = Keyword.get(opts, :session_id)
+      status = Keyword.get(opts, :status)
+
+      filtered =
+        repairs
+        |> Tet.Store.Helpers.maybe_filter_by_session(session_id)
+        |> Tet.Store.Helpers.maybe_filter_by_status(status)
+
+      {:ok, filtered}
+    end
+  end
+
+  # -- Workflows --
+
+  @impl true
+  def create_workflow(attrs) when is_map(attrs) do
+    with {:ok, workflow} <- Tet.Workflow.new(attrs), do: {:ok, workflow}
   end
 
   @impl true
@@ -580,13 +601,11 @@ defmodule Tet.Store.SQLite do
   def list_pending_workflows, do: {:ok, []}
 
   @impl true
-  def list_steps(workflow_id) when is_binary(workflow_id) do
-    list_steps(workflow_id, [])
-  end
+  def list_steps(workflow_id) when is_binary(workflow_id), do: list_steps(workflow_id, [])
 
   @impl true
   def list_steps(workflow_id, opts) when is_binary(workflow_id) and is_list(opts) do
-    with {:ok, steps} <- read_workflow_steps(workflow_steps_path(opts)) do
+    with {:ok, steps} <- Jsonl.read_workflow_steps(Jsonl.workflow_steps_path(opts)) do
       {:ok, Enum.filter(steps, &(&1.workflow_id == workflow_id))}
     end
   end
@@ -594,36 +613,25 @@ defmodule Tet.Store.SQLite do
   @impl true
   def claim_workflow(_id, _node, _ttl), do: {:ok, :claimed}
 
-  # -- BD-0036: Finding Store, Persistent Memory, Project Lessons --
+  # -- Findings --
 
   @impl true
   def record_finding(attrs, opts) when is_map(attrs) and is_list(opts) do
     attrs = Tet.Store.Helpers.ensure_created_at(attrs)
-    path = findings_path(opts)
 
-    with {:ok, finding} <- Tet.Finding.new(attrs),
-         line = finding |> Tet.Finding.to_map() |> encode_json!(),
-         :ok <- File.mkdir_p(Path.dirname(path)),
-         :ok <- File.write(path, [line, "\n"], [:append]) do
-      {:ok, finding}
+    with {:ok, finding} <- Tet.Finding.new(attrs) do
+      Jsonl.append_record(Jsonl.findings_path(opts), finding, &Tet.Finding.to_map/1)
     end
   end
 
   @impl true
-  def get_finding(finding_id, opts) when is_binary(finding_id) and is_list(opts) do
-    with {:ok, findings} <- read_findings(findings_path(opts)) do
-      findings
-      |> Enum.find(&(&1.id == finding_id))
-      |> case do
-        nil -> {:error, :finding_not_found}
-        finding -> {:ok, finding}
-      end
-    end
+  def get_finding(id, opts) when is_binary(id) and is_list(opts) do
+    Jsonl.find_by_id(Jsonl.findings_path(opts), &Jsonl.read_findings/1, id, :finding_not_found)
   end
 
   @impl true
   def list_findings(session_id, opts) when is_binary(session_id) and is_list(opts) do
-    with {:ok, findings} <- read_findings(findings_path(opts)) do
+    with {:ok, findings} <- Jsonl.read_findings(Jsonl.findings_path(opts)) do
       {:ok, Enum.filter(findings, &(&1.session_id == session_id))}
     end
   end
@@ -631,12 +639,10 @@ defmodule Tet.Store.SQLite do
   @impl true
   def update_finding(finding_id, attrs, opts)
       when is_binary(finding_id) and is_map(attrs) and is_list(opts) do
-    path = findings_path(opts)
+    path = Jsonl.findings_path(opts)
 
-    with {:ok, findings} <- read_findings(path) do
-      findings
-      |> Enum.find(&(&1.id == finding_id))
-      |> case do
+    with {:ok, findings} <- Jsonl.read_findings(path) do
+      case Enum.find(findings, &(&1.id == finding_id)) do
         nil ->
           {:error, :finding_not_found}
 
@@ -645,7 +651,7 @@ defmodule Tet.Store.SQLite do
             {:ok, updated} ->
               remaining = Enum.reject(findings, &(&1.id == finding_id)) ++ [updated]
 
-              with {:ok, :ok} <- rewrite_jsonl(path, remaining, &Tet.Finding.to_map/1) do
+              with {:ok, :ok} <- Jsonl.rewrite(path, remaining, &Tet.Finding.to_map/1) do
                 {:ok, updated}
               end
 
@@ -656,446 +662,213 @@ defmodule Tet.Store.SQLite do
     end
   end
 
+  # -- Persistent memory --
+
   @impl true
   def store_persistent_memory(attrs, opts) when is_map(attrs) and is_list(opts) do
     attrs = Tet.Store.Helpers.ensure_created_at(attrs)
-    path = persistent_memories_path(opts)
 
-    with {:ok, entry} <- Tet.PersistentMemory.new(attrs),
-         line = entry |> Tet.PersistentMemory.to_map() |> encode_json!(),
-         :ok <- File.mkdir_p(Path.dirname(path)),
-         :ok <- File.write(path, [line, "\n"], [:append]) do
-      {:ok, entry}
+    with {:ok, entry} <- Tet.PersistentMemory.new(attrs) do
+      Jsonl.append_record(
+        Jsonl.persistent_memories_path(opts),
+        entry,
+        &Tet.PersistentMemory.to_map/1
+      )
     end
   end
 
   @impl true
-  def get_persistent_memory(pm_id, opts) when is_binary(pm_id) and is_list(opts) do
-    with {:ok, entries} <- read_persistent_memories(persistent_memories_path(opts)) do
-      entries
-      |> Enum.find(&(&1.id == pm_id))
-      |> case do
-        nil -> {:error, :persistent_memory_not_found}
-        entry -> {:ok, entry}
-      end
-    end
+  def get_persistent_memory(id, opts) when is_binary(id) and is_list(opts) do
+    Jsonl.find_by_id(
+      Jsonl.persistent_memories_path(opts),
+      &Jsonl.read_persistent_memories/1,
+      id,
+      :persistent_memory_not_found
+    )
   end
 
   @impl true
   def list_persistent_memories(session_id, opts)
       when is_binary(session_id) and is_list(opts) do
-    with {:ok, entries} <- read_persistent_memories(persistent_memories_path(opts)) do
+    with {:ok, entries} <- Jsonl.read_persistent_memories(Jsonl.persistent_memories_path(opts)) do
       {:ok, Enum.filter(entries, &(&1.session_id == session_id))}
     end
   end
 
+  # -- Project lessons --
+
   @impl true
   def store_project_lesson(attrs, opts) when is_map(attrs) and is_list(opts) do
     attrs = Tet.Store.Helpers.ensure_created_at(attrs)
-    path = project_lessons_path(opts)
 
-    with {:ok, lesson} <- Tet.ProjectLesson.new(attrs),
-         line = lesson |> Tet.ProjectLesson.to_map() |> encode_json!(),
-         :ok <- File.mkdir_p(Path.dirname(path)),
-         :ok <- File.write(path, [line, "\n"], [:append]) do
-      {:ok, lesson}
+    with {:ok, lesson} <- Tet.ProjectLesson.new(attrs) do
+      Jsonl.append_record(
+        Jsonl.project_lessons_path(opts),
+        lesson,
+        &Tet.ProjectLesson.to_map/1
+      )
     end
   end
 
   @impl true
-  def get_project_lesson(lesson_id, opts) when is_binary(lesson_id) and is_list(opts) do
-    with {:ok, lessons} <- read_project_lessons(project_lessons_path(opts)) do
-      lessons
-      |> Enum.find(&(&1.id == lesson_id))
-      |> case do
-        nil -> {:error, :project_lesson_not_found}
-        lesson -> {:ok, lesson}
-      end
-    end
+  def get_project_lesson(id, opts) when is_binary(id) and is_list(opts) do
+    Jsonl.find_by_id(
+      Jsonl.project_lessons_path(opts),
+      &Jsonl.read_project_lessons/1,
+      id,
+      :project_lesson_not_found
+    )
   end
 
   @impl true
   def list_project_lessons(opts) when is_list(opts) do
-    with {:ok, lessons} <- read_project_lessons(project_lessons_path(opts)) do
+    with {:ok, lessons} <- Jsonl.read_project_lessons(Jsonl.project_lessons_path(opts)) do
       category = Keyword.get(opts, :category)
-      filtered = Tet.Store.Helpers.maybe_filter_lessons_by_category(lessons, category)
-      {:ok, filtered}
+      {:ok, Tet.Store.Helpers.maybe_filter_lessons_by_category(lessons, category)}
     end
   end
 
-  # -- Internal readers --
+  # ── Repo helpers (private) ────────────────────────────────────────────
 
-  defp read_messages(path) do
-    read_json_lines(path, &Tet.Message.from_map/1)
+  defp ensure_id(attrs) do
+    case Tet.Entity.fetch_value(attrs, :id) do
+      v when is_binary(v) and v != "" -> attrs
+      _ -> Map.put(attrs, :id, generate_id())
+    end
   end
 
-  defp read_autosaves(path) do
-    read_json_lines(
-      path,
-      &Tet.Autosave.from_map/1,
-      :autosave_read_failed,
-      {:invalid_autosave_record, :not_a_map}
-    )
+  defp ensure_short_id(attrs) do
+    case Tet.Entity.fetch_value(attrs, :short_id) do
+      v when is_binary(v) and v != "" ->
+        attrs
+
+      _ ->
+        id = Tet.Entity.fetch_value(attrs, :id) || ""
+        Map.put(attrs, :short_id, String.slice(id, 0, 8))
+    end
   end
 
-  defp read_events(path) do
-    read_json_lines(path, &Tet.Event.from_map/1)
+  defp ensure_created_at(attrs) do
+    case Tet.Entity.fetch_value(attrs, :created_at) do
+      nil -> Map.put(attrs, :created_at, DateTime.utc_now())
+      "" -> Map.put(attrs, :created_at, DateTime.utc_now())
+      _ -> attrs
+    end
   end
 
-  defp read_prompt_history(path) do
-    read_json_lines(
-      path,
-      &Tet.PromptLab.HistoryEntry.from_map/1,
-      :prompt_history_read_failed,
-      {:invalid_prompt_history_record, :not_a_map}
-    )
+  defp generate_id do
+    :crypto.strong_rand_bytes(16) |> Base.encode16(case: :lower)
   end
 
-  defp read_artifacts(path) do
-    read_json_lines(path, &decode_artifact/1, :artifact_read_failed, {
-      :invalid_artifact_record,
-      :not_a_map
-    })
-  end
+  defp repo_result({:ok, row}, to_core), do: {:ok, to_core.(row)}
+  defp repo_result({:error, %Ecto.Changeset{} = cs}, _), do: {:error, {:changeset_error, cs}}
+  defp repo_result({:error, reason}, _), do: {:error, reason}
 
-  defp read_checkpoints(path) do
-    read_json_lines(
-      path,
-      &Tet.Checkpoint.from_map/1,
-      :checkpoint_read_failed,
-      {:invalid_checkpoint_record, :not_a_map}
-    )
-  end
+  defp insert_message_with_seq(%Tet.Message{} = message) do
+    Repo.transaction(fn ->
+      sid = message.session_id
 
-  defp read_error_log(path) do
-    read_json_lines(
-      path,
-      &Tet.ErrorLog.from_map/1,
-      :error_log_read_failed,
-      {:invalid_error_log_record, :not_a_map}
-    )
-  end
+      max_seq =
+        Repo.one(from m in Schema.Message, where: m.session_id == ^sid, select: max(m.seq)) || 0
 
-  defp read_repairs(path) do
-    read_json_lines(
-      path,
-      &Tet.Repair.from_map/1,
-      :repair_read_failed,
-      {:invalid_repair_record, :not_a_map}
-    )
-  end
+      new_seq = max_seq + 1
 
-  defp read_workflow_steps(path) do
-    read_json_lines(
-      path,
-      &Tet.WorkflowStep.from_map/1,
-      :workflow_step_read_failed,
-      {:invalid_workflow_step_record, :not_a_map}
-    )
-  end
+      db_attrs =
+        message
+        |> Schema.Message.from_core_struct(seq: new_seq)
+        |> default_unix_timestamp(:created_at)
 
-  defp read_findings(path) do
-    read_json_lines(
-      path,
-      &Tet.Finding.from_map/1,
-      :finding_read_failed,
-      {:invalid_finding_record, :not_a_map}
-    )
-  end
-
-  defp read_persistent_memories(path) do
-    read_json_lines(
-      path,
-      &Tet.PersistentMemory.from_map/1,
-      :persistent_memory_read_failed,
-      {:invalid_persistent_memory_record, :not_a_map}
-    )
-  end
-
-  defp read_project_lessons(path) do
-    read_json_lines(
-      path,
-      &Tet.ProjectLesson.from_map/1,
-      :project_lesson_read_failed,
-      {:invalid_project_lesson_record, :not_a_map}
-    )
-  end
-
-  defp decode_artifact(map) when is_map(map) do
-    Tet.ShellPolicy.Artifact.new(map)
-  end
-
-  defp match_session?(artifact, session_id) do
-    artifact.session_id == session_id or
-      artifact.task_id == session_id or
-      artifact.tool_call_id == session_id
-  end
-
-  defp match_task?(_artifact, nil), do: true
-
-  defp match_task?(artifact, task_id) do
-    artifact.task_id == task_id
-  end
-
-  defp rewrite_jsonl(path, records, to_map_fn) do
-    lines = Enum.map(records, &(&1 |> to_map_fn.() |> encode_json!()))
-    content = Enum.join(lines, "\n")
-
-    with :ok <- File.mkdir_p(Path.dirname(path)) do
-      if content == "" do
-        if File.exists?(path), do: File.rm(path), else: :ok
-        {:ok, :ok}
-      else
-        with :ok <- File.write(path, content <> "\n") do
-          {:ok, :ok}
-        end
+      case Schema.Message.changeset(db_attrs) |> Repo.insert() do
+        {:ok, row} -> Schema.Message.to_core_struct(row)
+        {:error, cs} -> Repo.rollback({:changeset_error, cs})
       end
-    end
-  end
-
-  # -- Generic JSONL reader --
-
-  defp read_json_lines(
-         path,
-         decoder,
-         read_error_tag \\ :store_read_failed,
-         invalid_map_error \\ {:invalid_store_record, :not_a_map}
-       ) do
-    if File.exists?(path) do
-      path
-      |> File.stream!([], :line)
-      |> Enum.reduce_while({:ok, []}, fn line, acc ->
-        decode_line(line, acc, decoder, invalid_map_error)
-      end)
-      |> case do
-        {:ok, records} -> {:ok, Enum.reverse(records)}
-        {:error, reason} -> {:error, reason}
-      end
-    else
-      {:ok, []}
-    end
-  rescue
-    exception in File.Error -> {:error, {read_error_tag, exception.reason}}
-  end
-
-  defp decode_line(_line, {:error, reason}, _decoder, _invalid_map_error),
-    do: {:halt, {:error, reason}}
-
-  defp decode_line(line, {:ok, records}, decoder, invalid_map_error) do
-    line = String.trim(line)
-
-    cond do
-      line == "" ->
-        {:cont, {:ok, records}}
-
-      true ->
-        with {:ok, decoded} <- decode_json(line),
-             :ok <- ensure_record_map(decoded, invalid_map_error),
-             {:ok, record} <- decoder.(decoded) do
-          {:cont, {:ok, [record | records]}}
-        else
-          {:error, reason} -> {:halt, {:error, reason}}
-        end
-    end
-  end
-
-  defp assign_event_sequence(%Tet.Event{sequence: sequence} = event, _path)
-       when is_integer(sequence) and sequence >= 0 do
-    {:ok, event}
-  end
-
-  defp assign_event_sequence(%Tet.Event{} = event, path) do
-    with {:ok, events} <- read_events(path) do
-      max_sequence =
-        events
-        |> Enum.map(&(&1.sequence || 0))
-        |> Enum.max(fn -> 0 end)
-
-      {:ok, %Tet.Event{event | sequence: max_sequence + 1}}
-    end
-  end
-
-  defp event_matches_session?(_event, nil), do: true
-  defp event_matches_session?(%Tet.Event{session_id: session_id}, session_id), do: true
-  defp event_matches_session?(_event, _session_id), do: false
-
-  defp session_newer_or_equal?(left, right) do
-    {left.updated_at || "", left.id} >= {right.updated_at || "", right.id}
-  end
-
-  defp checkpoint_newer_or_equal?(left, right) do
-    {left.saved_at || "", left.checkpoint_id} >= {right.saved_at || "", right.checkpoint_id}
-  end
-
-  defp history_newer_or_equal?(left, right) do
-    {left.created_at || "", left.id} >= {right.created_at || "", right.id}
-  end
-
-  defp cleanup_created_directory(_directory, true), do: :ok
-
-  defp cleanup_created_directory(directory, false) do
-    File.rmdir(directory)
-    :ok
-  end
-
-  defp assert_readable(path) do
-    if File.exists?(path) do
-      case File.open(path, [:read], fn _io -> :ok end) do
-        {:ok, :ok} -> :ok
-        {:error, reason} -> {:error, {:not_readable, reason}}
-      end
-    else
-      :ok
-    end
-  end
-
-  defp assert_writable(directory) do
-    probe_path =
-      Path.join(directory, ".tet-health-#{System.unique_integer([:positive, :monotonic])}.tmp")
-
-    result =
-      with :ok <- File.write(probe_path, "ok", [:write]),
-           {:ok, "ok"} <- File.read(probe_path) do
-        :ok
-      else
-        {:error, reason} -> {:error, {:not_writable, reason}}
-        other -> {:error, {:write_probe_failed, other}}
-      end
-
-    File.rm(probe_path)
-    result
-  end
-
-  # -- Path helpers --
-
-  defp path(opts) do
-    Keyword.get(opts, :path) ||
-      Keyword.get(opts, :store_path) ||
-      System.get_env("TET_STORE_PATH") ||
-      Application.get_env(:tet_runtime, :store_path, @default_path)
-  end
-
-  defp autosave_path(opts) do
-    Keyword.get(opts, :autosave_path) ||
-      System.get_env("TET_AUTOSAVE_PATH") ||
-      Application.get_env(:tet_runtime, :autosave_path) ||
-      default_autosave_path(path(opts))
-  end
-
-  defp events_path(opts) do
-    Keyword.get(opts, :events_path) ||
-      Keyword.get(opts, :event_path) ||
-      System.get_env("TET_EVENTS_PATH") ||
-      Application.get_env(:tet_runtime, :events_path) ||
-      derive_events_path(path(opts))
-  end
-
-  defp prompt_history_path(opts) do
-    Keyword.get(opts, :prompt_history_path) ||
-      Keyword.get(opts, :prompt_lab_history_path) ||
-      System.get_env("TET_PROMPT_HISTORY_PATH") ||
-      Application.get_env(:tet_runtime, :prompt_history_path) ||
-      default_prompt_history_path(path(opts))
-  end
-
-  defp artifacts_path(opts) do
-    Keyword.get(opts, :artifacts_path) ||
-      System.get_env("TET_ARTIFACTS_PATH") ||
-      Application.get_env(:tet_runtime, :artifacts_path) ||
-      @default_artifacts_path
-  end
-
-  defp checkpoints_path(opts) do
-    Keyword.get(opts, :checkpoints_path) ||
-      System.get_env("TET_CHECKPOINTS_PATH") ||
-      Application.get_env(:tet_runtime, :checkpoints_path) ||
-      @default_checkpoints_path
-  end
-
-  defp error_log_path(opts) do
-    Keyword.get(opts, :error_log_path) ||
-      System.get_env("TET_ERROR_LOG_PATH") ||
-      Application.get_env(:tet_runtime, :error_log_path) ||
-      @default_error_log_path
-  end
-
-  defp repairs_path(opts) do
-    Keyword.get(opts, :repairs_path) ||
-      System.get_env("TET_REPAIRS_PATH") ||
-      Application.get_env(:tet_runtime, :repairs_path) ||
-      @default_repairs_path
-  end
-
-  defp workflow_steps_path(opts) do
-    Keyword.get(opts, :workflow_steps_path) ||
-      System.get_env("TET_WORKFLOW_STEPS_PATH") ||
-      Application.get_env(:tet_runtime, :workflow_steps_path) ||
-      @default_workflow_steps_path
-  end
-
-  defp findings_path(opts) do
-    Keyword.get(opts, :findings_path) ||
-      System.get_env("TET_FINDINGS_PATH") ||
-      Application.get_env(:tet_runtime, :findings_path) ||
-      @default_findings_path
-  end
-
-  defp persistent_memories_path(opts) do
-    Keyword.get(opts, :persistent_memories_path) ||
-      System.get_env("TET_PERSISTENT_MEMORIES_PATH") ||
-      Application.get_env(:tet_runtime, :persistent_memories_path) ||
-      @default_persistent_memories_path
-  end
-
-  defp project_lessons_path(opts) do
-    Keyword.get(opts, :project_lessons_path) ||
-      System.get_env("TET_PROJECT_LESSONS_PATH") ||
-      Application.get_env(:tet_runtime, :project_lessons_path) ||
-      @default_project_lessons_path
-  end
-
-  defp default_autosave_path(message_path) do
-    message_path
-    |> Path.dirname()
-    |> Path.join(@default_autosave_filename)
-  end
-
-  defp default_prompt_history_path(message_path) do
-    message_path
-    |> Path.dirname()
-    |> Path.join(@default_prompt_history_filename)
-  end
-
-  defp derive_events_path(@default_path), do: @default_events_path
-
-  defp derive_events_path(message_path) do
-    extension = Path.extname(message_path)
-
-    if extension == "" do
-      message_path <> ".events.jsonl"
-    else
-      Path.rootname(message_path) <> ".events" <> extension
-    end
-  end
-
-  defp encode_json!(term) do
-    term
-    |> :json.encode()
-    |> IO.iodata_to_binary()
-  end
-
-  defp decode_json(line) do
-    {:ok, :json.decode(line)}
-  rescue
-    exception -> {:error, {:invalid_store_record, Exception.message(exception)}}
-  end
-
-  defp ensure_record_map(record, _invalid_map_error) when is_map(record), do: :ok
-  defp ensure_record_map(_record, invalid_map_error), do: {:error, invalid_map_error}
-
-  defp started? do
-    Enum.any?(Application.started_applications(), fn {application, _description, _version} ->
-      application == :tet_store_sqlite
     end)
+  end
+
+  defp insert_event_with_seq(%Tet.Event{} = event) do
+    event = fill_event_defaults(event)
+
+    Repo.transaction(fn ->
+      sid = event.session_id
+
+      max_seq =
+        Repo.one(from e in Schema.Event, where: e.session_id == ^sid, select: max(e.seq)) || 0
+
+      new_seq = max_seq + 1
+      event = %{event | seq: new_seq, sequence: new_seq}
+
+      db_attrs =
+        event
+        |> Schema.Event.from_core_struct()
+        |> default_unix_timestamp(:inserted_at)
+
+      case Schema.Event.changeset(db_attrs) |> Repo.insert() do
+        {:ok, row} -> Schema.Event.to_core_struct(row)
+        {:error, cs} -> Repo.rollback({:changeset_error, cs})
+      end
+    end)
+  end
+
+  defp fill_event_defaults(%Tet.Event{} = event) do
+    event
+    |> then(fn
+      %{id: id} = e when id in [nil, ""] -> %{e | id: generate_id()}
+      e -> e
+    end)
+    |> then(fn
+      %{created_at: nil} = e -> %{e | created_at: DateTime.utc_now()}
+      e -> e
+    end)
+  end
+
+  defp prepare_session_update(attrs) do
+    now_unix = DateTime.to_unix(DateTime.utc_now())
+
+    attrs
+    |> atomify_to_string([:mode, :status])
+    |> maybe_encode_json(:metadata)
+    |> coerce_timestamps([:started_at, :updated_at])
+    |> Map.put(:updated_at, now_unix)
+  end
+
+  defp atomify_to_string(attrs, keys) do
+    Enum.reduce(keys, attrs, fn key, acc ->
+      case Map.get(acc, key) do
+        v when is_atom(v) and not is_nil(v) -> Map.put(acc, key, to_string(v))
+        _ -> acc
+      end
+    end)
+  end
+
+  defp maybe_encode_json(attrs, key) do
+    case Map.get(attrs, key) do
+      v when is_map(v) -> Map.put(attrs, key, Schema.JsonField.encode(v))
+      _ -> attrs
+    end
+  end
+
+  defp coerce_timestamps(attrs, keys) do
+    Enum.reduce(keys, attrs, fn key, acc ->
+      case Map.get(acc, key) do
+        %DateTime{} = dt ->
+          Map.put(acc, key, DateTime.to_unix(dt))
+
+        iso when is_binary(iso) ->
+          case DateTime.from_iso8601(iso) do
+            {:ok, dt, _} -> Map.put(acc, key, DateTime.to_unix(dt))
+            _ -> acc
+          end
+
+        _ ->
+          acc
+      end
+    end)
+  end
+
+  defp default_unix_timestamp(%{} = attrs, key) do
+    case Map.get(attrs, key) do
+      nil -> Map.put(attrs, key, DateTime.to_unix(DateTime.utc_now()))
+      _ -> attrs
+    end
   end
 end
