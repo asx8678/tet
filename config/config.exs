@@ -32,3 +32,8 @@ config :tet_store_sqlite, Tet.Store.SQLite.Repo,
 
 config :tet_cli,
   release_profile: :tet_standalone
+
+# Import environment-specific config (dev.exs, test.exs, prod.exs)
+if File.exists?("config/#{config_env()}.exs") do
+  import_config "#{config_env()}.exs"
+end

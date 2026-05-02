@@ -1,34 +1,38 @@
 defmodule Tet.Store.SQLiteContractTest do
   use ExUnit.Case, async: false
 
-  setup do
-    tmp_root = unique_tmp_root("tet-sqlite-contract-test")
-    File.rm_rf!(tmp_root)
-    File.mkdir_p!(tmp_root)
-    on_exit(fn -> File.rm_rf!(tmp_root) end)
+  alias Tet.Store.SQLite.Repo
 
-    opts = [
-      path: Path.join(tmp_root, "messages.jsonl"),
-      events_path: Path.join(tmp_root, "events.jsonl"),
-      artifacts_path: Path.join(tmp_root, "artifacts.jsonl"),
-      checkpoints_path: Path.join(tmp_root, "checkpoints.jsonl"),
-      workflow_steps_path: Path.join(tmp_root, "workflow_steps.jsonl"),
-      error_log_path: Path.join(tmp_root, "error_log.jsonl"),
-      repairs_path: Path.join(tmp_root, "repairs.jsonl"),
-      autosave_path: Path.join(tmp_root, "autosaves.jsonl"),
-      prompt_history_path: Path.join(tmp_root, "prompt_history.jsonl")
+  setup do
+    # Clean all user tables between tests for isolation
+    # Order matters due to foreign keys — children first, then parents
+    tables = [
+      "legacy_jsonl_imports",
+      "project_lessons",
+      "persistent_memories",
+      "findings",
+      "repairs",
+      "error_log",
+      "checkpoints",
+      "workflow_steps",
+      "workflows",
+      "events",
+      "approvals",
+      "artifacts",
+      "tool_runs",
+      "messages",
+      "autosaves",
+      "prompt_history_entries",
+      "tasks",
+      "sessions",
+      "workspaces"
     ]
 
-    {:ok, opts: opts}
-  end
+    for table <- tables do
+      Ecto.Adapters.SQL.query!(Repo, "DELETE FROM #{table}", [])
+    end
 
-  defp unique_tmp_root(prefix) do
-    suffix = "#{System.pid()}-#{System.system_time(:nanosecond)}-#{unique_integer()}"
-    Path.join(System.tmp_dir!(), "#{prefix}-#{suffix}")
-  end
-
-  defp unique_integer do
-    System.unique_integer([:positive, :monotonic])
+    {:ok, opts: []}
   end
 
   use StoreContractCase, adapter: Tet.Store.SQLite
