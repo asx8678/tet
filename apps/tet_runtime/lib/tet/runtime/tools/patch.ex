@@ -36,8 +36,10 @@ defmodule Tet.Runtime.Tools.Patch do
   `{:error, denial_map}`.
   """
 
+  import Kernel, except: [apply: 2]
+
   alias Tet.Patch.{Operation, Result, Snapshot}
-  alias Tet.Runtime.Tools.PathResolver
+  alias Tet.Runtime.Tools.{Envelope, PathResolver}
 
   @typedoc """
   Approval statuses for gating. Prevents caller-supplied boolean spoofing.
@@ -111,6 +113,70 @@ defmodule Tet.Runtime.Tools.Patch do
       )
 
     {:error, result}
+  end
+
+  @doc """
+  Runs the patch tool from a raw arguments map and runtime opts.
+
+  Validates the patch proposal via `Tet.Patch.propose/1`, then applies
+  it via `apply/2`. Returns a BD-0020 envelope map — the same shape
+  returned by the read-only tool executors.
+
+  ## Options
+    - `:workspace_root` — required, absolute workspace path
+    - `:tool_call_id` — required, provider/runtime tool-call id
+    - `:approved` — approval status atom (default `:unknown`)
+    - `:task_id`, `:approval_id` — optional
+  """
+  @spec run(map(), keyword()) :: Envelope.t()
+  def run(args, opts) when is_map(args) and is_list(opts) do
+    case Tet.Patch.propose(args) do
+      {:ok, patch} ->
+        patch = merge_patch_ids(patch, opts)
+
+        case apply(patch, opts) do
+          {:ok, %Result{ok: true} = result} ->
+            Envelope.success(result_to_data(result))
+
+          {:ok, %Result{ok: false} = result} ->
+            Envelope.error(%{
+              code: "patch_failed",
+              message: result.error || "Patch apply failed",
+              kind: "internal",
+              retryable: not result.rolled_back,
+              correlation: nil,
+              details: %{
+                rolled_back: result.rolled_back,
+                applied_count: length(result.applied)
+              }
+            })
+        end
+
+      {:error, reason} ->
+        Envelope.error(%{
+          code: "invalid_patch",
+          message: "Patch proposal failed: #{inspect(reason)}",
+          kind: "validation",
+          retryable: false,
+          correlation: nil,
+          details: %{}
+        })
+    end
+  end
+
+  defp merge_patch_ids(%Tet.Patch{} = patch, opts) do
+    %{
+      patch
+      | tool_call_id: patch.tool_call_id || Keyword.get(opts, :tool_call_id),
+        task_id: patch.task_id || Keyword.get(opts, :task_id),
+        approval_id: patch.approval_id || Keyword.get(opts, :approval_id)
+    }
+  end
+
+  defp result_to_data(%Result{} = result) do
+    result
+    |> Map.from_struct()
+    |> Map.drop([:ok, :error])
   end
 
   defp apply_result(patch, workspace_root, opts, tool_call_id, task_id, approval_id) do

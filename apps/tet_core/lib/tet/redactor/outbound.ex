@@ -66,6 +66,26 @@ defmodule Tet.Redactor.Outbound do
     redact_deep(data, opts)
   end
 
+  @doc """
+  Redacts tool output before returning it as a provider-consumed event.
+
+  Semantically distinct from `redact_for_audit/2` for call-site clarity:
+  this is the path for tool results flowing back to the LLM provider.
+  Strips secrets without fingerprints (provider should never see them).
+
+  ## Examples
+
+      iex> event = %{output: "Connected to postgres://user:pass@host/db"}
+      iex> result = Tet.Redactor.Outbound.redact_for_event(event)
+      iex> String.contains?(result.output, "pass@host")
+      false
+  """
+  @spec redact_for_event(term()) :: term()
+  @spec redact_for_event(term(), opts()) :: term()
+  def redact_for_event(data, opts \\ []) do
+    redact_deep(data, Keyword.put(opts, :fingerprint, false))
+  end
+
   # --- Deep redaction with fingerprint support ---
 
   defp redact_deep(%module{} = struct, opts) do
