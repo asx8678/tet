@@ -6,7 +6,11 @@ defmodule Tet.CLI do
   returns deterministic status codes. It does not own runtime state or storage.
   """
 
-  alias Tet.CLI.{Completion, History, Render}
+  alias Tet.CLI.{Completion, HelpFormatter, History, Render}
+  alias Tet.Docs
+  alias Tet.Docs.Topic
+
+  @known_topics Topic.string_to_id()
 
   @doc "Entrypoint used by escripts and release wrappers."
   def main(argv) do
@@ -22,9 +26,35 @@ defmodule Tet.CLI do
         IO.puts(Render.help())
         0
 
-      ["help" | _] ->
+      ["help"] ->
         IO.puts(Render.help())
+        topic_names = Enum.join(Map.keys(@known_topics), ", ")
+        IO.puts("\nAvailable help topics: #{topic_names}")
         0
+
+      ["help", "topics"] ->
+        IO.puts("Available help topics:\n")
+
+        for {name, id} <- Enum.sort(Map.to_list(@known_topics)) do
+          {:ok, topic} = Docs.get(id)
+          IO.puts("  #{name} - #{topic.title}")
+        end
+
+        0
+
+      ["help", topic_str] ->
+        case Map.get(@known_topics, topic_str) do
+          nil ->
+            IO.puts(:stderr, "unknown help topic: #{topic_str}")
+            topic_names = Enum.join(Map.keys(@known_topics), ", ")
+            IO.puts(:stderr, "available topics: #{topic_names}")
+            64
+
+          topic_id ->
+            {:ok, topic} = Docs.get(topic_id)
+            IO.puts(HelpFormatter.format_topic(topic))
+            0
+        end
 
       ["--help" | _] ->
         IO.puts(Render.help())
