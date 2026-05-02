@@ -2,17 +2,27 @@ defmodule Tet.Store.SQLite.Migrator do
   @moduledoc """
   Migration runner for the SQLite store adapter.
 
-  Provides both the no-op `run!/0` (for application startup compatibility) and
-  `run!/1` which accepts keyword opts including `:database` and performs real
-  Ecto migrations using `Ecto.Migrator.run/4`.
+  `run!/0` applies PRAGMAs and runs pending migrations against the
+  already-supervised Repo (called by `Application.start/2`).
+
+  `run!/1` accepts keyword opts including `:database` and spins up a
+  transient Repo for standalone migration (e.g., mix tasks).
   """
 
   alias Tet.Store.SQLite.{Connection, Repo}
 
-  @doc false
-  # Kept for backward compatibility — application startup calls run!/0.
-  @spec run! :: :ok
-  def run!, do: :ok
+  @doc """
+  Applies PRAGMAs and runs all pending migrations using the already-running Repo.
+
+  Called by `Application.start/2` after the Repo supervisor child is up.
+  """
+  @spec run!() :: :ok
+  def run! do
+    Connection.apply_and_verify!(Repo)
+    Connection.ensure_auto_vacuum!(Repo)
+    Ecto.Migrator.run(Repo, Connection.migrations_path(), :up, all: true, log: false)
+    :ok
+  end
 
   @doc """
   Runs all pending migrations on the given database.
