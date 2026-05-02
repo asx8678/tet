@@ -189,7 +189,7 @@ defmodule Tet.RemovabilityTest do
   describe "deps_for_app/1" do
     test "tet_core deps includes :jason but not :phoenix" do
       deps = Removability.deps_for_app(:tet_core)
-      dep_names = Enum.map(deps, fn {name, _opts} -> name end)
+      dep_names = Enum.map(deps, &elem(&1, 0))
 
       assert :jason in dep_names
       refute :phoenix in dep_names
@@ -197,7 +197,7 @@ defmodule Tet.RemovabilityTest do
 
     test "tet_cli deps includes tet_core and tet_runtime" do
       deps = Removability.deps_for_app(:tet_cli)
-      dep_names = Enum.map(deps, fn {name, _opts} -> name end)
+      dep_names = Enum.map(deps, &elem(&1, 0))
 
       assert :tet_core in dep_names
       assert :tet_runtime in dep_names
@@ -205,7 +205,7 @@ defmodule Tet.RemovabilityTest do
 
     test "tet_runtime deps includes tet_core and jason" do
       deps = Removability.deps_for_app(:tet_runtime)
-      dep_names = Enum.map(deps, fn {name, _opts} -> name end)
+      dep_names = Enum.map(deps, &elem(&1, 0))
 
       assert :tet_core in dep_names
       assert :jason in dep_names
@@ -213,14 +213,14 @@ defmodule Tet.RemovabilityTest do
 
     test "tet_store_memory deps includes tet_core" do
       deps = Removability.deps_for_app(:tet_store_memory)
-      dep_names = Enum.map(deps, fn {name, _opts} -> name end)
+      dep_names = Enum.map(deps, &elem(&1, 0))
 
       assert :tet_core in dep_names
     end
 
     test "tet_store_sqlite deps includes tet_core, ecto_sql, and ecto_sqlite3" do
       deps = Removability.deps_for_app(:tet_store_sqlite)
-      dep_names = Enum.map(deps, fn {name, _opts} -> name end)
+      dep_names = Enum.map(deps, &elem(&1, 0))
 
       assert :tet_core in dep_names
       assert :ecto_sql in dep_names
