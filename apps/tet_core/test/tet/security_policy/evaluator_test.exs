@@ -293,6 +293,50 @@ defmodule Tet.SecurityPolicy.EvaluatorTest do
                  profile
                )
     end
+
+    test "workspace_only denies paths containing null bytes" do
+      profile = Profile.new!(%{sandbox_profile: :workspace_only})
+
+      assert {:denied, :sandbox_null_byte_in_path} =
+               Evaluator.check_sandbox(
+                 :read,
+                 %{path: "/workspace/safe.txt\0../../etc/passwd", workspace_root: "/workspace"},
+                 profile
+               )
+    end
+
+    test "read_only denies paths containing null bytes" do
+      profile = Profile.new!(%{sandbox_profile: :read_only})
+
+      assert {:denied, :sandbox_null_byte_in_path} =
+               Evaluator.check_sandbox(
+                 :read,
+                 %{path: "/workspace/file.ex\0.jpg", workspace_root: "/workspace"},
+                 profile
+               )
+    end
+
+    test "no_network denies paths containing null bytes" do
+      profile = Profile.new!(%{sandbox_profile: :no_network})
+
+      assert {:denied, :sandbox_null_byte_in_path} =
+               Evaluator.check_sandbox(
+                 :read,
+                 %{path: "/workspace/safe\0evil", workspace_root: "/workspace"},
+                 profile
+               )
+    end
+
+    test "unrestricted allows paths with null bytes (no sandbox constraints)" do
+      profile = Profile.new!(%{sandbox_profile: :unrestricted})
+
+      assert :allowed =
+               Evaluator.check_sandbox(
+                 :read,
+                 %{path: "/workspace/safe\0evil", workspace_root: "/workspace"},
+                 profile
+               )
+    end
   end
 
   # --- check_repair/2 ---

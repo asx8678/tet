@@ -48,6 +48,7 @@ defmodule Tet.Umbrella.MixProject do
     [
       preferred_envs: [
         "standalone.check": :test,
+        "security.compliance": :test,
         "web.facade_contract": :test,
         "web.removability": :test,
         "release.acceptance": :test,
@@ -62,6 +63,7 @@ defmodule Tet.Umbrella.MixProject do
       "standalone.check": [
         "format --check-formatted",
         "web.facade_contract",
+        "security.compliance",
         "test",
         &check_release_closure/1
       ],
@@ -69,8 +71,15 @@ defmodule Tet.Umbrella.MixProject do
       "web.removability": [&check_web_removability/1],
       "release.acceptance": [&check_release_acceptance/1],
       "release.standalone": ["release tet_standalone --overwrite"],
-      "smoke.first_mile": [&smoke_first_mile/1]
+      "smoke.first_mile": [&smoke_first_mile/1],
+      "security.compliance": [&security_compliance/1]
     ]
+  end
+
+  defp security_compliance(_args) do
+    Mix.Task.reenable("test")
+    Mix.Task.run("test", ["apps/tet_core/test/tet/security"])
+    Mix.Task.reenable("test")
   end
 
   defp check_release_closure(_args) do

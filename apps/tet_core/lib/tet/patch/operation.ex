@@ -231,6 +231,15 @@ defmodule Tet.Patch.Operation do
       has_replacements and not valid_replacements?(replacements) ->
         {:error, {:invalid_operation, :invalid_replacements}}
 
+      contains_redacted_marker?(old_str) ->
+        {:error, {:invalid_operation, :redacted_region_in_old_str}}
+
+      contains_redacted_marker?(content) ->
+        {:error, {:invalid_operation, :redacted_region_in_content}}
+
+      has_replacements and replacements_contain_redacted_marker?(replacements) ->
+        {:error, {:invalid_operation, :redacted_region_in_replacements}}
+
       true ->
         :ok
     end
@@ -282,4 +291,29 @@ defmodule Tet.Patch.Operation do
   end
 
   defp valid_hash?(_), do: false
+
+  # --- Redacted region detection ---
+
+  @redacted_markers ["[REDACTED]", "[REDACTED ", "[redacted]", "[redacted "]
+
+  @doc """
+  Returns true if a string contains a redacted-region marker.
+
+  Patches that reference `[REDACTED]` content are operating on secrets
+  they must not see — the marker itself proves the content was scrubbed.
+  Accepting such a patch would overwrite secrets with guessed values.
+  """
+  @spec contains_redacted_marker?(String.t() | nil) :: boolean()
+  def contains_redacted_marker?(nil), do: false
+
+  def contains_redacted_marker?(str) when is_binary(str) do
+    Enum.any?(@redacted_markers, &String.contains?(str, &1))
+  end
+
+  defp replacements_contain_redacted_marker?(replacements) do
+    Enum.any?(replacements, fn r ->
+      old = Map.get(r, :old_str, Map.get(r, "old_str", ""))
+      contains_redacted_marker?(old)
+    end)
+  end
 end
