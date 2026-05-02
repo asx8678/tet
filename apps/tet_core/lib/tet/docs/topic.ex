@@ -79,7 +79,7 @@ defmodule Tet.Docs.Topic do
         "The `tet` command-line interface provides access to all TET platform features. " <>
           "Commands follow a `tet <domain> <action> [options]` pattern. " <>
           "Use `tet help` for a command overview and `tet help <topic>` for detailed guidance.",
-      related_commands: ["tet help", "tet help <topic>", "tet --version", "tet --help"],
+      related_commands: ["tet help", "tet help <topic>", "tet help topics", "tet --help"],
       safety_warnings: [
         "Some CLI commands modify system state — review safety prompts before confirming."
       ],

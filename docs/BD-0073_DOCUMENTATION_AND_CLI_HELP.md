@@ -73,7 +73,7 @@ The CLI help system has three components:
 
 1. **Tet.Docs** (`apps/tet_core/lib/tet/docs.ex`) — Documentation registry providing topic-based lookup, search, and aggregated lists.
 2. **Tet.Docs.Topic** (`apps/tet_core/lib/tet/docs/topic.ex`) — Topic struct definition and builder functions for all 10 topics.
-3. **Tet.Docs.HelpFormatter** (`apps/tet_cli/lib/tet/cli/help_formatter.ex`) — CLI presentation layer for formatting topics and search results.
+3. **Tet.CLI.HelpFormatter** (`apps/tet_cli/lib/tet/cli/help_formatter.ex`) — CLI presentation layer for formatting topics and search results.
 
 ## Verification Testing
 
