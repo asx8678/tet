@@ -20,6 +20,10 @@ defmodule Tet.StandaloneBoundaryTest do
   ]
 
   setup do
+    # Checkout SQLite sandbox for test isolation
+    :ok = Ecto.Adapters.SQL.Sandbox.checkout(Tet.Store.SQLite.Repo)
+    Ecto.Adapters.SQL.Sandbox.mode(Tet.Store.SQLite.Repo, {:shared, self()})
+
     tmp_root = unique_tmp_root("tet-boundary-test")
     File.rm_rf!(tmp_root)
     File.mkdir_p!(tmp_root)

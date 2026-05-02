@@ -124,3 +124,7 @@ defmodule Tet.Runtime.OpenAIStreamServer do
 end
 
 ExUnit.start()
+
+# Configure Ecto Sandbox for SQLite Repo test isolation.
+# Manual mode: each test that needs the DB must explicitly checkout.
+Ecto.Adapters.SQL.Sandbox.mode(Tet.Store.SQLite.Repo, :manual)

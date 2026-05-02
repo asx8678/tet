@@ -2,6 +2,10 @@ defmodule Tet.ChatTest do
   use ExUnit.Case, async: false
 
   setup do
+    # Checkout SQLite sandbox for test isolation (shared mode for spawned processes)
+    :ok = Ecto.Adapters.SQL.Sandbox.checkout(Tet.Store.SQLite.Repo)
+    Ecto.Adapters.SQL.Sandbox.mode(Tet.Store.SQLite.Repo, {:shared, self()})
+
     tmp_root = unique_tmp_root("tet-chat-test")
 
     File.rm_rf!(tmp_root)
@@ -428,16 +432,15 @@ defmodule Tet.ChatTest do
       assert {:ok, [user_message]} = Tet.list_messages(session_id, store_path: path)
       assert user_message.role == :user
       assert user_message.content == "please fail safely"
-      refute File.read!(path) =~ ~s("role":"assistant")
+      # With SQLite, verify no assistant message via list_messages instead of
+      # reading a JSONL file (the Repo-based adapter doesn't write to a file).
+      assert {:ok, messages} = Tet.list_messages(session_id, store_path: path)
+      refute Enum.any?(messages, &(&1.role == :assistant))
     end)
   end
 
-  test "store reports non-map JSONL records without crashing", %{tmp_root: tmp_root} do
-    path = tmp_path(tmp_root, "non-map")
-    File.write!(path, "[\"not\",\"a\",\"message\"]\n")
-
-    assert {:error, {:invalid_store_record, :not_a_map}} =
-             Tet.list_messages(unique_session("non-map"), store_path: path)
+  test "store returns empty list for session with no persisted messages" do
+    assert {:ok, []} = Tet.list_messages(unique_session("empty"))
   end
 
   defp collect_tet_events(session_id, acc \\ []) do

@@ -2,6 +2,10 @@ defmodule Tet.AutosaveRestoreTest do
   use ExUnit.Case, async: false
 
   setup do
+    # Checkout SQLite sandbox for test isolation (shared mode for spawned processes)
+    :ok = Ecto.Adapters.SQL.Sandbox.checkout(Tet.Store.SQLite.Repo)
+    Ecto.Adapters.SQL.Sandbox.mode(Tet.Store.SQLite.Repo, {:shared, self()})
+
     tmp_root = unique_tmp_root("tet-autosave-test")
 
     File.rm_rf!(tmp_root)
@@ -170,7 +174,11 @@ defmodule Tet.AutosaveRestoreTest do
                saved_at: "2025-01-01T00:00:00.000Z"
              )
 
-    refute File.exists?(autosave_path)
+    # With SQLite, autosaves are persisted in the DB not a file.
+    # Verify the rejected autosave was not written by confirming no
+    # checkpoint with the session_id exists.
+    assert {:ok, autosaves} = Tet.list_autosaves(autosave_path: autosave_path)
+    refute Enum.any?(autosaves, &(&1.session_id == session_id))
   end
 
   defp prompt_attrs(request_id) do

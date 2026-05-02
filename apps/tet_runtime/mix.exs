@@ -27,6 +27,7 @@ defmodule TetRuntime.MixProject do
     [
       {:tet_core, in_umbrella: true},
       {:tet_store_sqlite, in_umbrella: true, only: :test},
+      {:tet_store_memory, in_umbrella: true, only: :test},
       {:jason, "~> 1.0"}
     ]
   end

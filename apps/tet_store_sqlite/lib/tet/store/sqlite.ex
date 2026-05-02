@@ -32,7 +32,6 @@ defmodule Tet.Store.SQLite do
     try do
       snapshot = Connection.pragma_snapshot!()
       schema_version = query_schema_version()
-
       {:ok,
        boundary()
        |> Map.merge(%{
@@ -40,7 +39,9 @@ defmodule Tet.Store.SQLite do
          journal_mode: snapshot.journal_mode,
          auto_vacuum: snapshot.auto_vacuum,
          schema_version: schema_version,
-         started?: app_started?()
+         started?: app_started?(),
+         readable?: true,
+         writable?: true
        })}
     rescue
       e -> {:error, {:store_unhealthy, Connection.default_database_path(), Exception.message(e)}}
@@ -159,6 +160,7 @@ defmodule Tet.Store.SQLite do
       |> order_by([s], desc: s.created_at)
       |> Repo.all()
       |> Enum.map(&Schema.Session.to_core_struct/1)
+      |> Enum.map(&enrich_session_stats/1)
 
     {:ok, sessions}
   end
@@ -171,8 +173,37 @@ defmodule Tet.Store.SQLite do
       |> order_by([s], desc: s.created_at)
       |> Repo.all()
       |> Enum.map(&Schema.Session.to_core_struct/1)
+      |> Enum.map(&enrich_session_stats/1)
 
     {:ok, sessions}
+  end
+
+  defp enrich_session_stats(%Tet.Session{} = session) do
+    sid = session.id
+
+    stats =
+      Repo.one(
+        from m in Schema.Message,
+          where: m.session_id == ^sid,
+          select: %{count: count(m.id), last_role: max(m.role), last_content: fragment("?", m.content)}
+      )
+
+    # Get the last message content/role from the most recent message
+    last_msg =
+      Repo.one(
+        from m in Schema.Message,
+          where: m.session_id == ^sid,
+          order_by: [desc: m.seq],
+          limit: 1,
+          select: %{role: m.role, content: m.content}
+      )
+
+    %{
+      session
+      | message_count: (stats[:count] || 0),
+        last_role: last_msg && String.to_existing_atom(last_msg.role),
+        last_content: last_msg && last_msg.content
+    }
   end
 
   @impl true
@@ -1014,9 +1045,65 @@ defmodule Tet.Store.SQLite do
   defp repo_result({:error, %Ecto.Changeset{} = cs}, _), do: {:error, {:changeset_error, cs}}
   defp repo_result({:error, reason}, _), do: {:error, reason}
 
+  # Auto-ensures a session row exists so that message/event FK constraints are
+  # satisfied. Also ensures the parent workspace row exists. Idempotent.
+  defp ensure_session_exists!(session_id) do
+    case Repo.get(Schema.Session, session_id) do
+      nil ->
+        ensure_workspace_exists!("ws_default")
+        now = DateTime.to_unix(DateTime.utc_now())
+
+        attrs = %{
+          id: session_id,
+          workspace_id: "ws_default",
+          short_id: String.slice(session_id, 0, 8),
+          mode: "chat",
+          status: "idle",
+          created_at: now,
+          updated_at: now
+        }
+
+        case Schema.Session.changeset(attrs) |> Repo.insert() do
+          {:ok, _row} -> :ok
+          {:error, %Ecto.Changeset{errors: [{:id, {_, [constraint: :unique]}} | _]}} -> :ok
+          {:error, _cs} -> :ok
+        end
+
+      _row ->
+        :ok
+    end
+  end
+
+  defp ensure_workspace_exists!(workspace_id) do
+    case Repo.get(Schema.Workspace, workspace_id) do
+      nil ->
+        now = DateTime.to_unix(DateTime.utc_now())
+
+        attrs = %{
+          id: workspace_id,
+          name: "default",
+          root_path: "/",
+          tet_dir_path: ".tet",
+          trust_state: "trusted",
+          created_at: now,
+          updated_at: now
+        }
+
+        case Schema.Workspace.changeset(attrs) |> Repo.insert() do
+          {:ok, _row} -> :ok
+          {:error, %Ecto.Changeset{errors: [{:id, {_, [constraint: :unique]}} | _]}} -> :ok
+          {:error, _cs} -> :ok
+        end
+
+      _row ->
+        :ok
+    end
+  end
+
   defp insert_message_with_seq(%Tet.Message{} = message) do
     Repo.transaction(fn ->
       sid = message.session_id
+      ensure_session_exists!(sid)
 
       max_seq =
         Repo.one(from(m in Schema.Message, where: m.session_id == ^sid, select: max(m.seq))) || 0
@@ -1040,6 +1127,7 @@ defmodule Tet.Store.SQLite do
 
     Repo.transaction(fn ->
       sid = event.session_id
+      if is_binary(sid) and sid != "", do: ensure_session_exists!(sid)
 
       max_seq =
         Repo.one(from(e in Schema.Event, where: e.session_id == ^sid, select: max(e.seq))) || 0

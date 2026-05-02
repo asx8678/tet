@@ -239,6 +239,11 @@ defmodule Tet.Runtime.Subagent.ArtifactRouterTest do
   end
 
   describe "route/3 with real Tet.Store.Memory" do
+    setup do
+      Tet.Store.Memory.reset()
+      :ok
+    end
+
     test "routes artifacts and stores them as proper Artifact structs" do
       result = %{
         "id" => "res_real_001",

@@ -69,17 +69,32 @@ defmodule Tet.Store.SQLite.Schema.Autosave do
   end
 
   # Autosave core struct stores saved_at as an ISO 8601 string.
+  # SQLite stores saved_at as a unix integer in milliseconds to preserve
+  # sub-second precision across DB round-trips.
   defp unix_to_iso(nil), do: nil
 
-  defp unix_to_iso(unix) when is_integer(unix),
-    do: unix |> DateTime.from_unix!() |> DateTime.to_iso8601()
+  defp unix_to_iso(unix_ms) when is_integer(unix_ms) and unix_ms > 100_000_000_000 do
+    unix_ms
+    |> DateTime.from_unix!(:millisecond)
+    |> DateTime.to_iso8601()
+  end
+
+  defp unix_to_iso(unix_s) when is_integer(unix_s) do
+    unix_s
+    |> DateTime.from_unix!()
+    |> DateTime.to_iso8601()
+  end
 
   defp iso_to_unix(nil), do: nil
 
   defp iso_to_unix(iso) when is_binary(iso) do
     case DateTime.from_iso8601(iso) do
-      {:ok, dt, _} -> DateTime.to_unix(dt)
-      _ -> nil
+      {:ok, dt, _} ->
+        # Store as milliseconds to preserve sub-second precision.
+        DateTime.to_unix(dt, :millisecond)
+
+      _ ->
+        nil
     end
   end
 
