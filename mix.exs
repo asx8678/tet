@@ -5,31 +5,11 @@ defmodule Tet.Umbrella.MixProject do
   @standalone_applications [
     tet_core: :permanent,
     tet_store_sqlite: :permanent,
-    tet_store_memory: :temporary,
     tet_runtime: :permanent,
     tet_cli: :permanent
   ]
-  @forbidden_standalone_exact [
-    :cowboy,
-    :cowlib,
-    :plug,
-    :plug_cowboy,
-    :ranch,
-    :tet_web,
-    :tet_web_phoenix,
-    :websock,
-    :websock_adapter
-  ]
-  @forbidden_standalone_prefixes [
-    "bandit",
-    "cowboy",
-    "live_view",
-    "phoenix",
-    "plug",
-    "tet_web",
-    "thousand_island",
-    "websock"
-  ]
+
+  @web_applications @standalone_applications ++ [tet_web_phoenix: :permanent]
 
   def project do
     [
@@ -115,33 +95,18 @@ defmodule Tet.Umbrella.MixProject do
     end
   end
 
-  defp assert_standalone_release!(%Mix.Release{} = release) do
-    leaked =
-      release.applications
-      |> Map.keys()
-      |> Enum.filter(&forbidden_standalone_application?/1)
-
-    if leaked != [] do
-      Mix.raise("tet_standalone release contains forbidden web applications: #{inspect(leaked)}")
-    end
-
-    release
-  end
-
-  defp forbidden_standalone_application?(application) do
-    name = Atom.to_string(application)
-
-    application in @forbidden_standalone_exact or
-      Enum.any?(@forbidden_standalone_prefixes, &String.starts_with?(name, &1))
-  end
-
   defp releases do
     [
       tet_standalone: [
         applications: @standalone_applications,
         include_executables_for: [:unix],
         overlays: ["rel/overlays"],
-        steps: [:assemble, &assert_standalone_release!/1]
+        steps: [:assemble, &Tet.Release.assert_standalone_release!/1]
+      ],
+      tet_web: [
+        applications: @web_applications,
+        include_executables_for: [:unix],
+        overlays: ["rel/overlays"]
       ]
     ]
   end
