@@ -15,13 +15,13 @@ defmodule Tet.Store.SQLite.Schema.Message do
   @primary_key {:id, :string, autogenerate: false}
 
   schema "messages" do
-    field :session_id, :string
-    field :role, :string
-    field :content_kind, :string, default: "text"
-    field :content, :binary
-    field :metadata, :binary
-    field :seq, :integer
-    field :created_at, :integer
+    field(:session_id, :string)
+    field(:role, :string)
+    field(:content_kind, :string, default: "text")
+    field(:content, :binary)
+    field(:metadata, :binary)
+    field(:seq, :integer)
+    field(:created_at, :integer)
   end
 
   @required ~w(id session_id role content seq created_at)a

@@ -15,18 +15,18 @@ defmodule Tet.Store.SQLite.Schema.Session do
   @primary_key {:id, :string, autogenerate: false}
 
   schema "sessions" do
-    field :workspace_id, :string
-    field :short_id, :string
-    field :title, :string
-    field :mode, :string
-    field :status, :string
-    field :provider, :string
-    field :model, :string
-    field :active_task_id, :string
-    field :metadata, :binary
-    field :created_at, :integer
-    field :started_at, :integer
-    field :updated_at, :integer
+    field(:workspace_id, :string)
+    field(:short_id, :string)
+    field(:title, :string)
+    field(:mode, :string)
+    field(:status, :string)
+    field(:provider, :string)
+    field(:model, :string)
+    field(:active_task_id, :string)
+    field(:metadata, :binary)
+    field(:created_at, :integer)
+    field(:started_at, :integer)
+    field(:updated_at, :integer)
   end
 
   @required ~w(id workspace_id short_id mode status created_at updated_at)a

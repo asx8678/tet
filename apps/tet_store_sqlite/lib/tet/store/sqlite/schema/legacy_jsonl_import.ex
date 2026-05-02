@@ -15,13 +15,13 @@ defmodule Tet.Store.SQLite.Schema.LegacyJsonlImport do
   @primary_key false
 
   schema "legacy_jsonl_imports" do
-    field :source_kind, :string, primary_key: true
-    field :source_path, :string, primary_key: true
-    field :source_size, :integer
-    field :source_mtime, :integer
-    field :sha256, :string
-    field :row_count, :integer
-    field :imported_at, :integer
+    field(:source_kind, :string, primary_key: true)
+    field(:source_path, :string, primary_key: true)
+    field(:source_size, :integer)
+    field(:source_mtime, :integer)
+    field(:sha256, :string)
+    field(:row_count, :integer)
+    field(:imported_at, :integer)
   end
 
   @required ~w(source_kind source_path source_size source_mtime sha256 row_count imported_at)a

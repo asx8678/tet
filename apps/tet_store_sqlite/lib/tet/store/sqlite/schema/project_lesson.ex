@@ -13,15 +13,15 @@ defmodule Tet.Store.SQLite.Schema.ProjectLesson do
   @primary_key {:id, :string, autogenerate: false}
 
   schema "project_lessons" do
-    field :title, :string
-    field :description, :string
-    field :category, :string
-    field :source_finding_id, :string
-    field :session_id, :string
-    field :evidence_refs, :binary
-    field :promoted_at, :integer
-    field :metadata, :binary
-    field :created_at, :integer
+    field(:title, :string)
+    field(:description, :string)
+    field(:category, :string)
+    field(:source_finding_id, :string)
+    field(:session_id, :string)
+    field(:evidence_refs, :binary)
+    field(:promoted_at, :integer)
+    field(:metadata, :binary)
+    field(:created_at, :integer)
   end
 
   @required ~w(id title source_finding_id created_at)a

@@ -13,18 +13,18 @@ defmodule Tet.Store.SQLite.Schema.Finding do
   @primary_key {:id, :string, autogenerate: false}
 
   schema "findings" do
-    field :session_id, :string
-    field :task_id, :string
-    field :title, :string
-    field :description, :string
-    field :source, :string
-    field :severity, :string, default: "info"
-    field :evidence_refs, :binary
-    field :promoted_to, :binary
-    field :promoted_at, :integer
-    field :status, :string, default: "open"
-    field :metadata, :binary
-    field :created_at, :integer
+    field(:session_id, :string)
+    field(:task_id, :string)
+    field(:title, :string)
+    field(:description, :string)
+    field(:source, :string)
+    field(:severity, :string, default: "info")
+    field(:evidence_refs, :binary)
+    field(:promoted_to, :binary)
+    field(:promoted_at, :integer)
+    field(:status, :string, default: "open")
+    field(:metadata, :binary)
+    field(:created_at, :integer)
   end
 
   @required ~w(id session_id title source severity status created_at)a
@@ -96,7 +96,8 @@ defmodule Tet.Store.SQLite.Schema.Finding do
 
   defp decode_promoted_to(blob) when is_binary(blob) do
     case Jason.decode(blob) do
-      {:ok, %{"type" => type_str, "id" => id}} when type_str in ~w(persistent_memory project_lesson) ->
+      {:ok, %{"type" => type_str, "id" => id}}
+      when type_str in ~w(persistent_memory project_lesson) ->
         {String.to_existing_atom(type_str), id}
 
       _ ->

@@ -13,15 +13,15 @@ defmodule Tet.Store.SQLite.Schema.PersistentMemory do
   @primary_key {:id, :string, autogenerate: false}
 
   schema "persistent_memories" do
-    field :session_id, :string
-    field :title, :string
-    field :description, :string
-    field :source_finding_id, :string
-    field :severity, :string
-    field :evidence_refs, :binary
-    field :promoted_at, :integer
-    field :metadata, :binary
-    field :created_at, :integer
+    field(:session_id, :string)
+    field(:title, :string)
+    field(:description, :string)
+    field(:source_finding_id, :string)
+    field(:severity, :string)
+    field(:evidence_refs, :binary)
+    field(:promoted_at, :integer)
+    field(:metadata, :binary)
+    field(:created_at, :integer)
   end
 
   @required ~w(id session_id title source_finding_id created_at)a

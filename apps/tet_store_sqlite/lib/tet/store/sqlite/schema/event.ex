@@ -17,12 +17,12 @@ defmodule Tet.Store.SQLite.Schema.Event do
   @primary_key {:id, :string, autogenerate: false}
 
   schema "events" do
-    field :session_id, :string
-    field :seq, :integer
-    field :type, :string
-    field :payload, :binary
-    field :metadata, :binary
-    field :inserted_at, :integer
+    field(:session_id, :string)
+    field(:seq, :integer)
+    field(:type, :string)
+    field(:payload, :binary)
+    field(:metadata, :binary)
+    field(:inserted_at, :integer)
   end
 
   @required ~w(id session_id seq type inserted_at)a

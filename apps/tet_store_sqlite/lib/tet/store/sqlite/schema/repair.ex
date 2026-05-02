@@ -13,16 +13,16 @@ defmodule Tet.Store.SQLite.Schema.Repair do
   @primary_key {:id, :string, autogenerate: false}
 
   schema "repairs" do
-    field :error_log_id, :string
-    field :session_id, :string
-    field :strategy, :string
-    field :params, :binary
-    field :result, :binary
-    field :status, :string, default: "pending"
-    field :metadata, :binary
-    field :created_at, :integer
-    field :started_at, :integer
-    field :completed_at, :integer
+    field(:error_log_id, :string)
+    field(:session_id, :string)
+    field(:strategy, :string)
+    field(:params, :binary)
+    field(:result, :binary)
+    field(:status, :string, default: "pending")
+    field(:metadata, :binary)
+    field(:created_at, :integer)
+    field(:started_at, :integer)
+    field(:completed_at, :integer)
   end
 
   @required ~w(id error_log_id strategy status created_at)a
