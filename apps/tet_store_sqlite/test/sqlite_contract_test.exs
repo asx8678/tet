@@ -35,5 +35,5 @@ defmodule Tet.Store.SQLiteContractTest do
     {:ok, opts: []}
   end
 
-  use StoreContractCase, adapter: Tet.Store.SQLite
+  use Tet.Store.SQLite.StoreContractCase, adapter: Tet.Store.SQLite
 end
