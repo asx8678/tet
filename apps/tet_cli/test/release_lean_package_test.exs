@@ -59,12 +59,20 @@ defmodule TetCLI.ReleaseLeanPackageTest do
     test "standalone release config excludes web framework applications" do
       umbrella_mix = File.read!(Path.join(@root, "mix.exs"))
 
-      # Verify the forbidden lists exist
-      assert umbrella_mix =~ "@forbidden_standalone_exact"
-      assert umbrella_mix =~ "@forbidden_standalone_prefixes"
+      # Forbidden lists consolidated into Tet.Release — mix.exs delegates to it
+      assert umbrella_mix =~ "Tet.Release.assert_standalone_release!"
 
-      # The assert_standalone_release! callback is wired
-      assert umbrella_mix =~ "assert_standalone_release!"
+      refute umbrella_mix =~ "@forbidden_standalone_exact",
+             "forbidden lists should be consolidated in Tet.Release, not duplicated in mix.exs"
+
+      refute umbrella_mix =~ "@forbidden_standalone_prefixes",
+             "forbidden prefixes should be consolidated in Tet.Release, not duplicated in mix.exs"
+
+      # Verify the centralized source actually exposes the data
+      assert is_list(Tet.Release.forbidden_standalone_exact())
+      assert :tet_web_phoenix in Tet.Release.forbidden_standalone_exact()
+      assert is_list(Tet.Release.forbidden_standalone_prefixes())
+      assert Enum.any?(Tet.Release.forbidden_standalone_prefixes(), &(&1 == "phoenix"))
     end
 
     test "Boundary module rejects web framework apps" do
