@@ -354,11 +354,26 @@ defmodule Tet.Migration do
   defp warning_lines(%__MODULE__{warnings: warnings}) do
     warning_lines =
       Enum.map(warnings, fn w ->
-        "  ⚠  #{w}"
+        "  ⚠  #{redact_warning_string(w)}"
       end)
 
     ["── Warnings ──"] ++ warning_lines ++ [""]
   end
+
+  defp redact_warning_string(warning) when is_binary(warning) do
+    # Replace any secret-looking tokens in the warning string
+    Regex.replace(
+      ~r/(sk-|pk-|Bearer |token-|key-|ghp_|gho_|github_pat_|AKIA)[A-Za-z0-9_\-]{4,}/i,
+      warning,
+      fn match, _prefix ->
+        prefix = String.slice(match, 0, 4)
+        suffix = String.slice(match, -4, 4)
+        "#{prefix}...#{suffix}"
+      end
+    )
+  end
+
+  defp redact_warning_string(other), do: inspect(other)
 
   defp status_line(%__MODULE__{mode: :dry_run, status: :dry_run_complete}) do
     "✓ Dry-run complete. Review warnings above before executing."
@@ -382,12 +397,12 @@ defmodule Tet.Migration do
     end
   end
 
-  defp redact_value(key, value) when is_map(value) do
+  defp redact_value(_key, value) when is_map(value) do
     Map.new(value, fn {k, v} -> {k, redact_value(k, v)} end)
   end
 
-  defp redact_value(key, value) when is_list(value) do
-    Enum.map(value, fn v -> redact_value(key, v) end)
+  defp redact_value(_key, value) when is_list(value) do
+    Enum.map(value, fn v -> redact_value("_item", v) end)
   end
 
   defp redact_value(_key, value), do: value

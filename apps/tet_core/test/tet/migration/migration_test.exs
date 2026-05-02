@@ -621,5 +621,19 @@ defmodule Tet.MigrationTest do
       assert hd(m.items).key == "model"
       assert Enum.any?(m.warnings, &String.contains?(&1, "system_prompt"))
     end
+
+    test "report redacts secret-looking values in warning lines" do
+      {:ok, m} =
+        Migration.new(
+          Map.merge(@basic_attrs, %{
+            warnings: ["manual review includes sk-WARNINGSECRET1234567890"]
+          })
+        )
+
+      report = Migration.report(m)
+      refute String.contains?(report, "sk-WARNINGSECRET1234567890")
+      # partial preview present
+      assert String.contains?(report, "sk-W")
+    end
   end
 end
