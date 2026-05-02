@@ -72,7 +72,8 @@ defmodule Tet.Runtime.Doctor do
   defp store_check(opts) do
     case StoreConfig.health(opts) do
       {:ok, health} ->
-        checked(:store, "store path is readable and writable", health)
+        message = store_health_message(health)
+        checked(:store, message, health)
 
       {:error, reason} ->
         details = %{
@@ -86,6 +87,21 @@ defmodule Tet.Runtime.Doctor do
         errored(:store, "store health check failed: #{inspect(reason)}", details)
     end
   end
+
+  @doc """
+  Builds the human-readable store health check message.
+
+  SQLite health maps with `format: :sqlite`, a binary `journal_mode`, and an integer
+  `schema_version` get SQLite-specific messaging. Other adapters fall back to the
+  generic store-health message.
+  """
+  @spec store_health_message(map()) :: String.t()
+  def store_health_message(%{format: :sqlite, journal_mode: jm, schema_version: sv})
+      when is_binary(jm) and is_integer(sv) do
+    "SQLite store healthy (#{String.upcase(jm)} mode, schema v#{sv})"
+  end
+
+  def store_health_message(_health), do: "store path is readable and writable"
 
   defp provider_check(opts) do
     case ProviderConfig.diagnose(opts) do
