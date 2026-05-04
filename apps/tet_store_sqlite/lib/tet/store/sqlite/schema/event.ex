@@ -44,7 +44,7 @@ defmodule Tet.Store.SQLite.Schema.Event do
   def to_core_struct(%__MODULE__{} = row) do
     %Tet.Event{
       id: row.id,
-      type: String.to_existing_atom(row.type),
+      type: String.to_atom(row.type),
       session_id: row.session_id,
       seq: row.seq,
       sequence: row.seq,

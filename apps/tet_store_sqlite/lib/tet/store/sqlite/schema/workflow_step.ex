@@ -59,7 +59,7 @@ defmodule Tet.Store.SQLite.Schema.WorkflowStep do
       input: JsonField.decode_any(row.input),
       output: JsonField.decode_any(row.output),
       error: JsonField.decode_any(row.error),
-      status: String.to_existing_atom(row.status),
+      status: String.to_atom(row.status),
       attempt: row.attempt,
       metadata: JsonField.decode(row.metadata),
       started_at: JsonField.to_datetime(row.started_at),

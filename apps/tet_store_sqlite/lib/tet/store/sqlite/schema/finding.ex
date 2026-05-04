@@ -50,12 +50,12 @@ defmodule Tet.Store.SQLite.Schema.Finding do
       task_id: row.task_id,
       title: row.title,
       description: row.description,
-      source: String.to_existing_atom(row.source),
-      severity: String.to_existing_atom(row.severity),
+      source: String.to_atom(row.source),
+      severity: String.to_atom(row.severity),
       evidence_refs: JsonField.decode_list(row.evidence_refs),
       promoted_to: decode_promoted_to(row.promoted_to),
       promoted_at: JsonField.to_datetime(row.promoted_at),
-      status: String.to_existing_atom(row.status),
+      status: String.to_atom(row.status),
       created_at: JsonField.to_datetime(row.created_at),
       metadata: JsonField.decode(row.metadata)
     }
@@ -98,7 +98,7 @@ defmodule Tet.Store.SQLite.Schema.Finding do
     case Jason.decode(blob) do
       {:ok, %{"type" => type_str, "id" => id}}
       when type_str in ~w(persistent_memory project_lesson) ->
-        {String.to_existing_atom(type_str), id}
+        {String.to_atom(type_str), id}
 
       _ ->
         nil

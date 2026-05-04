@@ -386,6 +386,30 @@ defmodule StoreContractCase do
           assert r3.id == "rep_fifo_l"
         end
       end
+
+      # -- Event Ordering (monotonic seq) --
+
+      describe "event ordering" do
+        test "events are returned in monotonic seq order", %{opts: opts} do
+          for i <- 1..5 do
+            @adapter.append_event(
+              %{
+                id: "evt_ord_#{i}",
+                type: :"provider.started",
+                session_id: "ses_ord",
+                payload: %{step: i},
+                metadata: %{}
+              },
+              opts
+            )
+          end
+
+          assert {:ok, events} = @adapter.list_events("ses_ord", opts)
+          seqs = Enum.map(events, & &1.seq)
+          assert seqs == Enum.sort(seqs), "Events must be in monotonic order"
+          assert length(seqs) == 5
+        end
+      end
     end
   end
 end

@@ -20,7 +20,7 @@ defmodule Tet.PlanMode.InvariantsGateTest do
 
   3. **Hook Ordering Determinism** — Gate checks are applied in a
      well-defined order; same inputs always produce the same decision.
-     Hook system stubbed until BD-0024 merges.
+     Hook system (BD-0024) is integrated via `Tet.PlanMode.evaluate_with_hooks/4`.
   """
 
   use ExUnit.Case, async: true
@@ -296,8 +296,8 @@ defmodule Tet.PlanMode.InvariantsGateTest do
   #   4. Category gate
   #   5. Guidance emission (after allow)
   #
-  # Same inputs MUST always produce the same decision. Hook system
-  # (BD-0024) is stubbed — we verify the gate's own ordering and
+  # Same inputs MUST always produce the same decision. Hook system (BD-0024)
+  # is integrated via PlanMode facade — we verify the gate's own ordering and
   # determinism guarantees. Fail-closed: if an earlier check would
   # block, a later check must not override it.
 
@@ -373,9 +373,9 @@ defmodule Tet.PlanMode.InvariantsGateTest do
       assert match?({:block, :invalid_context}, decision)
     end
 
-    # -- Hook stub: future BD-0024 integration point --
+    # -- Hook integration (BD-0024) --
 
-    test "gate decision is stable hook input (stub for BD-0024)" do
+    test "gate decision is stable hook input (BD-0024 integration)" do
       contexts = [
         %{mode: :plan, task_category: :researching, task_id: "t1"},
         %{mode: :execute, task_category: :acting, task_id: "t2"},
@@ -391,6 +391,34 @@ defmodule Tet.PlanMode.InvariantsGateTest do
                  match?({:guide, _}, decision),
                "unexpected decision shape: #{inspect(decision)}"
       end
+    end
+
+    test "evaluate_with_hooks preserves gate decision for empty registry" do
+      import Tet.PlanMode
+
+      registry = Tet.HookManager.new()
+
+      allowed =
+        evaluate_with_hooks(
+          read_contract(),
+          Policy.default(),
+          %{mode: :plan, task_category: :researching, task_id: "t1"},
+          registry
+        )
+
+      assert {:ok, decision, _ctx, []} = allowed
+      assert guided?(decision)
+
+      blocked =
+        evaluate_with_hooks(
+          write_contract(),
+          Policy.default(),
+          %{mode: :plan, task_category: :researching, task_id: "t1"},
+          registry
+        )
+
+      assert {:ok, decision, _ctx, []} = blocked
+      assert blocked?(decision)
     end
   end
 end

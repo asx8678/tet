@@ -28,7 +28,13 @@ defmodule Tet.Store.SQLite do
   end
 
   @impl true
-  def health(_opts) do
+  def health(opts) do
+    store_path = resolve_store_path(opts)
+    db_path = Connection.default_database_path()
+
+    path_info = validate_store_path(store_path)
+    file_info = validate_db_file(db_path)
+
     try do
       snapshot = Connection.pragma_snapshot!()
       schema_version = query_schema_version()
@@ -37,17 +43,78 @@ defmodule Tet.Store.SQLite do
        boundary()
        |> Map.merge(%{
          status: :ok,
+         path: db_path,
+         store_path: store_path,
          journal_mode: snapshot.journal_mode,
          auto_vacuum: snapshot.auto_vacuum,
          schema_version: schema_version,
          started?: app_started?(),
-         readable?: true,
-         writable?: true
+         readable?: path_info.readable? and file_info.readable?,
+         writable?: path_info.writable? and file_info.writable?,
+         dir_exists?: path_info.exists?,
+         file_exists?: file_info.exists?,
+         dir_writable?: path_info.writable?,
+         file_readable?: file_info.readable?
        })}
     rescue
-      e -> {:error, {:store_unhealthy, Connection.default_database_path(), Exception.message(e)}}
+      e -> {:error, {:store_unhealthy, db_path, Exception.message(e)}}
     end
   end
+
+  defp resolve_store_path(opts) do
+    cond do
+      path = Keyword.get(opts, :path) -> path
+      path = System.get_env("TET_STORE_PATH") -> path
+      path = Application.get_env(:tet_store_sqlite, :store_path) -> path
+      true -> nil
+    end
+  end
+
+  defp validate_store_path(nil), do: %{exists?: false, readable?: false, writable?: false}
+
+  defp validate_store_path(path) when is_binary(path) do
+    dir_exists? = File.dir?(path)
+
+    readable? =
+      dir_exists? and
+        case File.stat(path) do
+          {:ok, %File.Stat{access: access}} when access in [:read, :read_write] -> true
+          _ -> false
+        end
+
+    writable? =
+      dir_exists? and
+        case File.stat(path) do
+          {:ok, %File.Stat{access: access}} when access in [:write, :read_write] -> true
+          _ -> false
+        end
+
+    %{exists?: dir_exists?, readable?: readable?, writable?: writable?}
+  end
+
+  defp validate_store_path(_), do: %{exists?: false, readable?: false, writable?: false}
+
+  defp validate_db_file(nil), do: %{exists?: false, readable?: false, writable?: false}
+
+  defp validate_db_file(db_path) when is_binary(db_path) do
+    case File.stat(db_path) do
+      {:ok, %File.Stat{access: access, size: size}} ->
+        %{
+          exists?: true,
+          readable?: access in [:read, :read_write],
+          writable?: access in [:write, :read_write],
+          size: size
+        }
+
+      {:error, :enoent} ->
+        %{exists?: false, readable?: false, writable?: false}
+
+      {:error, _} ->
+        %{exists?: false, readable?: false, writable?: false}
+    end
+  end
+
+  defp validate_db_file(_), do: %{exists?: false, readable?: false, writable?: false}
 
   # ── Transaction ────────────────────────────────────────────────────────
 
@@ -208,7 +275,7 @@ defmodule Tet.Store.SQLite do
     %{
       session
       | message_count: stats[:count] || 0,
-        last_role: last_msg && String.to_existing_atom(last_msg.role),
+        last_role: last_msg && safe_role_atom(last_msg.role),
         last_content: last_msg && last_msg.content
     }
   end
@@ -815,13 +882,13 @@ defmodule Tet.Store.SQLite do
   @impl true
   def dequeue_repair(_opts) do
     # Atomic: select oldest pending + update to running in one transaction.
+    # SQLite3 has single-writer semantics — no FOR UPDATE lock needed.
     Repo.transaction(fn ->
       case Repo.one(
              from(r in Schema.Repair,
                where: r.status == "pending",
                order_by: [asc: r.created_at],
-               limit: 1,
-               lock: "FOR UPDATE"
+               limit: 1
              )
            ) do
         nil ->
@@ -1275,4 +1342,13 @@ defmodule Tet.Store.SQLite do
       app == :tet_store_sqlite
     end)
   end
+
+  # Role atoms are well-bounded (user/assistant/system/tool).  Using
+  # String.to_existing_atom/1 fails in releases when the atom hasn't been
+  # loaded yet.  to_atom/1 is safe here because the value space is fixed.
+  @known_roles ~w(user assistant system tool)
+
+  defp safe_role_atom(role) when role in @known_roles, do: String.to_atom(role)
+  defp safe_role_atom(role) when is_binary(role), do: String.to_atom(role)
+  defp safe_role_atom(_), do: nil
 end

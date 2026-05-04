@@ -70,16 +70,30 @@ defmodule Tet.Runtime.Doctor do
   end
 
   defp store_check(opts) do
+    configured_path = StoreConfig.path(opts)
+    env_path = System.get_env("TET_STORE_PATH")
+
     case StoreConfig.health(opts) do
       {:ok, health} ->
-        message = store_health_message(health)
-        checked(:store, message, health)
+        case validate_configured_store_path(env_path, health) do
+          :ok ->
+            message = store_health_message(health)
+            checked(:store, message, health)
+
+          {:error, reason} ->
+            details =
+              health
+              |> Map.put(:status, :error)
+              |> Map.put(:path, configured_path)
+
+            errored(:store, reason, details)
+        end
 
       {:error, reason} ->
         details = %{
           application: :none,
           adapter: StoreConfig.adapter(opts),
-          path: StoreConfig.path(opts),
+          path: configured_path,
           status: :error,
           reason: reason
         }
@@ -87,6 +101,26 @@ defmodule Tet.Runtime.Doctor do
         errored(:store, "store health check failed: #{inspect(reason)}", details)
     end
   end
+
+  @doc false
+  def validate_configured_store_path(nil, _health), do: :ok
+  def validate_configured_store_path("", _health), do: :ok
+
+  def validate_configured_store_path(path, health) when is_binary(path) do
+    cond do
+      health[:dir_exists?] == false ->
+        {:error,
+         "store path does not exist or is not a directory: #{path} — check TET_STORE_PATH"}
+
+      health[:writable?] == false ->
+        {:error, "store path is not writable: #{path} — check permissions and TET_STORE_PATH"}
+
+      true ->
+        :ok
+    end
+  end
+
+  def validate_configured_store_path(_path, _health), do: :ok
 
   @doc """
   Builds the human-readable store health check message.

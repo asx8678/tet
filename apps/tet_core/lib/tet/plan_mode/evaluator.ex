@@ -38,14 +38,14 @@ defmodule Tet.PlanMode.Evaluator do
   - Override or modify block decisions.
   - Make independent allow/block decisions (only the gate blocks).
   - Persist audit trails (that's a store concern).
-  - Run hooks (that's BD-0024 HookManager).
+  - Run hooks (that's `Tet.HookManager` — integrated via `Tet.PlanMode.evaluate_with_hooks/4`).
 
   ## Relationship to other modules
 
   - `Tet.PlanMode.Gate` (BD-0025): produces the gate_result input.
   - `Tet.PlanMode.Evaluator.Profile`: configurable evaluation criteria.
   - `Tet.PlanMode.Policy` (BD-0025): category/mode definitions for context.
-  - `Tet.HookManager` (BD-0024): hooks run at a different layer.
+  - `Tet.HookManager` (BD-0024): hooks run at a different layer, composed by `Tet.PlanMode`.
   """
 
   alias Tet.PlanMode.Evaluator.Profile

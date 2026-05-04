@@ -112,10 +112,10 @@ run_tet() {
       LANG="${LANG:-C}" \
       LC_ALL="${LC_ALL:-C}" \
       TET_PROVIDER=mock \
-      TET_STORE_PATH="$WORKSPACE/.tet/messages.jsonl" \
-      TET_EVENTS_PATH="$WORKSPACE/.tet/events.jsonl" \
-      TET_AUTOSAVE_PATH="$WORKSPACE/.tet/autosaves.jsonl" \
-      TET_PROMPT_HISTORY_PATH="$WORKSPACE/.tet/prompt_history.jsonl" \
+      TET_STORE_PATH="$WORKSPACE/run/.tet" \
+      TET_EVENTS_PATH="$WORKSPACE/run/.tet" \
+      TET_AUTOSAVE_PATH="$WORKSPACE/run/.tet" \
+      TET_PROMPT_HISTORY_PATH="$WORKSPACE/run/.tet" \
       TET_MODEL_REGISTRY_PATH= \
       TET_PROFILE_REGISTRY_PATH= \
       TET_PROFILE= \
@@ -162,7 +162,7 @@ main() {
   assert_release_wrapper
 
   WORKSPACE=$(make_temp_dir)
-  mkdir -p "$WORKSPACE/out" "$WORKSPACE/run" "$WORKSPACE/.tet" "$WORKSPACE/home" "$WORKSPACE/tmp"
+  mkdir -p "$WORKSPACE/out" "$WORKSPACE/run" "$WORKSPACE/.tet" "$WORKSPACE/run/.tet" "$WORKSPACE/home" "$WORKSPACE/tmp"
 
   local help_out doctor_out profiles_out ask_out sessions_out session_out events_out
 
@@ -195,8 +195,7 @@ main() {
   assert_contains "$events_out" "provider_text_delta"
   assert_contains "$events_out" "message_persisted"
 
-  assert_file_nonempty "$WORKSPACE/.tet/messages.jsonl"
-  assert_file_nonempty "$WORKSPACE/.tet/events.jsonl"
+  assert_file_nonempty "$WORKSPACE/run/.tet/tet.sqlite"
 
   log "OK: first-mile release smoke passed offline with mock provider and sandboxed store"
 }

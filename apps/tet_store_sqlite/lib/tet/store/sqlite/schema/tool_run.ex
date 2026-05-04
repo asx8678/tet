@@ -54,9 +54,9 @@ defmodule Tet.Store.SQLite.Schema.ToolRun do
       session_id: row.session_id,
       task_id: row.task_id,
       tool_name: row.tool_name,
-      read_or_write: String.to_existing_atom(row.read_or_write),
+      read_or_write: String.to_atom(row.read_or_write),
       args: JsonField.decode(row.args),
-      status: String.to_existing_atom(row.status),
+      status: String.to_atom(row.status),
       block_reason: safe_to_existing_atom(row.block_reason),
       changed_files: JsonField.decode_list(row.changed_files),
       metadata: JsonField.decode(row.metadata),
@@ -85,7 +85,7 @@ defmodule Tet.Store.SQLite.Schema.ToolRun do
   end
 
   defp safe_to_existing_atom(nil), do: nil
-  defp safe_to_existing_atom(str) when is_binary(str), do: String.to_existing_atom(str)
+  defp safe_to_existing_atom(str) when is_binary(str), do: String.to_atom(str)
 
   defp safe_to_string(nil), do: nil
   defp safe_to_string(atom) when is_atom(atom), do: Atom.to_string(atom)

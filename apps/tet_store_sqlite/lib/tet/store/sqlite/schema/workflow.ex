@@ -47,7 +47,7 @@ defmodule Tet.Store.SQLite.Schema.Workflow do
       id: row.id,
       session_id: row.session_id,
       task_id: row.task_id,
-      status: String.to_existing_atom(row.status),
+      status: String.to_atom(row.status),
       claimed_by: row.claimed_by,
       claim_expires_at: JsonField.to_datetime(row.claim_expires_at),
       metadata: JsonField.decode(row.metadata),

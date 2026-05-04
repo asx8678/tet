@@ -3,6 +3,8 @@ defmodule Tet.HookManagerTest do
 
   alias Tet.HookManager
   alias Tet.HookManager.Hook
+  alias Tet.Tool.Contract
+  alias Tet.Tool.ReadOnlyContracts
 
   describe "new/0" do
     test "returns an empty registry" do
@@ -404,6 +406,170 @@ defmodule Tet.HookManagerTest do
     end
   end
 
+  # ============================================================
+  # Plan mode integration: Tet.PlanMode.evaluate_with_hooks/4
+  # ============================================================
+  # Verifies hook ordering through the plan-mode integration path.
+  # Gate decisions pass through pre-hooks, gate, and post-hooks in
+  # the correct priority order, composing as documented in BD-0024.
+  # Intentionally decoupled: Gate.evaluate/3 is pure and tested
+  # separately — these tests validate the hook→gate→hook pipeline.
+
+  describe "plan mode integration (evaluate_with_hooks/4)" do
+    test "pre-hook priority ordering is preserved through plan-mode facade" do
+      import Tet.PlanMode
+
+      {:ok, order_agent} = Agent.start_link(fn -> [] end)
+
+      h_high =
+        build_pre_hook("pm-high", 100, fn ctx ->
+          Agent.update(order_agent, &(&1 ++ [:high]))
+          {:continue, ctx}
+        end)
+
+      h_low =
+        build_pre_hook("pm-low", 10, fn ctx ->
+          Agent.update(order_agent, &(&1 ++ [:low]))
+          {:continue, ctx}
+        end)
+
+      registry =
+        HookManager.new() |> HookManager.register(h_low) |> HookManager.register(h_high)
+
+      ctx = %{mode: :plan, task_category: :researching, task_id: "t1"}
+
+      {:ok, decision, _ctx, _guides} =
+        evaluate_with_hooks(
+          read_only_contract(),
+          Tet.PlanMode.Policy.default(),
+          ctx,
+          registry
+        )
+
+      # Pre-hooks must run high→low: [:high, :low]
+      assert [:high, :low] = Agent.get(order_agent, & &1)
+      assert Tet.PlanMode.guided?(decision)
+      Agent.stop(order_agent)
+    end
+
+    test "pre-hook block short-circuits gate — no post-hooks run" do
+      import Tet.PlanMode
+
+      {:ok, order_agent} = Agent.start_link(fn -> [] end)
+
+      pre_blocker =
+        build_pre_hook("pm-blocker", 200, fn _ctx ->
+          Agent.update(order_agent, &(&1 ++ [:pre_blocker]))
+          :block
+        end)
+
+      post_never =
+        build_post_hook("pm-never", 10, fn ctx ->
+          Agent.update(order_agent, &(&1 ++ [:post_never]))
+          {:continue, ctx}
+        end)
+
+      registry =
+        HookManager.new()
+        |> HookManager.register(pre_blocker)
+        |> HookManager.register(post_never)
+
+      ctx = %{mode: :execute, task_category: :acting, task_id: "t1"}
+
+      assert {:block, :hook_blocked, _} =
+               evaluate_with_hooks(
+                 write_contract(),
+                 Tet.PlanMode.Policy.default(),
+                 ctx,
+                 registry
+               )
+
+      # Only pre-hook ran, post-hook never executed
+      assert [:pre_blocker] = Agent.get(order_agent, & &1)
+      Agent.stop(order_agent)
+    end
+
+    test "gate block is final — post-hooks cannot override" do
+      import Tet.PlanMode
+
+      # Post-hook tries to convert block to allow — must not run
+      overrider =
+        build_post_hook("pm-overrider", 10, fn ctx ->
+          {:continue, Map.put(ctx, :overridden, true)}
+        end)
+
+      registry = HookManager.new() |> HookManager.register(overrider)
+
+      # Plan mode blocks rogue write
+      ctx = %{mode: :plan, task_category: :researching, task_id: "t1"}
+      rogue = rogue_write_contract()
+
+      {:ok, decision, _ctx, _guides} =
+        evaluate_with_hooks(
+          rogue,
+          Tet.PlanMode.Policy.default(),
+          ctx,
+          registry
+        )
+
+      assert {:block, :plan_mode_blocks_mutation} = decision
+    end
+
+    test "empty registry preserves gate behavior end-to-end" do
+      import Tet.PlanMode
+
+      registry = HookManager.new()
+
+      # Allowed: read-only in plan/researching with guidance
+      ctx = %{mode: :plan, task_category: :researching, task_id: "t1"}
+
+      {:ok, decision, _ctx, []} =
+        evaluate_with_hooks(
+          read_only_contract(),
+          Tet.PlanMode.Policy.default(),
+          ctx,
+          registry
+        )
+
+      assert guided?(decision)
+
+      # Blocked: write in plan/researching
+      {:ok, decision, _ctx, []} =
+        evaluate_with_hooks(
+          write_contract(),
+          Tet.PlanMode.Policy.default(),
+          ctx,
+          registry
+        )
+
+      assert blocked?(decision)
+    end
+
+    test "post-hook enrichment accumulates with gate guidance" do
+      import Tet.PlanMode
+
+      guide_hook =
+        build_post_hook("pm-guide", 10, fn ctx ->
+          {:guide, "Safety check passed", Map.put(ctx, :safety_checked, true)}
+        end)
+
+      registry = HookManager.new() |> HookManager.register(guide_hook)
+      ctx = %{mode: :plan, task_category: :researching, task_id: "t1"}
+
+      {:ok, decision, final_ctx, guides} =
+        evaluate_with_hooks(
+          read_only_contract(),
+          Tet.PlanMode.Policy.default(),
+          ctx,
+          registry
+        )
+
+      assert guided?(decision)
+      assert final_ctx.safety_checked == true
+      assert "Safety check passed" in guides
+    end
+  end
+
   # -- Test helpers --
 
   defp build_pre_hook(id, priority, action_fn \\ nil) do
@@ -426,5 +592,52 @@ defmodule Tet.HookManagerTest do
       priority: priority,
       action_fn: fn_
     })
+  end
+
+  # -- Contract fixtures for plan-mode integration tests --
+
+  defp read_only_contract do
+    {:ok, c} = ReadOnlyContracts.fetch("read")
+    c
+  end
+
+  defp write_contract do
+    %Contract{} = base = read_only_contract()
+
+    %{
+      base
+      | name: "write-file",
+        read_only: false,
+        mutation: :write,
+        modes: [:execute, :repair],
+        task_categories: [:acting, :verifying, :debugging],
+        execution: %{
+          base.execution
+          | mutates_workspace: true,
+            executes_code: false,
+            status: :contract_only,
+            effects: [:writes_file]
+        }
+    }
+  end
+
+  defp rogue_write_contract do
+    %Contract{} = base = read_only_contract()
+
+    %{
+      base
+      | name: "rogue-plan-write",
+        read_only: false,
+        mutation: :write,
+        modes: [:plan, :explore, :execute],
+        task_categories: [:acting, :verifying, :debugging],
+        execution: %{
+          base.execution
+          | mutates_workspace: true,
+            executes_code: false,
+            status: :contract_only,
+            effects: [:writes_file]
+        }
+    }
   end
 end

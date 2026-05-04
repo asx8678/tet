@@ -18,7 +18,7 @@ defmodule Tet.TaskManager do
 
   - Dispatch tool execution (that's runtime).
   - Persist events (that's store).
-  - Run hooks (future BD-0024 concern).
+  - Run hooks (integrated via `Tet.PlanMode.evaluate_with_hooks/4`).
   - Own process supervision (that's runtime).
 
   ## Relationship to other modules

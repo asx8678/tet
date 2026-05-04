@@ -1,6 +1,7 @@
 defmodule Tet.CLI.Render do
   @moduledoc false
 
+  alias Tet.CLI.ErrorFormatter
   alias Tet.Prompt.Canonical
 
   def help do
@@ -54,34 +55,46 @@ defmodule Tet.CLI.Render do
   def error(:session_not_found), do: "session not found"
   def error(:autosave_not_found), do: "autosave checkpoint not found"
   def error(:profile_not_found), do: "profile not found"
-  def error(:store_not_configured), do: "store is not configured"
+  def error(:invalid_session), do: "session not found or not running"
+
+  def error(:store_not_configured) do
+    "store is not configured — set TET_STORE_PATH or run `tet doctor` for details"
+  end
 
   def error({:missing_provider_env, env_name}) do
     "provider is missing required environment variable #{env_name}"
   end
 
+  def error({:unknown_provider, {:unknown, name}}) do
+    "unknown provider: #{name} — supported providers are: openai, anthropic, mock"
+  end
+
   def error({:unknown_provider, provider}) do
-    "unknown provider #{inspect(provider)}"
+    "unknown provider: #{ErrorFormatter.inspect_value(provider)} — set TET_PROVIDER to a supported provider (openai, anthropic, mock)"
+  end
+
+  def error({:unsupported_shell, shell}) do
+    "unsupported shell: #{shell}"
   end
 
   def error({:store_adapter_unavailable, adapter}) do
-    "store adapter unavailable: #{inspect(adapter)}"
+    "store adapter unavailable: #{ErrorFormatter.inspect_value(adapter)} — ensure the store application is included in your release"
   end
 
   def error({:store_adapter_missing_callbacks, adapter, callbacks}) do
-    "store adapter #{inspect(adapter)} is missing callbacks: #{Enum.join(callbacks, ", ")}"
+    "store adapter #{ErrorFormatter.inspect_value(adapter)} is missing required callbacks: #{Enum.join(callbacks, ", ")}"
   end
 
   def error({:store_unhealthy, path, reason}) do
-    "store path #{path} is unhealthy: #{inspect(reason)}"
+    "store path #{path} is unhealthy: #{ErrorFormatter.inspect_value(reason)} — check file permissions and disk space"
   end
 
   def error({:provider_http_error, reason}) do
-    "provider HTTP error: #{inspect(reason)}"
+    "network error communicating with provider: #{ErrorFormatter.format_httpc_reason(reason)}"
   end
 
   def error({:provider_http_status, status, reason_phrase, body}) do
-    "provider HTTP #{status} #{reason_phrase}: #{body}"
+    "provider HTTP #{status} #{reason_phrase}: #{ErrorFormatter.truncate_provider_body(body)}"
   end
 
   def error(%Tet.ProfileRegistry.Error{} = error), do: Tet.ProfileRegistry.format_error(error)
@@ -91,12 +104,75 @@ defmodule Tet.CLI.Render do
     if errors != [] and Enum.all?(errors, &registry_error?/1) do
       Enum.map_join(errors, "; ", &format_registry_error/1)
     else
-      inspect(errors)
+      ErrorFormatter.format_error_list(errors)
     end
   end
 
   def error(:provider_timeout), do: "provider timed out"
-  def error(reason), do: inspect(reason)
+
+  # ── Store / SQLite errors ────────────────────────────────────────────
+  def error({:session_creation_failed, _changeset}) do
+    "database error creating session record — check TET_STORE_PATH or run `tet doctor`"
+  end
+
+  def error({:workspace_creation_failed, _changeset}) do
+    "database error creating workspace record — check TET_STORE_PATH or run `tet doctor`"
+  end
+
+  def error({:changeset_error, _changeset}) do
+    "database validation error — check store permissions and database integrity"
+  end
+
+  def error(:workspace_not_found), do: "workspace not found"
+
+  # ── Provider adapter errors ──────────────────────────────────────────
+  def error({:provider_adapter_exception, message}) do
+    "provider internal error: #{message}"
+  end
+
+  def error({:provider_adapter_exit, kind, value}) do
+    "provider crashed (#{kind}): #{ErrorFormatter.format_provider_exit_value(value)}"
+  end
+
+  def error({:provider_http_unavailable, reason}) do
+    "HTTP client unavailable: #{ErrorFormatter.format_httpc_reason(reason)}"
+  end
+
+  def error(:provider_stream_incomplete) do
+    "provider stream ended before completion — try again or check your network connection"
+  end
+
+  def error({:invalid_provider_chunk, detail}) do
+    "provider sent invalid response chunk: #{ErrorFormatter.inspect_value(detail)}"
+  end
+
+  def error({:invalid_provider_option, key}) do
+    "provider missing required option: #{key}"
+  end
+
+  # ── SQLite / database errors ──────────────────────────────────────
+  def error(%DBConnection.ConnectionError{} = e) do
+    "database connection error: #{Exception.message(e)} — check TET_STORE_PATH and that the SQLite file is not locked"
+  end
+
+  def error(%{__struct__: SQLite3.Error} = e) do
+    "SQLite error: #{Exception.message(e)} — check database file permissions and integrity"
+  end
+
+  def error(%Ecto.NoResultsError{}), do: "record not found"
+  def error(%Ecto.QueryError{} = e), do: "database query error: #{Exception.message(e)}"
+
+  # ── Catch-all: never leak raw structs or atoms ───────────────────────
+  def error(%{__struct__: _} = struct) do
+    "unexpected error: #{Exception.message(struct)}"
+  rescue
+    _ -> "unexpected error (#{ErrorFormatter.inspect_struct_name(struct)})"
+  end
+
+  def error(reason) when is_atom(reason), do: ErrorFormatter.format_atom_reason(reason)
+  def error(reason) when is_binary(reason), do: reason
+
+  def error(reason), do: "unexpected error: #{ErrorFormatter.inspect_value(reason)}"
 
   def profiles([]), do: "No profiles found."
 

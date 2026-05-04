@@ -92,20 +92,21 @@ defmodule Tet.Docs.Topic do
       id: :config,
       title: "Configuration",
       content:
-        "TET is configured via `tet.config.toml` or environment variables. " <>
-          "Key sections include: profiles, providers, remote endpoints, and tool permissions. " <>
+        "TET is configured via Elixir compile-time and runtime config files " <>
+          "(`config/config.exs`, `config/runtime.exs`) and environment variables. " <>
+          "Key environment variables include: `TET_STORE_PATH`, `TET_AUTOSAVE_PATH`, " <>
+          "`TET_EVENTS_PATH`, `TET_PROMPT_HISTORY_PATH`, `TET_PROVIDER`, `TET_PROFILE`, " <>
+          "`TET_OPENAI_API_KEY`, `TET_MODEL_REGISTRY_PATH`, and `TET_PROFILE_REGISTRY_PATH`. " <>
           "Configuration is validated at startup via `tet doctor` — invalid settings produce clear diagnostics.\n\n" <>
           "[Planned] Future CLI commands: `tet config init`, `tet config validate`, `tet config show`, `tet config set <key> <value>`",
       related_commands: [
-        "tet doctor",
-        "mix test apps/tet_core/test/tet/security_policy_test.exs"
+        "tet doctor"
       ],
       safety_warnings: [
         "Sensitive values (API keys, secrets) should use the secrets store, not plain-text config."
       ],
       verification_commands: [
-        "tet doctor",
-        "mix test apps/tet_core/test/tet/security_policy_test.exs"
+        "tet doctor"
       ]
     }
   end
@@ -225,12 +226,12 @@ defmodule Tet.Docs.Topic do
         "Migration tooling handles upgrading TET configurations, profiles, and data stores " <>
           "between versions. Migrations are versioned and reversible when possible.\n\n" <>
           "[Planned] Future CLI commands: `tet migration plan`, `tet migration apply`, `tet migration rollback`, `tet migration status`",
-      related_commands: ["mix test apps/tet_core/test/tet/security_policy_test.exs"],
+      related_commands: ["mix test apps/tet_core/test/tet/migration/migration_test.exs"],
       safety_warnings: [
         "Migrations can change persistent data — always backup before applying.",
         "Rollback is not available for all migration types — verify before applying."
       ],
-      verification_commands: ["mix test apps/tet_core/test/tet/security_policy_test.exs"]
+      verification_commands: ["mix test apps/tet_core/test/tet/migration/migration_test.exs"]
     }
   end
 

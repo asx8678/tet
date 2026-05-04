@@ -36,8 +36,8 @@ defmodule Tet.PlanMode.Gate do
   - `Tet.Tool.ReadOnlyContracts` (BD-0020): the read-only contract catalog.
   - `Tet.PlanMode.Policy`: the policy data this gate uses for mode/category
     decisions.
-  - Future `Tet.HookManager` (BD-0024): will run hooks after this gate passes.
-  - Future `Tet.PlanMode` facade: will compose this gate with hooks and events.
+  - `Tet.HookManager` (BD-0024): hooks are composed by `Tet.PlanMode.evaluate_with_hooks/4`.
+  - `Tet.PlanMode` facade: composes this gate with hooks and events.
   """
 
   alias Tet.PlanMode.Policy

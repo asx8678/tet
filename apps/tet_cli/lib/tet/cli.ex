@@ -21,6 +21,13 @@ defmodule Tet.CLI do
 
   @doc "Runs a CLI command and returns a process status code."
   def run(argv) when is_list(argv) do
+    # Ensure OTP applications are started. This is required when running via
+    # a release `eval` command (used by the `tet` wrapper) which boots with
+    # `start_clean` and does not start application supervisors automatically.
+    # In dev/test, the apps are already started so this is a harmless no-op.
+    Application.ensure_all_started(:tet_store_sqlite)
+    Application.ensure_all_started(:tet_runtime)
+
     case argv do
       [] ->
         IO.puts(Render.help())
@@ -98,8 +105,28 @@ defmodule Tet.CLI do
 
       [unknown | _] ->
         IO.puts(:stderr, "unknown tet command: #{unknown}")
+        suggest_closest_command(unknown)
         IO.puts(:stderr, "run `tet help` for available scaffold commands")
         64
+    end
+  end
+
+  @known_commands ~w(ask profiles profile sessions session events timeline
+                     completion history doctor prompt-lab correct help)
+
+  defp suggest_closest_command(unknown) do
+    @known_commands
+    |> Enum.map(fn cmd -> {cmd, String.jaro_distance(unknown, cmd)} end)
+    |> Enum.reject(fn {_cmd, dist} -> dist < 0.6 end)
+    |> Enum.sort_by(fn {_cmd, dist} -> -dist end)
+    |> Enum.take(3)
+    |> case do
+      [] ->
+        :ok
+
+      suggestions ->
+        hint = suggestions |> Enum.map(fn {cmd, _} -> "`#{cmd}`" end) |> Enum.join(", ")
+        IO.puts(:stderr, "did you mean: #{hint}?")
     end
   end
 
@@ -110,7 +137,7 @@ defmodule Tet.CLI do
         if Map.get(report, :status, :ok) == :ok, do: 0, else: 1
 
       {:error, reason} ->
-        IO.puts(:stderr, "tet doctor failed: #{inspect(reason)}")
+        IO.puts(:stderr, "tet doctor failed: #{Render.error(reason)}")
         1
     end
   end
@@ -138,9 +165,23 @@ defmodule Tet.CLI do
         IO.puts(Render.profile_show(profile))
         0
 
+      {:error, :profile_not_found} ->
+        IO.puts(:stderr, "tet profile #{command} failed: profile '#{profile_id}' not found")
+
+        case Tet.list_profiles() do
+          {:ok, profiles} when profiles != [] ->
+            ids = Enum.map_join(profiles, ", ", & &1.id)
+            IO.puts(:stderr, "available profiles: #{ids}")
+
+          _ ->
+            IO.puts(:stderr, "run `tet profiles` to see available profiles")
+        end
+
+        66
+
       {:error, reason} ->
         IO.puts(:stderr, "tet profile #{command} failed: #{Render.error(reason)}")
-        if reason == :profile_not_found, do: 66, else: 1
+        1
     end
   end
 
@@ -172,9 +213,14 @@ defmodule Tet.CLI do
         IO.puts(Render.session_show(session))
         0
 
+      {:error, :session_not_found} ->
+        IO.puts(:stderr, "tet session show failed: session '#{session_id}' not found")
+        IO.puts(:stderr, "run `tet sessions` to see available sessions")
+        66
+
       {:error, reason} ->
         IO.puts(:stderr, "tet session show failed: #{Render.error(reason)}")
-        if reason == :session_not_found, do: 66, else: 1
+        1
     end
   end
 
@@ -283,7 +329,7 @@ defmodule Tet.CLI do
         0
 
       {:error, reason} ->
-        IO.puts(:stderr, "tet completion failed: #{inspect(reason)}")
+        IO.puts(:stderr, "tet completion failed: #{Render.error(reason)}")
         1
     end
   end
@@ -403,7 +449,7 @@ defmodule Tet.CLI do
               0
 
             {:error, reason} ->
-              IO.puts(:stderr, "prompt-lab refine failed: #{inspect(reason)}")
+              IO.puts(:stderr, "prompt-lab refine failed: #{Render.error(reason)}")
               1
           end
         end

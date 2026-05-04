@@ -112,7 +112,7 @@ defmodule Tet.Store.SQLite.Schema.Session do
   end
 
   defp safe_to_atom(nil), do: nil
-  defp safe_to_atom(str) when is_binary(str), do: String.to_existing_atom(str)
+  defp safe_to_atom(str) when is_binary(str), do: String.to_atom(str)
 
   defp safe_to_string(nil), do: nil
   defp safe_to_string(atom) when is_atom(atom), do: Atom.to_string(atom)

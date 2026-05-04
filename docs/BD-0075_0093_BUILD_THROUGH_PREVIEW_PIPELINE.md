@@ -295,8 +295,24 @@ TET_ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY" \
   _build/prod/rel/tet_standalone/bin/tet ask "say hi in five words"
 ```
 
+**Verification script.** `tools/check_real_provider_streaming.sh` provides
+automated manual verification:
+
+```bash
+# Verify OpenAI-compatible provider
+OPENAI_API_KEY="$OPENAI_API_KEY" tools/check_real_provider_streaming.sh --openai
+
+# Verify Anthropic provider
+ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY" tools/check_real_provider_streaming.sh --anthropic
+
+# Verify both providers
+OPENAI_API_KEY="$OPENAI_API_KEY" ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY" \
+  tools/check_real_provider_streaming.sh --all
+```
+
 **Source references.** `apps/tet_runtime/lib/tet/runtime/provider/anthropic.ex`;
 `apps/tet_runtime/lib/tet/runtime/provider/openai_compatible.ex`;
+`tools/check_real_provider_streaming.sh`;
 `docs/README.md` provider configuration section.
 
 **Risk.** Provider APIs may change response formats. Mitigation: pin known

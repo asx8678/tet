@@ -62,6 +62,16 @@ defmodule Tet.CLI.Completion do
       description: "Search prompt history",
       subcommands: ["search"],
       options: ["--fuzzy", "--limit"]
+    },
+    "prompt-lab" => %{
+      description: "Refine prompts and explore quality dimensions",
+      subcommands: ["refine", "presets", "dimensions"],
+      options: ["--preset", "--json"]
+    },
+    "correct" => %{
+      description: "Suggest safer command alternatives",
+      subcommands: [],
+      options: ["--json"]
     }
   }
 
@@ -91,6 +101,7 @@ defmodule Tet.CLI.Completion do
     session_sub = @commands["session"].subcommands |> Enum.join(" ")
     completion_sub = @commands["completion"].subcommands |> Enum.join(" ")
     history_sub = @commands["history"].subcommands |> Enum.join(" ")
+    prompt_lab_sub = @commands["prompt-lab"].subcommands |> Enum.join(" ")
 
     """
     #!/usr/bin/env bash
@@ -117,6 +128,9 @@ defmodule Tet.CLI.Completion do
         history)
           COMPREPLY=($(compgen -W '#{history_sub}' -- "${cur}"))
           ;;
+        prompt-lab)
+          COMPREPLY=($(compgen -W '#{prompt_lab_sub}' -- "${cur}"))
+          ;;
         --session)
           COMPREPLY=()
           ;;
@@ -126,6 +140,9 @@ defmodule Tet.CLI.Completion do
         --fuzzy)
           COMPREPLY=()
           ;;
+        --preset)
+          COMPREPLY=()
+          ;;
         *)
           # Offer options when cursor is on a flag
           if [[ ${cur} == --* ]]; then
@@ -133,6 +150,8 @@ defmodule Tet.CLI.Completion do
             case ${words[1]} in
               ask|events|timeline) opts="--session" ;;
               history) opts="--fuzzy --limit" ;;
+              prompt-lab) opts="--preset --json" ;;
+              correct) opts="--json" ;;
             esac
             COMPREPLY=($(compgen -W "${opts}" -- "${cur}"))
           fi
@@ -201,6 +220,16 @@ defmodule Tet.CLI.Completion do
               _describe 'history subcommand' '(search:Search prompt history)' \\
                 '--fuzzy[Fuzzy search mode]' \\
                 '--limit[Max results]:limit:'
+              ;;
+            prompt-lab)
+              _describe 'prompt-lab subcommand' '(refine:Refine a prompt)(presets:List presets)(dimensions:List quality dimensions)' \\
+                '--preset[Preset id]:preset:' \\
+                '--json[JSON output]'
+              ;;
+            correct)
+              _arguments \\
+                '--json[JSON output]' \\
+                '*:command:'
               ;;
           esac
           ;;

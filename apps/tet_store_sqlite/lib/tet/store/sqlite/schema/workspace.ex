@@ -43,7 +43,7 @@ defmodule Tet.Store.SQLite.Schema.Workspace do
       name: row.name,
       root_path: row.root_path,
       tet_dir_path: row.tet_dir_path,
-      trust_state: String.to_existing_atom(row.trust_state),
+      trust_state: String.to_atom(row.trust_state),
       metadata: JsonField.decode(row.metadata),
       created_at: JsonField.to_datetime(row.created_at),
       updated_at: JsonField.to_datetime(row.updated_at)

@@ -502,12 +502,34 @@ defmodule Tet.MigrationTest do
       assert {:error, {:cannot_execute_in_dry_run, _}} = Migration.execute(m)
     end
 
+    test "returns dry_run_not_completed when status is not :dry_run_complete" do
+      {:ok, m} =
+        Migration.new(Map.merge(@basic_attrs, %{mode: :execute}))
+
+      # Status is :pending — should be rejected
+      assert {:error, {:dry_run_not_completed, _}} = Migration.execute(m)
+    end
+
+    test "returns dry_run_not_completed when status is :analyzed" do
+      {:ok, m} = Migration.new(@basic_attrs)
+      m = Migration.analyze(m, %{"model" => "gpt-4"})
+
+      assert m.status == :analyzed
+
+      # Switch to execute mode but status is still :analyzed
+      m = %{m | mode: :execute}
+      assert {:error, {:dry_run_not_completed, _}} = Migration.execute(m)
+    end
+
     test "returns not_safe_to_execute when plan has warnings (preflight check)" do
       {:ok, m} =
         Migration.new(Map.merge(@basic_attrs, %{mode: :execute}))
 
-      # Inject a warning that would come from analyzing unsafe keys like system_prompt
-      m = %{m | warnings: ["Unsafe key 'system_prompt' requires manual review"]}
+      m = %{
+        m
+        | status: :dry_run_complete,
+          warnings: ["Unsafe key 'system_prompt' requires manual review"]
+      }
 
       assert {:error, :not_safe_to_execute} = Migration.execute(m)
     end
@@ -516,7 +538,11 @@ defmodule Tet.MigrationTest do
       {:ok, m} =
         Migration.new(Map.merge(@basic_attrs, %{mode: :execute}))
 
-      m = %{m | raw_warnings: ["Unknown key 'sketchy' contains serialized data"]}
+      m = %{
+        m
+        | status: :dry_run_complete,
+          raw_warnings: ["Unknown key 'sketchy' contains serialized data"]
+      }
 
       assert {:error, :not_safe_to_execute} = Migration.execute(m)
     end
@@ -525,7 +551,11 @@ defmodule Tet.MigrationTest do
       {:ok, m} =
         Migration.new(Map.merge(@basic_attrs, %{mode: :execute}))
 
-      m = %{m | items: [%{key: "evil", value: "%{__struct__: Bad}"}]}
+      m = %{
+        m
+        | status: :dry_run_complete,
+          items: [%{key: "evil", value: "%{__struct__: Bad}"}]
+      }
 
       assert {:error, :not_safe_to_execute} = Migration.execute(m)
     end
@@ -547,8 +577,12 @@ defmodule Tet.MigrationTest do
             mode: :execute
           })
 
-        # Add a warning to fail preflight
-        m = %{m | warnings: ["Unsafe key 'system_prompt' requires manual review"]}
+        # Simulate dry_run_complete but with warnings (preflight should fail)
+        m = %{
+          m
+          | status: :dry_run_complete,
+            warnings: ["Unsafe key 'system_prompt' requires manual review"]
+        }
 
         assert {:error, :not_safe_to_execute} = Migration.execute(m)
         # Backup should NOT have been created since preflight failed
@@ -580,17 +614,236 @@ defmodule Tet.MigrationTest do
           })
 
         m = Migration.analyze(m, legacy)
+        m = Migration.dry_run(m)
+        assert m.status == :dry_run_complete
 
         assert {:ok, result} = Migration.execute(m)
         assert result.status == :executed
         # Backup should exist
         assert File.exists?(backup)
-        # Target should be updated
-        assert File.exists?(target)
+        # Target should be updated with mapped config
+        target_content = File.read!(target) |> Jason.decode!()
+        assert target_content["provider"]["model"] == "gpt-4"
+        assert target_content["provider"]["timeout"] == 30
       after
         File.rm(source)
         File.rm(target)
         File.rm_rf(backup)
+      end
+    end
+
+    test "returns informative error when source file does not exist" do
+      tmp_dir = System.tmp_dir!()
+      unique = :erlang.unique_integer([:positive])
+      nonexistent = Path.join(tmp_dir, "exec_missing_#{unique}.json")
+      target = Path.join(tmp_dir, "exec_target_#{unique}.json")
+      backup = Path.join(tmp_dir, "exec_backup_#{unique}.bak")
+
+      # Create a target so backup/safety checks pass
+      File.write!(target, "{\"model\": \"gpt-4\"}")
+
+      try do
+        {:ok, m} =
+          Migration.new(%{
+            source_path: nonexistent,
+            target_path: target,
+            backup_path: backup,
+            mode: :execute
+          })
+
+        m = Migration.analyze(m, %{"model" => "gpt-4"})
+        m = Migration.dry_run(m)
+
+        assert {:error, {:execute_failed, {:source_read_failed, ^nonexistent, :enoent}}} =
+                 Migration.execute(m)
+      after
+        File.rm(target)
+        File.rm_rf(backup)
+      end
+    end
+
+    test "returns informative error when source file has invalid JSON" do
+      tmp_dir = System.tmp_dir!()
+      unique = :erlang.unique_integer([:positive])
+      source = Path.join(tmp_dir, "exec_bad_json_#{unique}.json")
+      target = Path.join(tmp_dir, "exec_target_#{unique}.json")
+      backup = Path.join(tmp_dir, "exec_backup_#{unique}.bak")
+
+      File.write!(source, "not valid json {{{")
+      File.write!(target, "{\"model\": \"gpt-4\"}")
+
+      try do
+        {:ok, m} =
+          Migration.new(%{
+            source_path: source,
+            target_path: target,
+            backup_path: backup,
+            mode: :execute
+          })
+
+        m = Migration.analyze(m, %{"model" => "gpt-4"})
+        m = Migration.dry_run(m)
+
+        assert {:error, {:execute_failed, {:json_parse_error, _}}} =
+                 Migration.execute(m)
+      after
+        File.rm(source)
+        File.rm(target)
+        File.rm_rf(backup)
+      end
+    end
+
+    test "returns informative error when source file is not a JSON object" do
+      tmp_dir = System.tmp_dir!()
+      unique = :erlang.unique_integer([:positive])
+      source = Path.join(tmp_dir, "exec_array_json_#{unique}.json")
+      target = Path.join(tmp_dir, "exec_target_#{unique}.json")
+      backup = Path.join(tmp_dir, "exec_backup_#{unique}.bak")
+
+      File.write!(source, Jason.encode!(["not", "a", "map"]))
+      File.write!(target, "{\"model\": \"gpt-4\"}")
+
+      try do
+        {:ok, m} =
+          Migration.new(%{
+            source_path: source,
+            target_path: target,
+            backup_path: backup,
+            mode: :execute
+          })
+
+        m = Migration.analyze(m, %{"model" => "gpt-4"})
+        m = Migration.dry_run(m)
+
+        assert {:error, {:execute_failed, {:invalid_config_format, _}}} =
+                 Migration.execute(m)
+      after
+        File.rm(source)
+        File.rm(target)
+        File.rm_rf(backup)
+      end
+    end
+
+    test "returns informative error when target write fails and rolls back from backup" do
+      tmp_dir = System.tmp_dir!()
+      unique = :erlang.unique_integer([:positive])
+      source = Path.join(tmp_dir, "exec_source_#{unique}.json")
+      target_dir = Path.join(tmp_dir, "exec_readonly_#{unique}")
+      target = Path.join(target_dir, "target.json")
+      backup = Path.join(tmp_dir, "exec_backup_#{unique}.bak")
+
+      legacy = %{"model" => "gpt-4"}
+      File.write!(source, Jason.encode!(legacy))
+      # Pre-create backup so safety checks pass
+      File.write!(backup, "{\"model\": \"old\"}")
+
+      try do
+        File.mkdir_p!(target_dir)
+        File.chmod!(target_dir, 0o444)
+
+        {:ok, m} =
+          Migration.new(%{
+            source_path: source,
+            target_path: target,
+            backup_path: backup,
+            mode: :execute
+          })
+
+        m = Migration.analyze(m, legacy)
+        m = Migration.dry_run(m)
+
+        # Write fails → rollback attempted → may succeed or fail depending on target permissions
+        assert {:error, {:execute_failed, reason}} = Migration.execute(m)
+
+        case reason do
+          {:rolled_back, _} ->
+            # Rollback succeeded — target restored from backup
+            assert File.exists?(backup)
+
+          {:rolled_back_failed, _} ->
+            # Rollback also failed (expected when target dir is read-only)
+            assert File.exists?(backup)
+        end
+      after
+        File.chmod!(target_dir, 0o755)
+        File.rm(source)
+        File.rm_rf(target_dir)
+        File.rm_rf(backup)
+      end
+    end
+  end
+
+  describe "rollback_from_backup/1" do
+    test "returns error when backup_path is nil" do
+      {:ok, m} = Migration.new(%{source_path: "/src", target_path: "/tgt"})
+      assert {:error, :no_backup_path} = Migration.rollback_from_backup(m)
+    end
+
+    test "returns error when target_path is nil" do
+      {:ok, m} = Migration.new(%{source_path: "/src", backup_path: "/bak"})
+      assert {:error, :no_target_path} = Migration.rollback_from_backup(m)
+    end
+
+    test "returns error when backup file does not exist" do
+      {:ok, m} =
+        Migration.new(%{
+          source_path: "/src",
+          target_path: "/tmp/target.json",
+          backup_path: "/tmp/nonexistent_backup.bak"
+        })
+
+      assert {:error, {:backup_not_found, _}} = Migration.rollback_from_backup(m)
+    end
+
+    test "restores target from backup when both exist" do
+      tmp_dir = System.tmp_dir!()
+      unique = :erlang.unique_integer([:positive])
+      target = Path.join(tmp_dir, "rollback_target_#{unique}.json")
+      backup = Path.join(tmp_dir, "rollback_backup_#{unique}.bak")
+
+      # Simulate: backup has the original, target has been (partially) written
+      File.write!(backup, "{\"model\": \"gpt-4\"}")
+      File.write!(target, "{\"corrupted\": true}")
+
+      try do
+        {:ok, m} =
+          Migration.new(%{
+            source_path: "/src",
+            target_path: target,
+            backup_path: backup
+          })
+
+        assert :ok = Migration.rollback_from_backup(m)
+        assert File.read!(target) == "{\"model\": \"gpt-4\"}"
+      after
+        File.rm(target)
+        File.rm(backup)
+      end
+    end
+
+    test "restores target from backup when target does not exist" do
+      tmp_dir = System.tmp_dir!()
+      unique = :erlang.unique_integer([:positive])
+      target = Path.join(tmp_dir, "rollback_target_#{unique}.json")
+      backup = Path.join(tmp_dir, "rollback_backup_#{unique}.bak")
+
+      File.write!(backup, "{\"model\": \"gpt-4\"}")
+
+      try do
+        {:ok, m} =
+          Migration.new(%{
+            source_path: "/src",
+            target_path: target,
+            backup_path: backup
+          })
+
+        refute File.exists?(target)
+        assert :ok = Migration.rollback_from_backup(m)
+        assert File.exists?(target)
+        assert File.read!(target) == "{\"model\": \"gpt-4\"}"
+      after
+        File.rm(target)
+        File.rm(backup)
       end
     end
   end

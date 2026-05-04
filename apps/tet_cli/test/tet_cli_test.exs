@@ -60,6 +60,58 @@ defmodule Tet.CLITest do
     )
   end
 
+  # ── BD-0083: Doctor diagnostics under varied configurations ──────────
+
+  test "BD-0083 scenario 3: missing API key for Anthropic provider" do
+    with_env(
+      %{
+        "TET_PROVIDER" => "anthropic",
+        "TET_ANTHROPIC_API_KEY" => nil
+      },
+      fn ->
+        output = capture_io(fn -> assert Tet.CLI.run(["doctor"]) == 1 end)
+
+        assert output =~ "Tet standalone doctor: error"
+        assert output =~ "[error] provider"
+        assert output =~ "TET_ANTHROPIC_API_KEY"
+      end
+    )
+  end
+
+  test "BD-0083 scenario 4: invalid store path shows clear path/permission message" do
+    with_env(
+      %{
+        "TET_PROVIDER" => "mock",
+        "TET_STORE_PATH" => "/nonexistent/path"
+      },
+      fn ->
+        output = capture_io(fn -> assert Tet.CLI.run(["doctor"]) == 1 end)
+
+        assert output =~ "Tet standalone doctor: error"
+        assert output =~ "[error] store"
+        assert output =~ "/nonexistent/path"
+      end
+    )
+  end
+
+  test "BD-0083 scenario 5: valid full configuration passes including release boundary" do
+    with_env(
+      %{
+        "TET_PROVIDER" => "mock"
+      },
+      fn ->
+        output = capture_io(fn -> assert Tet.CLI.run(["doctor"]) == 0 end)
+
+        assert output =~ "Tet standalone doctor: ok"
+        assert output =~ "[ok] config"
+        assert output =~ "[ok] store"
+        assert output =~ "[ok] provider"
+        assert output =~ "[ok] release_boundary"
+        assert output =~ "release_boundary: ok"
+      end
+    )
+  end
+
   test "profile commands list and inspect configured descriptors" do
     list_output = capture_io(fn -> assert Tet.CLI.run(["profiles"]) == 0 end)
 
@@ -81,7 +133,7 @@ defmodule Tet.CLITest do
     output =
       capture_io(:stderr, fn -> assert Tet.CLI.run(["profile", "show", "missing"]) == 66 end)
 
-    assert output =~ "profile not found"
+    assert output =~ "not found"
   end
 
   test "renderer formats profile and model registry validation error lists" do

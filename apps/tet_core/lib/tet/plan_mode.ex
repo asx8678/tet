@@ -17,8 +17,15 @@ defmodule Tet.PlanMode do
 
   - Dispatch tool execution.
   - Persist blocked-attempt events (future BD-0022/BD-0026 concern).
-  - Run hooks (future BD-0024 concern).
-  - LLM steering (future BD-0029 concern).
+  - LLM steering beyond what `steer/3` provides (future BD-0029 concern).
+
+  ## Hook integration (BD-0024)
+
+  `evaluate_with_hooks/4` composes the deterministic gate with the hook
+  lifecycle. Pre-hooks execute before gate evaluation (can modify context
+  or block), and post-hooks execute after the gate decides (can add
+  guidance or veto allowed operations). Gate blocks are final — hooks
+  cannot override them.
   """
 
   alias Tet.PlanMode.{Evaluator, Gate, Policy}
@@ -110,4 +117,78 @@ defmodule Tet.PlanMode do
   @spec verify_no_override([Gate.decision()], Profile.t(), map()) ::
           :ok | {:violated, [Gate.decision()]}
   defdelegate verify_no_override(decisions, profile, context), to: Evaluator
+
+  # ── Hook Lifecycle Integration (BD-0024) ────────────────────────
+
+  @type hook_result ::
+          {:ok, Gate.decision(), map(), [binary()]} | {:block, term(), map()}
+
+  @doc """
+  Evaluates a tool contract with full hook lifecycle integration.
+
+  Pipeline: pre-hooks → gate → post-hooks
+
+  1. **Pre-hooks** execute in descending priority order. They can enrich
+     the context (`{:modify, ctx}`), emit guidance (`{:guide, msg, ctx}`),
+     or veto the operation (`:block`). If a pre-hook blocks, the gate
+     never runs.
+
+  2. **Gate** evaluates the (possibly enriched) context against the
+     contract and policy. If the gate blocks, the decision is final —
+     post-hooks do not run and cannot override it (no-override invariant).
+
+  3. **Post-hooks** execute in ascending priority order on allowed or
+     guided decisions. They can add guidance or veto (`:block`).
+
+  Returns `{:ok, gate_decision, final_context, guides}` on success,
+  or `{:block, reason, context}` when a hook or gate blocks.
+
+  ## Examples
+
+      iex> registry = Tet.HookManager.new()
+      iex> ctx = %{mode: :plan, task_category: :researching, task_id: "t1"}
+      iex> {:ok, decision, _ctx, _guides} =
+      ...>   Tet.PlanMode.evaluate_with_hooks(read_contract(), Policy.default(), ctx, registry)
+      iex> Tet.PlanMode.allowed?(decision)
+      true
+  """
+  @spec evaluate_with_hooks(Contract.t(), Policy.t(), Gate.gate_context(), map()) ::
+          hook_result()
+  def evaluate_with_hooks(
+        %Contract{} = contract,
+        %Policy{} = policy,
+        %{} = context,
+        %{} = registry
+      ) do
+    alias Tet.HookManager
+
+    case HookManager.execute_pre(registry, context) do
+      {:ok, pre_context, pre_guides} ->
+        gate_decision = Gate.evaluate(contract, policy, pre_context)
+
+        case gate_decision do
+          {:block, _} ->
+            # Gate blocks → decision is final. Post-hooks do not run.
+            # Hooks cannot override gate blocks (no-override invariant).
+            {:ok, gate_decision, pre_context, pre_guides}
+
+          _ ->
+            # Gate allows or guides → run post-hooks for enrichment.
+            post_context = Map.put(pre_context, :gate_decision, gate_decision)
+
+            case HookManager.execute_post(registry, post_context) do
+              {:ok, final_context, post_guides} ->
+                {:ok, gate_decision, final_context, pre_guides ++ post_guides}
+
+              {:block, _reason, block_context} ->
+                # Post-hook vetoes the allowed decision.
+                {:block, :hook_blocked, block_context}
+            end
+        end
+
+      {:block, reason, block_context} ->
+        # Pre-hook veto → gate never runs.
+        {:block, reason, block_context}
+    end
+  end
 end

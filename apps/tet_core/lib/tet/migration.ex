@@ -121,6 +121,9 @@ defmodule Tet.Migration do
   Adds safety warnings from `SafetyCheck` and sets status to
   `:dry_run_complete`. Returns the migration struct enriched with
   what-would-change info.
+
+  Backup warnings are excluded during dry-run since backup creation
+  is part of the execute flow, not the dry-run simulation.
   """
   @spec dry_run(t()) :: t()
   def dry_run(%__MODULE__{status: :analyzed} = migration) do
@@ -128,7 +131,15 @@ defmodule Tet.Migration do
     safety_warnings = SafetyCheck.warnings(migration)
 
     existing_set = MapSet.new(migration.warnings)
-    new_warnings = Enum.reject(safety_warnings, &MapSet.member?(existing_set, &1))
+
+    # Filter out backup warnings — they are a concern of the execute flow,
+    # not the dry-run simulation. Backup is created as part of execute.
+    backup_warning_prefix = "Backup must be created"
+
+    new_warnings =
+      safety_warnings
+      |> Enum.reject(&MapSet.member?(existing_set, &1))
+      |> Enum.reject(&String.starts_with?(&1, backup_warning_prefix))
 
     all_warnings = migration.warnings ++ new_warnings
 
@@ -188,35 +199,101 @@ defmodule Tet.Migration do
   Executes the migration after all safety checks pass.
 
   Requires a successful backup and `safe_to_execute?/1` returning true.
+
+  **Dry-run-first safety:** The migration must have completed a dry run
+  (status `:dry_run_complete`) before execution is allowed. This prevents
+  accidental execution without reviewing what would change.
+
+  **Rollback support:** If the target write fails after a backup has been
+  created, the backup is automatically restored to the target path and the
+  error is wrapped with `{:rolled_back, original_reason}`.
+
+  Error reasons:
+  - `{:cannot_execute_in_dry_run, t()}` — mode is `:dry_run`
+  - `{:dry_run_not_completed, t()}` — status is not `:dry_run_complete`
+  - `:not_safe_to_execute` — preflight safety checks failed
+  - `{:execute_failed, term()}` — I/O error during read or write
+  - `{:execute_failed, {:rolled_back, term()}}` — write failed and backup was restored
   """
   @spec execute(t()) :: {:ok, t()} | {:error, term()}
   def execute(%__MODULE__{mode: :dry_run} = migration) do
-    {:error, {:cannot_execute_in_dry_run, migration}}
+    {:error, {:cannot_execute_in_dry_run, %{migration | status: :failed}}}
   end
 
-  def execute(%__MODULE__{mode: :execute} = migration) do
+  def execute(%__MODULE__{mode: :execute, status: status} = migration)
+      when status != :dry_run_complete do
+    {:error, {:dry_run_not_completed, %{migration | status: :failed}}}
+  end
+
+  def execute(%__MODULE__{mode: :execute, status: :dry_run_complete} = migration) do
     with :ok <- preflight_checks(migration),
          {:ok, migration} <- create_backup(migration),
-         true <- SafetyCheck.safe_to_execute?(migration) do
-      # Write mapped config to target_path
-      {:ok, mapped, _unsafe, _unknown} = ConfigMapper.map_config(read_legacy_config(migration))
-
+         true <- SafetyCheck.safe_to_execute?(migration),
+         {:ok, legacy_config} <- read_legacy_config(migration),
+         {:ok, mapped, _unsafe, _unknown} <- ConfigMapper.map_config(legacy_config) do
       case write_target_config(migration, mapped) do
-        :ok -> {:ok, %{migration | status: :executed}}
-        {:error, reason} -> {:error, reason}
+        :ok ->
+          {:ok, %{migration | status: :executed}}
+
+        {:error, reason} ->
+          case rollback_from_backup(%{migration | status: :failed}) do
+            :ok ->
+              {:error, {:execute_failed, {:rolled_back, reason}}}
+
+            {:error, _rollback_error} ->
+              {:error, {:execute_failed, {:rolled_back_failed, reason}}}
+          end
       end
     else
       false -> {:error, :not_safe_to_execute}
-      {:error, reason} -> {:error, reason}
+      {:error, reason} -> {:error, {:execute_failed, reason}}
     end
   end
 
   defp preflight_checks(migration) do
     cond do
-      SafetyCheck.check_serialized_data(migration) != [] -> {:error, :not_safe_to_execute}
-      migration.raw_warnings != [] -> {:error, :not_safe_to_execute}
-      migration.warnings != [] -> {:error, :not_safe_to_execute}
+      SafetyCheck.check_serialized_data(migration) != [] -> false
+      migration.raw_warnings != [] -> false
+      migration.warnings != [] -> false
       true -> :ok
+    end
+  end
+
+  @doc """
+  Restores the target config file from a previously created backup.
+
+  Used by the execute flow to automatically roll back when the target write
+  fails after backup creation. Returns `:ok` on successful rollback or
+  `{:error, reason}` if the rollback itself fails.
+  """
+  @spec rollback_from_backup(t()) :: :ok | {:error, term()}
+  def rollback_from_backup(%__MODULE__{backup_path: nil}), do: {:error, :no_backup_path}
+  def rollback_from_backup(%__MODULE__{target_path: nil}), do: {:error, :no_target_path}
+
+  def rollback_from_backup(%__MODULE__{target_path: target, backup_path: backup}) do
+    cond do
+      not File.exists?(backup) ->
+        {:error, {:backup_not_found, backup}}
+
+      not File.exists?(target) ->
+        # Target was deleted or never existed — copy backup into place
+        case File.cp(backup, target) do
+          :ok -> :ok
+          {:error, reason} -> {:error, {:rollback_cp_failed, reason}}
+        end
+
+      true ->
+        # Both exist — overwrite target with backup contents
+        case File.read(backup) do
+          {:ok, content} ->
+            case File.write(target, content) do
+              :ok -> :ok
+              {:error, reason} -> {:error, {:rollback_write_failed, reason}}
+            end
+
+          {:error, reason} ->
+            {:error, {:rollback_read_failed, reason}}
+        end
     end
   end
 
@@ -420,26 +497,42 @@ defmodule Tet.Migration do
 
   defp redact_sensitive(_value), do: "[REDACTED]"
 
-  # Stubs for execute flow — actual file I/O
-  defp read_legacy_config(migration) do
-    case File.read(migration.source_path) do
+  # ── File I/O for execute flow ───────────────────────────────────────────────
+
+  @doc false
+  @spec read_legacy_config(t()) :: {:ok, map()} | {:error, term()}
+  defp read_legacy_config(%__MODULE__{source_path: nil}), do: {:error, :no_source_path}
+
+  defp read_legacy_config(%__MODULE__{source_path: path}) do
+    case File.read(path) do
       {:ok, content} ->
         case Jason.decode(content) do
-          {:ok, parsed} -> parsed
-          {:error, _} -> %{}
+          {:ok, parsed} when is_map(parsed) -> {:ok, parsed}
+          {:ok, _not_a_map} -> {:error, {:invalid_config_format, path}}
+          {:error, %Jason.DecodeError{} = e} -> {:error, {:json_parse_error, e}}
         end
 
-      {:error, _} ->
-        %{}
+      {:error, reason} ->
+        {:error, {:source_read_failed, path, reason}}
     end
   end
 
-  defp write_target_config(migration, mapped) do
-    migration.target_path
-    |> Path.dirname()
-    |> File.mkdir_p()
+  @doc false
+  @spec write_target_config(t(), map()) :: :ok | {:error, term()}
+  defp write_target_config(%__MODULE__{target_path: nil}, _mapped), do: {:error, :no_target_path}
 
-    content = Jason.encode!(mapped, pretty: true)
-    File.write(migration.target_path, content)
+  defp write_target_config(%__MODULE__{target_path: path}, mapped) do
+    case Path.dirname(path) |> File.mkdir_p() do
+      :ok ->
+        content = Jason.encode!(mapped, pretty: true)
+
+        case File.write(path, content) do
+          :ok -> :ok
+          {:error, reason} -> {:error, {:target_write_failed, path, reason}}
+        end
+
+      {:error, reason} ->
+        {:error, {:target_dir_failed, path, reason}}
+    end
   end
 end

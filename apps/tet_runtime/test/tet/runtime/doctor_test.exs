@@ -5,6 +5,41 @@ defmodule Tet.Runtime.DoctorTest do
 
   # ── Unit tests (no repo needed) ──────────────────────────────────────
 
+  describe "validate_configured_store_path/2" do
+    test "returns :ok when path is nil (no explicit store path configured)" do
+      assert Doctor.validate_configured_store_path(nil, %{}) == :ok
+    end
+
+    test "returns :ok when path is empty string" do
+      assert Doctor.validate_configured_store_path("", %{}) == :ok
+    end
+
+    test "returns error when directory does not exist" do
+      health = %{dir_exists?: false, writable?: false}
+
+      assert {:error, msg} = Doctor.validate_configured_store_path("/nonexistent/path", health)
+      assert msg =~ "/nonexistent/path"
+      assert msg =~ "check TET_STORE_PATH"
+    end
+
+    test "returns error when directory exists but is not writable" do
+      health = %{dir_exists?: true, writable?: false}
+
+      assert {:error, msg} =
+               Doctor.validate_configured_store_path("/some/path", health)
+
+      assert msg =~ "not writable"
+      assert msg =~ "/some/path"
+      assert msg =~ "check permissions and TET_STORE_PATH"
+    end
+
+    test "returns :ok when directory exists and is writable" do
+      health = %{dir_exists?: true, writable?: true}
+
+      assert Doctor.validate_configured_store_path("/some/path", health) == :ok
+    end
+  end
+
   describe "store_health_message/1" do
     test "builds rich message for SQLite health map with WAL and schema version" do
       sqlite_health = %{

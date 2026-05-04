@@ -168,11 +168,13 @@ defmodule Tet.Runtime.Provider.Router.Candidates do
   defp normalize_provider("mock"), do: :mock
   defp normalize_provider("openai"), do: :openai_compatible
   defp normalize_provider("openai_compatible"), do: :openai_compatible
+  defp normalize_provider("anthropic"), do: :anthropic
   defp normalize_provider("router"), do: :router
   defp normalize_provider(provider), do: provider
 
   defp adapter_for(:mock), do: Tet.Runtime.Provider.Mock
   defp adapter_for(:openai_compatible), do: Tet.Runtime.Provider.OpenAICompatible
+  defp adapter_for(:anthropic), do: Tet.Runtime.Provider.Anthropic
   defp adapter_for(_provider), do: nil
 
   defp adapter_config_error(nil, nil), do: nil
@@ -181,6 +183,7 @@ defmodule Tet.Runtime.Provider.Router.Candidates do
 
   defp provider_from_adapter(Tet.Runtime.Provider.Mock), do: :mock
   defp provider_from_adapter(Tet.Runtime.Provider.OpenAICompatible), do: :openai_compatible
+  defp provider_from_adapter(Tet.Runtime.Provider.Anthropic), do: :anthropic
   defp provider_from_adapter(_adapter), do: nil
 
   defp put_provider_identity(opts, provider, model) do

@@ -52,7 +52,7 @@ defmodule Tet.Store.SQLite.Schema.Approval do
   @doc "Converts an Ecto schema row to a `Tet.Approval.Approval` core struct."
   @spec to_core_struct(%__MODULE__{}) :: Tet.Approval.Approval.t()
   def to_core_struct(%__MODULE__{} = row) do
-    status = String.to_existing_atom(row.status)
+    status = String.to_atom(row.status)
     {approved_at, rejected_at} = split_resolved_at(status, row.resolved_at)
 
     %Tet.Approval.Approval{

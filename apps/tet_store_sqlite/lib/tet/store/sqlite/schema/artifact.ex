@@ -56,7 +56,7 @@ defmodule Tet.Store.SQLite.Schema.Artifact do
     %Tet.Artifact{
       id: row.id,
       session_id: row.session_id,
-      kind: String.to_existing_atom(row.kind),
+      kind: String.to_atom(row.kind),
       content: row.inline_blob,
       path: row.path,
       sha256: row.sha256,

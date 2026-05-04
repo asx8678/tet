@@ -46,7 +46,7 @@ defmodule Tet.Store.SQLite.Schema.Task do
       id: row.id,
       session_id: row.session_id,
       title: row.title,
-      status: String.to_existing_atom(row.status),
+      status: String.to_atom(row.status),
       metadata: JsonField.decode(row.metadata),
       created_at: JsonField.to_datetime(row.created_at),
       updated_at: JsonField.to_datetime(row.updated_at)

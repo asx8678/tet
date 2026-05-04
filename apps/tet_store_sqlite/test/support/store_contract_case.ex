@@ -230,9 +230,6 @@ defmodule Tet.Store.SQLite.StoreContractCase do
           assert {:ok, step} = @adapter.append_step(attrs, opts)
           assert step.id == "step_rtt_001"
           assert step.workflow_id == "wf_001"
-          # session_id is not stored on workflow_steps directly;
-          # it is resolved via the parent workflow. The step struct
-          # may have nil session_id after a direct insert.
 
           assert {:ok, steps} = @adapter.get_steps("ses_steps", opts)
           step_ids = Enum.map(steps, & &1.id)
@@ -285,12 +282,23 @@ defmodule Tet.Store.SQLite.StoreContractCase do
         test "returns error when resolving non-existent error", %{opts: opts} do
           assert {:error, :error_not_found} = @adapter.resolve_error("missing_err", opts)
         end
+
+        test "auto-populates created_at when omitted", %{opts: opts} do
+          create_workspace_session!("ws_err_auto", "ses_auto_ca")
+
+          attrs = %{
+            id: "err_auto_ca",
+            session_id: "ses_auto_ca",
+            kind: :exception,
+            message: "No timestamp"
+          }
+
+          assert {:ok, error_entry} = @adapter.log_error(attrs, opts)
+          assert error_entry.created_at != nil
+        end
       end
 
       # -- Repair Queue (round-trip) --
-      # NOTE: dequeue_repair is not tested here because SQLite3 does not
-      # support FOR UPDATE locks. The repair enqueue, update, and list
-      # paths are fully exercised below.
 
       describe "repair queue persistence" do
         test "full repair lifecycle with round-trip", %{opts: opts} do
@@ -319,16 +327,13 @@ defmodule Tet.Store.SQLite.StoreContractCase do
           assert repair.id == "rep_rtt_001"
           assert repair.status == :pending
 
-          # Directly update the repair to running (bypassing dequeue_repair
-          # which uses FOR UPDATE unsupported by SQLite3)
-          assert {:ok, running} =
-                   @adapter.update_repair(
-                     "rep_rtt_001",
-                     %{status: :running},
-                     opts
-                   )
+          # Dequeue picks up the pending repair
+          assert {:ok, dequeued} = @adapter.dequeue_repair(opts)
+          assert dequeued.id == "rep_rtt_001"
+          assert dequeued.status == :running
 
-          assert running.status == :running
+          # Dequeue again returns nil (no more pending)
+          assert {:ok, nil} = @adapter.dequeue_repair(opts)
 
           # Update the repair to succeeded
           assert {:ok, succeeded} =
@@ -358,6 +363,164 @@ defmodule Tet.Store.SQLite.StoreContractCase do
         test "returns error for non-existent repair update", %{opts: opts} do
           assert {:error, :repair_not_found} =
                    @adapter.update_repair("missing_rep", %{status: :succeeded}, opts)
+        end
+
+        test "update_repair protects identity fields from mutation", %{opts: opts} do
+          create_workspace_session!("ws_rep_protect", "ses_protect")
+
+          # Create the error_log entry first (FK parent for repair)
+          assert {:ok, _error} =
+                   @adapter.log_error(
+                     %{
+                       id: "err_protect",
+                       session_id: "ses_protect",
+                       kind: :provider_error,
+                       message: "test"
+                     },
+                     opts
+                   )
+
+          attrs = %{
+            id: "rep_protect_001",
+            error_log_id: "err_protect",
+            session_id: "ses_protect",
+            strategy: :retry
+          }
+
+          assert {:ok, repair} = @adapter.enqueue_repair(attrs, opts)
+          original_created_at = repair.created_at
+
+          # Try to mutate identity/correlation fields
+          assert {:ok, updated} =
+                   @adapter.update_repair(
+                     "rep_protect_001",
+                     %{
+                       status: :succeeded,
+                       id: "hacked_id",
+                       error_log_id: "hacked_eid",
+                       session_id: "hacked_sid",
+                       strategy: :human,
+                       created_at: ~U[2099-01-01 00:00:00Z]
+                     },
+                     opts
+                   )
+
+          # Mutable field changed
+          assert updated.status == :succeeded
+          # Identity/correlation fields unchanged
+          assert updated.id == "rep_protect_001"
+          assert updated.error_log_id == "err_protect"
+          assert updated.session_id == "ses_protect"
+          assert updated.strategy == :retry
+          assert updated.created_at == original_created_at
+        end
+
+        test "update_repair returns error tuple for invalid status", %{opts: opts} do
+          create_workspace_session!("ws_rep_inv", "ses_inv")
+
+          # Create the error_log FK entry
+          assert {:ok, _} =
+                   @adapter.log_error(
+                     %{id: "err_inv", session_id: "ses_inv", kind: :exception, message: "inv"},
+                     opts
+                   )
+
+          attrs = %{
+            id: "rep_inv_st",
+            error_log_id: "err_inv",
+            session_id: "ses_inv",
+            strategy: :retry
+          }
+
+          assert {:ok, _repair} = @adapter.enqueue_repair(attrs, opts)
+
+          assert {:error, {:invalid_repair_field, :status}} =
+                   @adapter.update_repair("rep_inv_st", %{"status" => "bogus"}, opts)
+        end
+
+        test "enqueue_repair auto-populates created_at when omitted", %{opts: opts} do
+          create_workspace_session!("ws_rep_auto", "ses_auto")
+
+          attrs = %{
+            id: "rep_auto_ca",
+            error_log_id: "err_auto",
+            strategy: :retry
+          }
+
+          # First create the error_log FK entry
+          assert {:ok, _} =
+                   @adapter.log_error(
+                     %{id: "err_auto", session_id: "ses_auto", kind: :exception, message: "auto"},
+                     opts
+                   )
+
+          assert {:ok, repair} = @adapter.enqueue_repair(attrs, opts)
+          assert repair.created_at != nil
+        end
+
+        test "dequeue returns repairs in FIFO order by created_at", %{opts: opts} do
+          create_workspace_session!("ws_rep_fifo", "ses_fifo")
+
+          # Create the error_log FK entry
+          assert {:ok, _} =
+                   @adapter.log_error(
+                     %{id: "err_fifo", session_id: "ses_fifo", kind: :exception, message: "fifo"},
+                     opts
+                   )
+
+          early = DateTime.utc_now() |> DateTime.add(-10, :second)
+          middle = DateTime.utc_now() |> DateTime.add(-5, :second)
+          late = DateTime.utc_now()
+
+          @adapter.enqueue_repair(
+            %{id: "rep_fifo_m", error_log_id: "err_fifo", strategy: :retry, created_at: middle},
+            opts
+          )
+
+          @adapter.enqueue_repair(
+            %{id: "rep_fifo_e", error_log_id: "err_fifo", strategy: :retry, created_at: early},
+            opts
+          )
+
+          @adapter.enqueue_repair(
+            %{id: "rep_fifo_l", error_log_id: "err_fifo", strategy: :retry, created_at: late},
+            opts
+          )
+
+          assert {:ok, r1} = @adapter.dequeue_repair(opts)
+          assert r1.id == "rep_fifo_e"
+
+          assert {:ok, r2} = @adapter.dequeue_repair(opts)
+          assert r2.id == "rep_fifo_m"
+
+          assert {:ok, r3} = @adapter.dequeue_repair(opts)
+          assert r3.id == "rep_fifo_l"
+        end
+      end
+
+      # -- Event Ordering (monotonic seq) --
+
+      describe "event ordering" do
+        test "events are returned in monotonic seq order", %{opts: opts} do
+          create_workspace_session!("ws_evt_ord", "ses_ord")
+
+          for i <- 1..5 do
+            @adapter.append_event(
+              %{
+                id: "evt_ord_#{i}",
+                type: :"provider.started",
+                session_id: "ses_ord",
+                payload: %{step: i},
+                metadata: %{}
+              },
+              opts
+            )
+          end
+
+          assert {:ok, events} = @adapter.list_events("ses_ord", opts)
+          seqs = Enum.map(events, & &1.seq)
+          assert seqs == Enum.sort(seqs), "Events must be in monotonic order"
+          assert length(seqs) == 5
         end
       end
     end

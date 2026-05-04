@@ -46,7 +46,7 @@ defmodule Tet.Store.SQLite.Schema.Message do
     %Tet.Message{
       id: row.id,
       session_id: row.session_id,
-      role: String.to_existing_atom(row.role),
+      role: String.to_atom(row.role),
       content: decode_content(row.content, row.content_kind),
       metadata: JsonField.decode(row.metadata),
       created_at: created_dt,

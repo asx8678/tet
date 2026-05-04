@@ -48,7 +48,7 @@ defmodule Tet.Store.SQLite.Schema.ErrorLogEntry do
       message: row.message,
       stacktrace: row.stacktrace,
       context: JsonField.decode_any(row.context),
-      status: String.to_existing_atom(row.status),
+      status: String.to_atom(row.status),
       resolved_at: JsonField.to_datetime(row.resolved_at),
       created_at: JsonField.to_datetime(row.created_at),
       metadata: JsonField.decode(row.metadata)
@@ -73,7 +73,7 @@ defmodule Tet.Store.SQLite.Schema.ErrorLogEntry do
   end
 
   defp safe_to_existing_atom(nil), do: nil
-  defp safe_to_existing_atom(str) when is_binary(str), do: String.to_existing_atom(str)
+  defp safe_to_existing_atom(str) when is_binary(str), do: String.to_atom(str)
 
   defp encode_optional(nil), do: nil
   defp encode_optional(value), do: JsonField.encode(value)

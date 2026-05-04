@@ -373,6 +373,67 @@ TET_STORE_PATH="$PWD/.tet/messages.jsonl" \
 No secrets are stored in config files. Tests use the mock provider and a local
 TCP fake OpenAI-compatible stream server; they do not call real provider APIs.
 
+### Anthropic provider
+
+A native Anthropic Messages API adapter is available via Erlang `:httpc`. It
+posts to `/v1/messages` with `stream: true` and consumes Anthropic SSE event
+types (`message_start`, `content_block_delta`, `message_stop`, etc.).
+
+Required environment variable:
+
+- `TET_ANTHROPIC_API_KEY` — API key used as `x-api-key` header.
+
+Optional environment variables:
+
+- `TET_PROVIDER=anthropic` — selects the Anthropic adapter.
+- `TET_ANTHROPIC_BASE_URL` — base URL; defaults to `https://api.anthropic.com`.
+- `TET_ANTHROPIC_MODEL` — model name; defaults to `claude-sonnet-4-20250514`.
+- `TET_STORE_PATH` — message log path; defaults to `.tet/messages.jsonl`.
+- `TET_AUTOSAVE_PATH` — optional autosave checkpoint log path override; by
+  default it is derived from `TET_STORE_PATH`.
+- `TET_EVENTS_PATH` — optional event timeline log path override; by default it
+  is derived from `TET_STORE_PATH`.
+- `TET_PROMPT_HISTORY_PATH` — optional Prompt Lab history log path override; by
+  default it is derived from `TET_STORE_PATH`.
+
+Anthropic streams are considered complete only after a `message_stop` SSE event.
+Missing `message_stop` at EOF is treated as `:invalid_response` so partial
+assistant turns are not persisted as successful responses.
+
+Anthropic adapter supports provider-side prompt caching via `cache_control`
+hints (`cache_capability: :full`).
+
+Example:
+
+```bash
+TET_PROVIDER=anthropic \
+TET_ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY" \
+TET_ANTHROPIC_MODEL="claude-sonnet-4-20250514" \
+TET_STORE_PATH="$PWD/.tet/messages.jsonl" \
+  _build/prod/rel/tet_standalone/bin/tet ask "say hi in five words"
+```
+
+### Real provider streaming verification (BD-0082)
+
+Real provider streaming verification requires manual operator intervention with
+valid API keys. This catches real-world SSE parsing, auth header handling,
+model name resolution, `data: [DONE]` / `message_stop` detection, error
+classification, and timeout behavior that mock providers cannot exercise.
+
+**This verification must NOT run in CI or automated pipelines.**
+
+```bash
+# Verify OpenAI-compatible provider
+OPENAI_API_KEY="$OPENAI_API_KEY" tools/check_real_provider_streaming.sh --openai
+
+# Verify Anthropic provider
+ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY" tools/check_real_provider_streaming.sh --anthropic
+
+# Verify both providers
+OPENAI_API_KEY="$OPENAI_API_KEY" ANTHROPIC_API_KEY="$ANTHROPIC_API_KEY" \
+  tools/check_real_provider_streaming.sh --all
+```
+
 ## Model registry
 
 BD-0013 adds an editable, offline model registry contract. Core owns pure schema

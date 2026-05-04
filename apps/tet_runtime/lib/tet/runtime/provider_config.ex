@@ -30,6 +30,9 @@ defmodule Tet.Runtime.ProviderConfig do
       :openai_compatible ->
         resolve_openai_compatible(opts)
 
+      :anthropic ->
+        resolve_anthropic(opts)
+
       :router ->
         resolve_router(opts)
 
@@ -80,6 +83,9 @@ defmodule Tet.Runtime.ProviderConfig do
              message: "OpenAI-compatible provider configured"
            }}
         end
+
+      :anthropic ->
+        diagnose_anthropic(opts)
 
       :router ->
         diagnose_router(opts)
@@ -146,6 +152,24 @@ defmodule Tet.Runtime.ProviderConfig do
     end
   end
 
+  defp resolve_anthropic(opts) do
+    settings = anthropic_settings(opts)
+
+    if blank?(settings.api_key) do
+      {:error, {:missing_provider_env, settings.api_key_env}}
+    else
+      {:ok,
+       {Tet.Runtime.Provider.Anthropic,
+        [
+          provider: :anthropic,
+          api_key: settings.api_key,
+          base_url: settings.base_url,
+          model: settings.model,
+          timeout: settings.timeout
+        ]}}
+    end
+  end
+
   defp router_candidates(opts) do
     case Keyword.fetch(opts, :candidates) do
       {:ok, candidates} when is_list(candidates) -> {:ok, candidates}
@@ -197,6 +221,7 @@ defmodule Tet.Runtime.ProviderConfig do
     case normalize_provider(provider.type) do
       :mock -> mock_candidate(model, opts)
       :openai_compatible -> openai_candidate(model, provider.config, opts)
+      :anthropic -> anthropic_candidate(model, provider.config, opts)
       unknown -> unknown_provider_candidate(model, provider, unknown)
     end
   end
@@ -239,6 +264,28 @@ defmodule Tet.Runtime.ProviderConfig do
     }
   end
 
+  defp anthropic_candidate(model, provider_config, opts) do
+    settings = anthropic_candidate_settings(model, provider_config, opts)
+
+    provider_opts =
+      [
+        provider: :anthropic,
+        base_url: settings.base_url,
+        model: settings.model,
+        timeout: settings.timeout
+      ]
+      |> put_optional(:api_key, settings.api_key)
+
+    %{
+      id: model.id,
+      provider: :anthropic,
+      adapter: Tet.Runtime.Provider.Anthropic,
+      model: settings.model,
+      opts: provider_opts,
+      config_error: missing_api_key_error(settings)
+    }
+  end
+
   defp unknown_provider_candidate(model, provider, unknown) do
     %{
       id: model.id,
@@ -274,8 +321,64 @@ defmodule Tet.Runtime.ProviderConfig do
     }
   end
 
+  defp anthropic_candidate_settings(model, provider_config, opts) do
+    app_config = Application.get_env(:tet_runtime, :anthropic, [])
+
+    api_key_env =
+      opts
+      |> Keyword.get(:api_key_env)
+      |> blank_fallback(config_value(provider_config, :api_key_env))
+      |> blank_fallback(Keyword.get(app_config, :api_key_env))
+      |> blank_fallback("TET_ANTHROPIC_API_KEY")
+
+    model_env = config_value(provider_config, :model_env) || "TET_ANTHROPIC_MODEL"
+
+    %{
+      api_key_env: api_key_env,
+      api_key: Keyword.get(opts, :api_key) || env(api_key_env),
+      base_url:
+        Keyword.get(opts, :base_url) || env("TET_ANTHROPIC_BASE_URL") ||
+          config_value(provider_config, :base_url) || Keyword.get(app_config, :base_url) ||
+          "https://api.anthropic.com",
+      model: env(model_env) || model.model,
+      timeout: Keyword.get(opts, :timeout, Keyword.get(app_config, :timeout, 60_000))
+    }
+  end
+
   defp missing_api_key_error(%{api_key: api_key, api_key_env: api_key_env}) do
     if blank?(api_key), do: {:missing_provider_env, api_key_env}, else: nil
+  end
+
+  defp diagnose_anthropic(opts) do
+    settings = anthropic_settings(opts)
+
+    if blank?(settings.api_key) do
+      {:error,
+       %{
+         provider: :anthropic,
+         adapter: Tet.Runtime.Provider.Anthropic,
+         status: :error,
+         reason: {:missing_provider_env, settings.api_key_env},
+         required_env: settings.api_key_env,
+         base_url: settings.base_url,
+         model: settings.model,
+         message:
+           "Anthropic provider is missing required environment variable #{settings.api_key_env}"
+       }}
+    else
+      {:ok,
+       %{
+         provider: :anthropic,
+         adapter: Tet.Runtime.Provider.Anthropic,
+         status: :ok,
+         required_env: settings.api_key_env,
+         api_key_present?: true,
+         base_url: settings.base_url,
+         model: settings.model,
+         timeout: settings.timeout,
+         message: "Anthropic provider configured"
+       }}
+    end
   end
 
   defp diagnose_router(opts) do
@@ -428,6 +531,25 @@ defmodule Tet.Runtime.ProviderConfig do
     }
   end
 
+  defp anthropic_settings(opts) do
+    app_config = Application.get_env(:tet_runtime, :anthropic, [])
+
+    api_key_env =
+      opts
+      |> Keyword.get(:api_key_env)
+      |> blank_fallback(Keyword.get(app_config, :api_key_env))
+      |> blank_fallback("TET_ANTHROPIC_API_KEY")
+
+    %{
+      api_key_env: api_key_env,
+      api_key: Keyword.get(opts, :api_key) || env(api_key_env),
+      base_url:
+        value(opts, app_config, :base_url, "TET_ANTHROPIC_BASE_URL", "https://api.anthropic.com"),
+      model: value(opts, app_config, :model, "TET_ANTHROPIC_MODEL", "claude-sonnet-4-20250514"),
+      timeout: Keyword.get(opts, :timeout, Keyword.get(app_config, :timeout, 60_000))
+    }
+  end
+
   defp value(opts, app_config, key, env_name, default) do
     Keyword.get(opts, key) || env(env_name) || Keyword.get(app_config, key) || default
   end
@@ -445,6 +567,7 @@ defmodule Tet.Runtime.ProviderConfig do
       "mock" -> :mock
       "openai" -> :openai_compatible
       "openai_compatible" -> :openai_compatible
+      "anthropic" -> :anthropic
       "router" -> :router
       other -> {:unknown, other}
     end

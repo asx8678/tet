@@ -53,11 +53,18 @@ defmodule Tet.Store.SQLite.CrashRecoveryTest do
   ]
 
   setup do
-    ensure_app_started!()
+    # Guarantee a clean DB lifecycle: stop the app first (releases stale
+    # file descriptors from a previously-deleted DB file), delete the DB
+    # files, then start fresh so Application.start creates the file and
+    # runs migrations. Without this, if the app was already started, the
+    # Repo holds a FD to a deleted inode — reconnection after a kill opens
+    # a brand-new empty file with no tables.
+    stop_app!()
+    delete_db_files!()
+    start_app!()
 
-    # After an Application stop/start cycle (from this or other test files
-    # like migrator_test), the test DB in tmp may have been recreated.
-    # Re-run the migrator to ensure schema + PRAGMAs are in place.
+    # Defensive: re-run the migrator in case the DB was recreated by
+    # another code path (e.g. Application.start with migrate_on_start).
     Tet.Store.SQLite.Migrator.run!()
 
     for table <- @cleanup_tables do
@@ -95,7 +102,11 @@ defmodule Tet.Store.SQLite.CrashRecoveryTest do
     # See sqlite.org/pragma.html#pragma_wal_checkpoint
     SQL.query!(Repo, "PRAGMA wal_checkpoint(TRUNCATE)", [])
 
-    on_exit(fn -> ensure_app_started!() end)
+    on_exit(fn ->
+      stop_app!()
+      delete_db_files!()
+      start_app!()
+    end)
 
     {:ok, ws_id: ws_id, ses_id: ses_id}
   end
@@ -287,10 +298,33 @@ defmodule Tet.Store.SQLite.CrashRecoveryTest do
 
   # ── Helpers ──────────────────────────────────────────────────────────
 
-  defp ensure_app_started! do
-    case Application.ensure_all_started(:tet_store_sqlite) do
-      {:ok, _} -> :ok
-      {:error, {:already_started, :tet_store_sqlite}} -> :ok
+  @doc """
+  Stop the tet_store_sqlite application, releasing all connection pool
+  resources and file descriptors. Returns :ok or :noproc.
+  """
+  defp stop_app! do
+    case Application.stop(:tet_store_sqlite) do
+      :ok -> :ok
+      {:error, {:not_started, :tet_store_sqlite}} -> :ok
     end
+  end
+
+  @doc """
+  Delete the SQLite DB file and its WAL/SHM sidecar files so the next
+  start creates a pristine database.
+  """
+  defp delete_db_files! do
+    db = Tet.Store.SQLite.Connection.default_database_path()
+    for ext <- ["", "-shm", "-wal"], do: File.rm(db <> ext)
+    :ok
+  end
+
+  @doc """
+  Start the tet_store_sqlite application fresh. Application.start
+  creates the DB file, applies PRAGMAs, and runs pending migrations.
+  """
+  defp start_app! do
+    {:ok, _} = Application.ensure_all_started(:tet_store_sqlite)
+    :ok
   end
 end

@@ -231,6 +231,7 @@ defmodule Tet.Store.SQLite.Importer do
     |> Enum.map(fn event ->
       event
       |> ensure_event_id()
+      |> ensure_event_created_at()
       |> Event.from_core_struct()
     end)
   end
@@ -249,6 +250,12 @@ defmodule Tet.Store.SQLite.Importer do
   end
 
   defp ensure_event_id(event), do: event
+
+  defp ensure_event_created_at(%Tet.Event{created_at: nil} = event) do
+    %{event | created_at: System.os_time(:second)}
+  end
+
+  defp ensure_event_created_at(event), do: event
 
   # -------------------------------------------------------------------
   # Autosaves
